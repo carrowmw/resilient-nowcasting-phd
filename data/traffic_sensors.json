@@ -1,0 +1,522 @@
+[
+  {
+    "lat": 54.9835,
+    "location": "NclConventRdOrdCtANPR",
+    "lon": -1.65839
+  },
+  {
+    "lat": 54.9763,
+    "location": "NclPercyStEldonSqANPR",
+    "lon": -1.61555
+  },
+  {
+    "lat": 55.0108,
+    "location": "NclSaltersHollywood",
+    "lon": -1.6031
+  },
+  {
+    "lat": 55.0012,
+    "location": "NclCastleFarm",
+    "lon": -1.6044
+  },
+  {
+    "lat": 54.9871,
+    "location": "NclHaldaneOsborne",
+    "lon": -1.6063
+  },
+  {
+    "lat": 54.9735,
+    "location": "NclArgyleTrafalgar",
+    "lon": -1.6037
+  },
+  {
+    "lat": 54.978,
+    "location": "NclStMarysPlCollegeStANPR",
+    "lon": -1.61015
+  },
+  {
+    "lat": 54.9686,
+    "location": "NclTynebridgeNorthEast",
+    "lon": -1.60656
+  },
+  {
+    "lat": 54.9769,
+    "location": "NclJohnDobsonStNorthumberlandRdNorth",
+    "lon": -1.61136
+  },
+  {
+    "lat": 54.9792,
+    "location": "NclMowbrayStStratfordRdANPR",
+    "lon": -1.59024
+  },
+  {
+    "lat": 54.9819,
+    "location": "NclSandyfordRdHuttonTerANPR",
+    "lon": -1.60056
+  },
+  {
+    "lat": 54.9804,
+    "location": "NclQueenVictoriaRdPercyBuilding",
+    "lon": -1.61679
+  },
+  {
+    "lat": 54.9803,
+    "location": "NclCedarRdGowlandAveWest",
+    "lon": -1.65388
+  },
+  {
+    "lat": 54.9722,
+    "location": "NclGreyStTheatreSouth",
+    "lon": -1.6123
+  },
+  {
+    "lat": 54.9811,
+    "location": "NclHeatonRdFalmouthRd",
+    "lon": -1.58094
+  },
+  {
+    "lat": 54.9814,
+    "location": "NclHeatonParkViewWest",
+    "lon": -1.58792
+  },
+  {
+    "lat": 54.9799,
+    "location": "NclHeatonParkRdBolingbrokeSt",
+    "lon": -1.58652
+  },
+  {
+    "lat": 54.9768,
+    "location": "NclJohnDobsonStNorthumberlandRdSouth",
+    "lon": -1.61136
+  },
+  {
+    "lat": 54.9804,
+    "location": "NclHeatonParkRdWandsworthRd",
+    "lon": -1.58665
+  },
+  {
+    "lat": 54.9809,
+    "location": "NclHeatonHallRdCardiganTer",
+    "lon": -1.58353
+  },
+  {
+    "lat": 54.9878,
+    "location": "NclKingswayQueensway",
+    "lon": -1.65493
+  },
+  {
+    "lat": 55.004,
+    "location": "NclStoneyhurstRectory",
+    "lon": -1.6091
+  },
+  {
+    "lat": 54.9877,
+    "location": "NclCypressAveGreenway",
+    "lon": -1.66025
+  },
+  {
+    "lat": 54.9815,
+    "location": "NclCedarRdLindenAveRndbtWest",
+    "lon": -1.66069
+  },
+  {
+    "lat": 54.9675,
+    "location": "NclQuaysideUnderHighLevelBridge",
+    "lon": -1.6097
+  },
+  {
+    "lat": 54.9769,
+    "location": "NclJohnDobsonStRidleyPl",
+    "lon": -1.61074
+  },
+  {
+    "lat": 54.9802,
+    "location": "NclCedarRdGowlandAveEast",
+    "lon": -1.65334
+  },
+  {
+    "lat": 54.9877,
+    "location": "NclKingswayQueenswayANPR",
+    "lon": -1.6549
+  },
+  {
+    "lat": 54.9813,
+    "location": "NclHeatonParkViewHeatonParkRd",
+    "lon": -1.58788
+  },
+  {
+    "lat": 54.9816,
+    "location": "NclCedarRdLindenAveRndbtEast",
+    "lon": -1.66018
+  },
+  {
+    "lat": 54.979,
+    "location": "NclQueenVictoriaRdBedsonBuilding",
+    "lon": -1.61759
+  },
+  {
+    "lat": 54.9815,
+    "location": "NclCedarRdLindenAveRndbtWestSouthCrossing",
+    "lon": -1.6605
+  },
+  {
+    "lat": 54.9802,
+    "location": "NclCedarRdGowlandAveWestSouthFootpath",
+    "lon": -1.65377
+  },
+  {
+    "lat": 54.969,
+    "location": "NclQuaysideTrinityChare",
+    "lon": -1.60444
+  },
+  {
+    "lat": 54.9694,
+    "location": "NclSideStCrownPosadaNorth",
+    "lon": -1.60866
+  },
+  {
+    "lat": 54.9693,
+    "location": "NclSideStCrownPosadaSouth",
+    "lon": -1.60865
+  },
+  {
+    "lat": 54.9698,
+    "location": "NclQuaysideWesleySquare",
+    "lon": -1.60168
+  },
+  {
+    "lat": 54.9721,
+    "location": "NclPilgrimStMarketLn",
+    "lon": -1.6105
+  },
+  {
+    "lat": 54.9681,
+    "location": "NclSwingBridgeWest",
+    "lon": -1.60849
+  },
+  {
+    "lat": 54.9753,
+    "location": "NclNorthumberlandStSavilleRowEast",
+    "lon": -1.61241
+  },
+  {
+    "lat": 54.9753,
+    "location": "NclNorthumberlandStSavilleRowWest",
+    "lon": -1.61256
+  },
+  {
+    "lat": 54.9744,
+    "location": "NclNorthumberlandStMonumentMall",
+    "lon": -1.61199
+  },
+  {
+    "lat": 54.9744,
+    "location": "NclNorthumberlandStThePearl",
+    "lon": -1.6118
+  },
+  {
+    "lat": 54.9795,
+    "location": "NclKingsRdTheArches",
+    "lon": -1.61532
+  },
+  {
+    "lat": 54.9764,
+    "location": "NclEllisonPl",
+    "lon": -1.60794
+  },
+  {
+    "lat": 54.9842,
+    "location": "NclOuseburnRdANPR",
+    "lon": -1.58781
+  },
+  {
+    "lat": 55.014,
+    "location": "NclNorhamRdCoquetAveANPR",
+    "lon": -1.6298
+  },
+  {
+    "lat": 54.9903,
+    "location": "NclArmstrongBrgJesmondParkW",
+    "lon": -1.58666
+  },
+  {
+    "lat": 54.9867,
+    "location": "NclOsborneHaldane",
+    "lon": -1.606
+  },
+  {
+    "lat": 54.9919,
+    "location": "NclGrosvenorAveJesmondDeneRd",
+    "lon": -1.5957
+  },
+  {
+    "lat": 54.9921,
+    "location": "NclGrosvenorAveOsborneRd",
+    "lon": -1.60355
+  },
+  {
+    "lat": 54.9914,
+    "location": "NclGrosvenorRdJesmondDeneRd",
+    "lon": -1.59556
+  },
+  {
+    "lat": 54.9921,
+    "location": "NclGrosvenorRdOsborneRd",
+    "lon": -1.60361
+  },
+  {
+    "lat": 54.9887,
+    "location": "NclJesmondDeneRdBentonBank",
+    "lon": -1.5931
+  },
+  {
+    "lat": 54.984,
+    "location": "NclNinthAveSecondAve",
+    "lon": -1.57904
+  },
+  {
+    "lat": 54.9845,
+    "location": "NclTenthAveSecondAve",
+    "lon": -1.57912
+  },
+  {
+    "lat": 54.991,
+    "location": "NclRavenswoodRdWest",
+    "lon": -1.57819
+  },
+  {
+    "lat": 54.991,
+    "location": "NclRavenswoodRdStanmoreRd",
+    "lon": -1.57627
+  },
+  {
+    "lat": 54.9914,
+    "location": "NclForsythRdBrentwoodAve",
+    "lon": -1.60956
+  },
+  {
+    "lat": 54.9777,
+    "location": "NclShieldsRdRobinsonStNorth",
+    "lon": -1.57746
+  },
+  {
+    "lat": 54.977,
+    "location": "NclShieldsRdMatthewStSouth",
+    "lon": -1.58149
+  },
+  {
+    "lat": 54.9776,
+    "location": "NclShieldsRdRobinsonStSouth",
+    "lon": -1.57748
+  },
+  {
+    "lat": 54.9772,
+    "location": "NclShieldsRdEdwinStNorth",
+    "lon": -1.58078
+  },
+  {
+    "lat": 54.979,
+    "location": "NclHeatonParkRdHeatonGrove",
+    "lon": -1.58531
+  },
+  {
+    "lat": 54.9804,
+    "location": "NclHeatonRdGuildfordPl",
+    "lon": -1.58049
+  },
+  {
+    "lat": 54.9765,
+    "location": "NclShieldsRdCliffordStSouth",
+    "lon": -1.58508
+  },
+  {
+    "lat": 54.9766,
+    "location": "NclShieldsRdCliffordStNorth",
+    "lon": -1.58514
+  },
+  {
+    "lat": 54.9736,
+    "location": "NclUrbanScienceBuildingSquareNorth",
+    "lon": -1.62477
+  },
+  {
+    "lat": 54.9734,
+    "location": "NclUrbanScienceBuildingSquareMid",
+    "lon": -1.62464
+  },
+  {
+    "lat": 54.9733,
+    "location": "NclUrbanScienceBuildingSquareSouth",
+    "lon": -1.62448
+  },
+  {
+    "lat": 54.9876,
+    "location": "NclTownMoorCrossroads",
+    "lon": -1.62447
+  },
+  {
+    "lat": 54.977,
+    "location": "NclShieldsRdRabySt",
+    "lon": -1.58006
+  },
+  {
+    "lat": 54.9775,
+    "location": "NclShieldsRdSquareEast",
+    "lon": -1.57837
+  },
+  {
+    "lat": 54.9774,
+    "location": "NclShieldsRdSquareWest",
+    "lon": -1.57866
+  },
+  {
+    "lat": 54.9708,
+    "location": "NclAdelaideTerNicholSt",
+    "lon": -1.65955
+  },
+  {
+    "lat": 54.9707,
+    "location": "NclAdelaideTerGeraldSt",
+    "lon": -1.65959
+  },
+  {
+    "lat": 54.9698,
+    "location": "NclAdelaideTerBeechSt",
+    "lon": -1.65453
+  },
+  {
+    "lat": 54.9697,
+    "location": "NclAdelaideTerMariaSt",
+    "lon": -1.6543
+  },
+  {
+    "lat": 54.9851,
+    "location": "NclSandyfordRdJesmondRdSouthbound",
+    "lon": -1.5969
+  },
+  {
+    "lat": 54.9849,
+    "location": "NclJesmondRdAllSaintsCemetery",
+    "lon": -1.59795
+  },
+  {
+    "lat": 54.9853,
+    "location": "NclSandyfordRdJesmondRdNorthbound",
+    "lon": -1.59708
+  },
+  {
+    "lat": 54.9849,
+    "location": "NclJesmondRdAllSaintsCemeteryNorth",
+    "lon": -1.59795
+  },
+  {
+    "lat": 54.9848,
+    "location": "NclJesmondRdAllSaintsCemeterySouth",
+    "lon": -1.59802
+  },
+  {
+    "lat": 54.9952,
+    "location": "NclRedHallDrMartelloGardensZebra",
+    "lon": -1.56702
+  },
+  {
+    "lat": 54.9948,
+    "location": "NclCoastRdRedHallDrNorthCrossing",
+    "lon": -1.5664
+  },
+  {
+    "lat": 54.9948,
+    "location": "NclCoastRdRedHallDr",
+    "lon": -1.56635
+  },
+  {
+    "lat": 54.9952,
+    "location": "NclRedHallDrMartelloGardens",
+    "lon": -1.56704
+  },
+  {
+    "lat": 54.9815,
+    "location": "NclCedarRdConventRd",
+    "lon": -1.6605
+  },
+  {
+    "lat": 54.991,
+    "location": "NclStephensonRdHeatonRdNewtonRdSE1",
+    "lon": -1.58337
+  },
+  {
+    "lat": 54.9909,
+    "location": "NclStephensonRdHeatonRdNewtonRdSE2",
+    "lon": -1.58341
+  },
+  {
+    "lat": 54.9908,
+    "location": "NclStephensonRdHeatonRdNewtonRdSW1",
+    "lon": -1.5835
+  },
+  {
+    "lat": 54.991,
+    "location": "NclStephensonRdHeatonRdNewtonRdSW2",
+    "lon": -1.58373
+  },
+  {
+    "lat": 54.9914,
+    "location": "NclStephensonRdHeatonRdNewtonRdNE1",
+    "lon": -1.58347
+  },
+  {
+    "lat": 54.9914,
+    "location": "NclStephensonRdHeatonRdNewtonRdNE2",
+    "lon": -1.58369
+  },
+  {
+    "lat": 54.9914,
+    "location": "NclStephensonRdHeatonRdNewtonRdNE3",
+    "lon": -1.58373
+  },
+  {
+    "lat": 54.9842,
+    "location": "NclJesmondRdAkensideTerrace",
+    "lon": -1.59979
+  },
+  {
+    "lat": 54.9914,
+    "location": "NclStephensonRdHeatonRdNewtonRdNE4",
+    "lon": -1.58329
+  },
+  {
+    "lat": 54.9695,
+    "location": "NclSideMilburnHouse",
+    "lon": -1.61071
+  },
+  {
+    "lat": 54.9791,
+    "location": "NclBarrasBridgeCivicCentre",
+    "lon": -1.61266
+  },
+  {
+    "lat": 54.9715,
+    "location": "NclQuaysideMarinersWharfHadriansWallPath",
+    "lon": -1.58961
+  },
+  {
+    "lat": 54.9736,
+    "location": "NclHeberSt",
+    "lon": -1.62332
+  },
+  {
+    "lat": 54.9761,
+    "location": "NclFalconarStLoversLn",
+    "lon": -1.60409
+  },
+  {
+    "lat": 54.9913,
+    "location": "NclStephensonRdHeatonRdNewtonRdSE3",
+    "lon": -1.58292
+  },
+  {
+    "lat": 54.9912,
+    "location": "NclStephensonRdHeatonRdNewtonRd",
+    "lon": -1.58367
+  }
+]

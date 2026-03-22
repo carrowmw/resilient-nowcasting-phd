@@ -1,0 +1,10 @@
+services:
+  agent-workspace:
+    build: .
+    container_name: my-ml-agent
+    volumes:
+      - .:/workspace
+    # Notice we don't even need the 'environment:' block anymore!
+    # Compose passes the .env file automatically.
+    stdin_open: true
+    tty: true
