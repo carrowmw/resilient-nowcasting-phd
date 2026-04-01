@@ -28,7 +28,9 @@ Since `Congestion_Level` is not present, `value` corresponds to the quantitative
 ## 3. Data Quality Summary
 
 ### Missing Values
-- **Traffic Data:** Exceptionally clean in terms of nulls. There are **0 missing values** across all columns.
+- **Traffic Data:** While there are **0 missing values** across all columns, this is likely because missing and zero-count rows have been pre-filtered. 
+    - **Temporal Gaps:** Analysis reveals significant gaps in the time series. The standard measurement frequency is **15 minutes** (the mode). However, **~23% of gaps** are larger than 15 minutes, with many being multiples (30, 45, 60m, etc.). Some gaps span several days or even over a year (max gap of 588 days).
+    - **Zero-Count Deletion:** Only 1,964 records (out of 21.1M) have a `value` of 0. This confirms that rows representing zero traffic or missing sensor readings were largely dropped from the dataset before storage, necessitating a re-indexing/resampling step to restore the true temporal continuity for modeling.
 - **Weather Data:** The **`units`** column is entirely empty (2,715,140 missing values) and should be dropped. All other 12 columns contain **0 missing values**.
 
 ### Outliers and Anomalies
@@ -43,5 +45,6 @@ Since `Congestion_Level` is not present, `value` corresponds to the quantitative
 
 ## 4. Next Steps for Pipeline Design
 1. **Data Cleaning:** Drop `units` from weather data. Filter or handle negative `value` anomalies in the traffic dataset.
-2. **Data Integration:** Use spatial coordinates (from the JSON files) to map traffic sensors to the nearest weather sensors, subsequently merging the dataframes on datetime (`dt` and `timestamp`) and location identifiers.
-3. **Feature Engineering:** Extract temporal features (hour, day of week, month) from the datetimes, pivot weather variables to columns, and aggregate traffic volumes to a consistent time-frequency (e.g., hourly).
+2. **Temporal Alignment:** Re-index the traffic dataset to a continuous 15-minute time series (resampling and filling gaps with zeros or imputed values) to restore physical continuity.
+3. **Data Integration:** Use spatial coordinates (from the JSON files) to map traffic sensors to the nearest weather sensors, subsequently merging the dataframes on datetime (`dt` and `timestamp`) and location identifiers.
+4. **Feature Engineering:** Extract temporal features (hour, day of week, month) from the datetimes, pivot weather variables to columns, and aggregate traffic volumes to a consistent time-frequency (e.g., hourly).

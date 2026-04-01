@@ -1,0 +1,260 @@
+Directory structure:
+└── ml-agent-workspace/
+    ├── README.md
+    ├── docker-compose.yml
+    ├── Dockerfile
+    ├── eda_summary.md
+    ├── EXPERIMENTS.md
+    ├── GEMINI.md
+    ├── requirements.txt
+    └── docs/
+        └── summary.md
+
+================================================
+FILE: README.md
+================================================
+docker compose run --rm agent-workspace bash
+
+
+
+================================================
+FILE: docker-compose.yml
+================================================
+services:
+  agent-workspace:
+    build: .
+    container_name: my-ml-agent
+    volumes:
+      - .:/workspace
+    # Notice we don't even need the 'environment:' block anymore!
+    # Compose passes the .env file automatically.
+    stdin_open: true
+    tty: true
+
+
+
+================================================
+FILE: Dockerfile
+================================================
+# Use a lightweight Python base image
+FROM python:3.11-slim
+
+# Prevent interactive prompts during apt installations
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 1. Install system dependencies (Adding curl and gnupg for Node.js)
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    unzip \
+    gnupg \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 2. Install Node.js (Required for Gemini)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 3. Install the Agents
+# Install Gemini via npm
+RUN npm install -g @google/gemini-cli
+# Install Claude via native binary
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# 4. Set up the working directory inside the container
+WORKDIR /workspace
+
+# 5. Copy your ML requirements and install them
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Set the default command to open a bash shell
+CMD ["/bin/bash"]
+
+
+================================================
+FILE: eda_summary.md
+================================================
+# Exploratory Data Analysis (EDA) Summary
+
+## 1. Datasets Overview
+
+### Traffic Data (`traffic_20230108_20260108.parquet`)
+- **Size:** 21,144,475 records, 6 columns.
+- **Columns:** `category` (str), `dir` (str), `dt` (datetime64), `location` (str), `value` (int64), `veh_class` (str).
+- **Date Range:** 2023-03-02 to 2026-01-08.
+- **Description:** Contains traffic measurements (e.g., flow) at various sensor locations broken down by vehicle class (e.g., 'person', 'car') and direction.
+
+### Weather Data (`weather_20230108_20260108.parquet`)
+- **Size:** 2,715,140 records, 13 columns.
+- **Columns:** `sensor_name` (str), `variable` (str - e.g., 'Humidity', 'Solar Radiation'), `timestamp` (datetime64), `value` (float64), `units` (object), `flagged` (bool), `location_wkt` (str), `sensor_centroid_latitude` (float64), `sensor_centroid_longitude` (float64), `sensor_height_above_ground` (float64), `ground_height_above_sea_level` (float64), `broker_name` (str), `raw_id` (str).
+- **Date Range:** 2023-01-08 to 2025-10-20.
+
+### Sensor Metadata JSONs
+- **`traffic_sensors.json`:** Maps string `location` identifiers to numeric `lat` and `lon` coordinates.
+- **`weather_sensors.json`:** Maps `Sensor_Name` identifiers to `Location_WKT`, `Sensor_Centroid_Latitude`, `Sensor_Centroid_Longitude`, and elevation details.
+
+---
+
+## 2. Likely Target Variable
+The likely target variable for predictive modeling is **`value`** in the **Traffic dataset**. 
+Since `Congestion_Level` is not present, `value` corresponds to the quantitative traffic flow/volume or speed metric at a given location and time. The goal of an ML pipeline here would likely be to predict the future traffic `value` using historical traffic patterns and correlated weather phenomena.
+
+---
+
+## 3. Data Quality Summary
+
+### Missing Values
+- **Traffic Data:** Exceptionally clean in terms of nulls. There are **0 missing values** across all columns.
+- **Weather Data:** The **`units`** column is entirely empty (2,715,140 missing values) and should be dropped. All other 12 columns contain **0 missing values**.
+
+### Outliers and Anomalies
+- **Negative Traffic Values:** The `value` column in the traffic dataset has a minimum value of **-27**. Assuming this represents a physical count of vehicles or traffic flow, negative numbers are physically impossible and represent anomalous readings, sensor errors, or special null-equivalent codes (e.g., similar to a -99 placeholder). These must be filtered or imputed before training.
+- **Traffic Maximums:** The maximum `value` is 2,691, with a mean of 13.3 and a 75th percentile of 10. The large max value may represent sudden heavy bursts of traffic or aggregated anomalies.
+
+### Class Imbalances / Distributions
+- **Traffic `category`:** Heavily imbalanced towards `'flow'` (20.5M out of 21.1M records). 
+- **Traffic `veh_class`:** The most frequent class is `'person'` (6.8M records), though there are 16 unique vehicle classes overall.
+- **Traffic `dir` (Direction):** 'east_to_west' is the most heavily represented direction (4.1M records) out of 122 unique directions.
+- **Weather `variable`:** Dominated by `'Humidity'` (1.38M out of 2.7M records) and collected predominantly by the `aq_mesh_api` broker.
+
+## 4. Next Steps for Pipeline Design
+1. **Data Cleaning:** Drop `units` from weather data. Filter or handle negative `value` anomalies in the traffic dataset.
+2. **Data Integration:** Use spatial coordinates (from the JSON files) to map traffic sensors to the nearest weather sensors, subsequently merging the dataframes on datetime (`dt` and `timestamp`) and location identifiers.
+3. **Feature Engineering:** Extract temporal features (hour, day of week, month) from the datetimes, pivot weather variables to columns, and aggregate traffic volumes to a consistent time-frequency (e.g., hourly).
+
+
+================================================
+FILE: EXPERIMENTS.md
+================================================
+# Machine Learning Experiment Ledger
+
+| Date | Branch | Core Prompt / Goal | Outcome |
+| :--- | :----- | :----------------- | :------ |
+
+
+
+================================================
+FILE: GEMINI.md
+================================================
+# SYSTEM ROLE: SENIOR MACHINE LEARNING ENGINEER
+
+You are an autonomous Machine Learning Agent operating within a containerized Linux environment. You have read/write access to the local filesystem. Your objective is to build, test, and debug machine learning pipelines securely and reproducibly.
+
+## 1. RULES OF ENGAGEMENT
+
+- **Plan First:** Do not write execution code immediately upon receiving a complex request. First, output a step-by-step architectural plan to a file named `plan.md`. Wait for the user's explicit approval before writing the Python scripts.
+- **Safety First (Git):** Before making any multi-file changes or refactoring working code, you MUST execute `git add .` and `git commit -m "Auto-commit before [Task Name]"` to ensure the user has a rollback point.
+- **Autonomy:** You have permission to run standard bash commands (e.g., `ls`, `cat`, `python`, `pip install`) to explore the environment and test your code. Do not ask for permission to run read-only or testing commands. Do ask for permission before deleting entire directories or dropping databases.
+
+## 2. MACHINE LEARNING STANDARDS
+
+- **Reproducibility:** Every script must include standard random seed initialization for numpy, pandas, scikit-learn, and torch/tensorflow at the very top of the execution block.
+- **Defensive Data Handling:** Before passing data into a model, you must explicitly print/log the tensor or dataframe shapes (e.g., `X.shape`, `y.shape`). If there is a mismatch, catch it and fix the reshaping logic before proceeding.
+- **Directory Structure:** Adhere strictly to the workspace structure.
+  - Raw data is in `./data/`. Treat this as READ-ONLY.
+  - Python scripts go in `./src/`.
+  - Trained model artifacts (`.pkl`, `.pt`, `.h5`) must be saved to `./models/`.
+
+## 3. CODE QUALITY
+
+- Write modular, functional Python (3.11+). Avoid massive, monolithic scripts.
+- Use Python type hints (`def process_data(df: pd.DataFrame) -> np.ndarray:`) for all function definitions.
+- Include concise docstrings explaining the input/output of complex data transformations.
+- Favor logging (`import logging`) over standard `print()` statements for tracking training epochs and data pipeline progress.
+
+## 4. ERROR RESOLUTION
+
+- If a Python script throws an error during your testing, do not immediately ask the user for help.
+- Read the traceback, identify the exact line of failure (often a tensor dimension mismatch, a missing column, or a NaN value), apply a fix, and rerun the script.
+- Only present the final, working output to the user, summarizing the errors you encountered and how you resolved them.
+
+## 5. OFFENSIVE PROGRAMMING PARADIGM (FAIL FAST / FAIL HARD)
+
+- You are writing prototype ML code. Do NOT write defensive code that silently handles errors, coerces data types, or suppresses exceptions.
+- **Assert Everything:** Use `assert` statements aggressively at the top of functions to validate matrix shapes, exact data types, and expected column names.
+- **Let it Burn:** Never use a bare `except:` block. If an unexpected error occurs, the script must crash immediately and print the full traceback so the error can be diagnosed.
+- **Tripwires:** If a tensor operation or pandas transformation might introduce NaNs or infinites, add an explicit check immediately after the operation to crash the script if they are detected.
+- **No Silent Drops:** Do not use `.dropna()` or `.fillna()` silently unless explicitly instructed as part of the data cleaning plan.
+
+## 6. THE EXPERIMENT LEDGER (DOCUMENTATION MANDATE)
+
+- You are required to maintain a strict log of all major architectural changes and model training runs in `EXPERIMENTS.md`.
+- **Branching Protocol:** Whenever you are instructed to build a new model or start a major feature, you must first ask the user if they have created a new Git branch.
+- **Logging Protocol:** Upon completing a training run, building a new pipeline component, or hitting a dead end, you MUST append a new row to the table in `EXPERIMENTS.md`.
+- The row must include the current date, the active Git branch name, a summary of the exact prompt/goal that initiated the work, and the mathematical or functional outcome.
+
+
+
+================================================
+FILE: requirements.txt
+================================================
+pandas
+scikit-learn
+numpy
+torch
+pyarrow
+fastparquet
+
+
+================================================
+FILE: docs/summary.md
+================================================
+# Agentic Workflow Summary
+
+## Phase 1: Infrastructure & Security
+
+The foundation of this workflow is an isolated, disposable environment where your code is safe, but the agent's memory is intentionally volatile.
+
+- The Unified Dockerfile: Your image is built on a lightweight Python base. It installs system dependencies, Node.js (for Gemini CLI), and native curl binaries (for Claude Code), alongside your Python ML requirements.
+
+- Volume Mounts (The Portal): You map your local Mac directory to /workspace inside the container. This ensures your code, data, and models are permanently saved on your host machine, while the agent edits them live from inside the container.
+
+- Security (.env & .gitignore): API keys are never baked into the Docker image or stored globally in ~/.zshrc. They are strictly kept in a local .env file, which is added to .gitignore to prevent accidental GitHub leaks.
+
+- The --rm Mandate: You boot the environment using docker compose run --rm agent-workspace bash. The --rm flag is critical: it ensures that the moment you exit the shell, the container and the agent's internal chat history are completely destroyed, giving you a pristine state for your next session.
+
+## Phase 2: The Agent's Operating System (System Prompt)
+
+The agent is governed by a strict system prompt (saved as GEMINI.md or CLAUDE.md in your workspace) that establishes its rules of engagement.
+
+- Plan First: The agent is forbidden from writing complex execution code immediately. It must first write a step-by-step architectural plan to plan.md and wait for human approval.
+
+- Safety First (Git): The agent must execute git commit to create local rollback points before refactoring working code or beginning new major tasks.
+
+- The Experiment Ledger: The agent is mandated to maintain an EXPERIMENTS.md file, logging the date, active branch, prompt used, and the mathematical outcome of every model training run.
+
+## Phase 3: The "Offensive ML" Coding Paradigm
+
+Machine learning prototyping requires "Offensive Programming." The agent is instructed to write code that fails fast and hard rather than silently coercing bad data.
+
+- Ruthless Assertions: The agent must explicitly assert tensor shapes, dataframe columns, and exact data types at the top of every major function.
+
+- Let it Burn: Generic except: blocks are banned. If a matrix dimension mismatches, the script must crash immediately and print the full traceback for diagnosis.
+
+- NaN Tripwires: The agent must place explicit checks after transformations to crash the script if unexpected NaNs or infinite values are introduced.
+
+- No Silent Drops: Functions like .dropna() are banned unless explicitly approved in the data cleaning plan.
+
+## Phase 4: The Execution Loop (Human-in-the-Loop Orchestration)
+
+You act as the Senior Engineer; the AI acts as the Junior Developer. You do not ask the agent to "build a pipeline." You micro-batch its tasks.
+
+- The Blind EDA: You begin by asking the agent to analyze the raw data without telling it what the data is or what your goal is. This forces the agent to read the literal matrix (identifying true anomalies like time-series gaps) rather than hallucinating a perfect dataset.
+
+- The Common Preprocessing Pipeline: Based on the EDA, the agent builds a single, hardened data pipeline (handling resampling, imputation, and spatial joins) that outputs clean matrices (e.g., .npy files). This is committed to the main Git branch.
+
+- The Crash-and-Fix Loop: When the agent writes a script, you run it. When it crashes (due to your offensive programming assertions), you do not fix it yourself. You paste the exact traceback back to the agent and instruct it to resolve the anomaly.
+
+## Phase 5: State Management (Git Branching & Memory Wipes)
+
+To prevent the agent's context window from degrading into a polluted mess of broken PyTorch tensors and overlapping logic, you strictly sandbox your experiments.
+
+- Model Sandboxing: Every new model architecture (e.g., XGBoost, Random Forest, Neural Networks) gets its own Git branch branched off main.
+
+- The Context Wipe: Before starting a new branch or moving to a radically new step in the pipeline, you explicitly clear the agent's memory (using /clear or restarting the CLI).
+
+- Re-Grounding: Upon starting a fresh branch or cleared session, you point the agent to the current working state of the files and the EXPERIMENTS.md ledger, ensuring it builds exclusively on clean, working logic.
+
+
