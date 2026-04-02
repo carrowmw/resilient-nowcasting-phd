@@ -16,7 +16,7 @@ class SensorMappingError(Exception):
 
 
 class PreprocessingPipeline:
-    def __init__(self, frequency: str = '15T'):
+    def __init__(self, frequency: str = '15min'):
         self.frequency = frequency
         logger.info(f"Initialized PreprocessingPipeline with frequency: {self.frequency}")
 
@@ -50,12 +50,36 @@ class PreprocessingPipeline:
         # Group and resample
         groups = ['location', 'category', 'veh_class', 'dir']
         
-        def reindex_group(g):
-            # min_count=1 ensures that completely missing bins stay NaN instead of becoming 0
-            return g.set_index('dt')['value'].resample(self.frequency).sum(min_count=1).reindex(expected_index)
-
-        resampled_series = df.groupby(groups).apply(reindex_group)
-        final_df = resampled_series.reset_index()
+        # We'll build the continuous grid for each group explicitly
+        resampled_list = []
+        unique_groups = df[groups].drop_duplicates().dropna(subset=groups)
+        
+        for _, row in unique_groups.iterrows():
+            logger.info(f"DEBUG: Processing group: {row.to_dict()}")
+            group_mask = True
+            for col in groups:
+                group_mask &= (df[col] == row[col])
+            
+            group_df = df[group_mask].set_index('dt')
+            # Resample and reindex to global grid
+            group_resampled = group_df['value'].resample(self.frequency).sum(min_count=1).reindex(expected_index)
+            
+            # Reconstruct the group columns
+            temp_df = group_resampled.reset_index()
+            # If the index was named 'dt', it appears as 'dt'. If unnamed, it appears as 'index'.
+            if 'index' in temp_df.columns:
+                temp_df = temp_df.rename(columns={'index': 'dt'})
+            
+            # Ensure the value column is correctly named
+            potential_value_cols = [c for c in temp_df.columns if c != 'dt']
+            if potential_value_cols:
+                temp_df = temp_df.rename(columns={potential_value_cols[0]: 'value'})
+            for col in groups:
+                temp_df[col] = row[col]
+            
+            resampled_list.append(temp_df)
+        
+        final_df = pd.concat(resampled_list, ignore_index=True)
 
         # Grid Validation Tripwire
         observed_groups = df[groups].drop_duplicates()
