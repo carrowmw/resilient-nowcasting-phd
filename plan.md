@@ -1,47 +1,42 @@
-# Implementation Plan - MaskedSpatiotemporalEncoder
+# Implementation Plan - DecoupledDecoders and Loss
 
 ## Objective
-Implement the `MaskedSpatiotemporalEncoder` in `src/encoder.py` to process dynamic time-series data with spatiotemporal dependencies using GATv2 and Transformers.
+Implement `DecoupledDecoders` and `compute_loss` in `src/decoders.py` to handle joint imputation and uncertainty-aware forecasting using a ZINB distribution.
 
 ## Proposed Changes
 
-### 1. Environment Setup
-- Install `torch-geometric` and its dependencies (`torch-scatter`, `torch-sparse`) to support GATv2Conv.
+### 1. Module Implementation (`src/decoders.py`)
+- **DecoupledDecoders Class**:
+  - `__init__`:
+    - `impute_layer`: `nn.Linear(hidden_dim, time_series_dim)`
+    - `forecast_layer`: `nn.Linear(hidden_dim, 3)` (for $\mu, \theta, \pi$)
+  - `forward(latent_embeddings)`:
+    - Input: `[batch_size, num_nodes, seq_len, hidden_dim]`
+    - **Imputation**: Apply `impute_layer` to all timesteps.
+    - **Forecasting**: Extract last timestep `[:, :, -1, :]`. Apply `forecast_layer`.
+    - **ZINB Constraints**:
+      - $\pi = \text{sigmoid}(\text{logits}_{\pi})$
+      - $\mu = \text{softplus}(\text{logits}_{\mu}) + 1e-6$
+      - $\theta = \text{softplus}(\text{logits}_{\theta}) + 1e-6$
 
-### 2. Module Implementation (`src/encoder.py`)
-- **Initialization**:
-  - Define `GATv2Conv` layers for spatial processing.
-  - Define `TransformerEncoder` for temporal processing.
-  - Parameters: `num_nodes`, `seq_len`, `time_series_dim`, `hidden_dim`, `num_heads`, `num_layers`.
-- **Forward Pass**:
-  - **Spatial Processing**:
-    - Input `dynamic_features`: `[batch_size, num_nodes, seq_len, time_series_dim]`.
-    - Reshape to `[batch_size * seq_len, num_nodes, time_series_dim]`? No, PyG prefers a flat node format.
-    - Better: Iterate over `seq_len` or reshape to `[batch_size * seq_len * num_nodes, time_series_dim]` and use a batch vector for PyG.
-    - However, since `edge_index` is likely the same for all time steps and batches (from `graph_learner`), we can treat `batch_size * seq_len` as the "batch dimension" for the graph.
-    - Reshape `dynamic_features` to `[batch_size * seq_len * num_nodes, time_series_dim]`.
-    - Create a batch vector if needed, but if `edge_index` is for a single graph of `num_nodes`, we can use `edge_index` with offset or repeat it.
-    - Actually, `GATv2Conv` can handle batched graphs if we provide a giant `edge_index`.
-    - Alternatively, reshape to `(B*T, N, D)` and use `GATv2Conv` if we handle it carefully. PyG layers usually take `(N, D)` and `edge_index`.
-    - Strategy: 
-      1. Reshape `[B, N, T, D]` -> `[T, B, N, D]`.
-      2. For each time step `t`:
-         - Apply GAT to `[B*N, D]` with a block-diagonal `edge_index`?
-         - Or just loop over `T` and `B`? (Slow).
-         - Best PyG way: Reshape `[B, N, T, D]` -> `[B * T * N, D]`. Construct a giant `edge_index` that connects nodes within each `(b, t)` block.
-  - **Temporal Processing**:
-    - Reshape output of spatial processing back to `[batch_size, num_nodes, seq_len, hidden_dim]`.
-    - Permute to `[seq_len, batch_size * num_nodes, hidden_dim]` for `TransformerEncoder`.
-    - Apply `TransformerEncoder`.
-    - Reshape back to `[batch_size, num_nodes, seq_len, hidden_dim]`.
+### 2. Loss Implementation
+- **compute_zinb_nll(y_true, mu, theta, pi)**:
+  - Implement the Negative Log-Likelihood for ZINB.
+  - Use `torch.lgamma` for factorial terms.
+  - Clamp `torch.log` to `1e-6`.
+  - Handle $y=0$ and $y>0$ cases for numerical stability.
+- **compute_loss(...)**:
+  - Imputation Loss: `MSE(imputed, target_impute)` (Note: ARCHITECTURE.md says "strictly on artificially masked nodes", but for the module level, we'll implement the basic MSE and can add masking logic if the mask is provided).
+  - Forecasting Loss: `compute_zinb_nll`.
+  - Total Loss: $w_{forecast} \cdot \mathcal{L}_{forecast} + w_{impute} \cdot \mathcal{L}_{impute}$.
 
 ### 3. Offensive Unit Test
-- Instantiate `MaskedSpatiotemporalEncoder`.
-- Dummy data: `B=4, N=50, T=12, D=3`.
-- Mock `edge_index` and `edge_weight`.
-- Assert output shape.
-- Assert gradients flow to both GAT and Transformer.
+- Instantiate `DecoupledDecoders`.
+- Mock inputs and targets.
+- Verify:
+  - Output shapes.
+  - NaN tripwire on loss.
+  - Gradient flow to both decoder heads.
 
 ## Verification Plan
-- Run `python src/encoder.py` and ensure it passes all assertions.
-- Check for NaNs and ensure the computation graph is intact.
+- Run `python src/decoders.py` and verify all assertions pass.
