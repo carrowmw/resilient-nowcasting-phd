@@ -8,6 +8,8 @@ from encoder import MaskedSpatiotemporalEncoder
 from decoders import DecoupledDecoders, compute_loss
 from dataset import ResilientIoTDataset
 
+from typing import Tuple
+
 class ResilientIoTPipeline(nn.Module):
     """
     ResilientIoTPipeline: End-to-end spatiotemporal model for IoT sensor networks.
@@ -44,7 +46,7 @@ class ResilientIoTPipeline(nn.Module):
             time_series_dim=time_series_dim
         )
 
-    def forward(self, batch: dict) -> torch.Tensor:
+    def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
             batch (dict): Expected keys:
@@ -54,7 +56,7 @@ class ResilientIoTPipeline(nn.Module):
                 - target_impute: [batch_size, num_nodes, seq_len, time_series_dim]
                 - node_mask: [batch_size, num_nodes, seq_len, time_series_dim] (or related)
         Returns:
-            total_loss: Scalar torch.Tensor
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: (total_loss, loss_impute, loss_forecast)
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
@@ -75,7 +77,7 @@ class ResilientIoTPipeline(nn.Module):
         imputed_features, mu, theta, pi = self.decoders(latent_embeddings)
         
         # 4. Compute Joint Loss
-        loss = compute_loss(
+        loss, loss_impute, loss_forecast = compute_loss(
             imputed_features=imputed_features,
             target_impute=target_impute,
             mu=mu,
@@ -87,7 +89,7 @@ class ResilientIoTPipeline(nn.Module):
         # CRITICAL SAFEGUARD
         assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
         
-        return loss
+        return loss, loss_impute, loss_forecast
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
