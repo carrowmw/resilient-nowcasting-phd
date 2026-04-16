@@ -1,0 +1,13 @@
+parameters:
+  lr:
+    distribution: log_uniform_values
+    min: 1.0e-05
+    max: 1.0e-02
+  w_forecast:
+    distribution: uniform
+    min: 0.5
+    max: 5.0
+  w_impute:
+    distribution: uniform
+    min: 0.5
+    max: 5.0

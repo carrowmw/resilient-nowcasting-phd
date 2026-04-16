@@ -168,8 +168,10 @@ def run_training(args, init_wandb=True) -> float:
         
     return avg_val_loss
 
+from logger import setup_logger
+
 def main():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = setup_logger("train_pipeline")
     args = parse_args()
     run_training(args, init_wandb=True)
 

@@ -4,3 +4,8 @@ numpy
 torch
 pyarrow
 fastparquet
+torch-geometric
+wandb
+optuna
+optuna-integration
+pyyaml
