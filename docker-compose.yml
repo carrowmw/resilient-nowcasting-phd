@@ -1,6 +1,9 @@
 services:
+  # Run locally on mac for development.
   agent-workspace:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
     container_name: my-ml-agent
     volumes:
       - .:/workspace
@@ -8,3 +11,35 @@ services:
     # Compose passes the .env file automatically.
     stdin_open: true
     tty: true
+
+  # Run on GPU server for training.
+  gpu-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: gpu-executor
+    volumes:
+      - .:/workspace
+    # We explicitly pass the WANDB_API_KEY from the server's .env file
+    environment:
+      - WANDB_API_KEY=${WANDB_API_KEY}
+    # This block maps the physical server GPUs into the container
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0", "1"]
+              capabilities: [gpu]
+
+  # Run on local CPU server for testing.
+  cpu-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: cpu-executor
+    volumes:
+      - .:/workspace
+    # We explicitly pass the WANDB_API_KEY from the server's .env file
+    environment:
+      - WANDB_API_KEY=${WANDB_API_KEY}

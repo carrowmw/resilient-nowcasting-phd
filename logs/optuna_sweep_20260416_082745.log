@@ -1,0 +1,17 @@
+2026-04-16 08:27:45,286 - root - INFO - Logger initialized. Writing to /workspace/logs/optuna_sweep_20260416_082745.log
+2026-04-16 08:27:45,286 - root - INFO - Starting Optuna Hyperparameter Sweep...
+2026-04-16 08:27:45,669 - train - INFO - Using device: cpu
+2026-04-16 08:27:45,703 - train - INFO - Starting training loop...
+2026-04-16 08:27:46,192 - train - INFO - Epoch 1/2 - Train Loss: 15.6603 (Impute: 1.1181, Forecast: 14.5422) | Val Loss: 12.5059
+2026-04-16 08:27:46,660 - train - INFO - Epoch 2/2 - Train Loss: 10.9868 (Impute: 1.0901, Forecast: 9.8968) | Val Loss: 8.9318
+2026-04-16 08:27:46,661 - train - INFO - Training complete.
+2026-04-16 08:27:46,663 - train - INFO - Using device: cpu
+2026-04-16 08:27:46,665 - train - INFO - Starting training loop...
+2026-04-16 08:27:47,319 - train - INFO - Epoch 1/2 - Train Loss: 9.3082 (Impute: 1.0803, Forecast: 8.2279) | Val Loss: 6.3781
+2026-04-16 08:27:47,793 - train - INFO - Epoch 2/2 - Train Loss: 6.3594 (Impute: 1.0233, Forecast: 5.3361) | Val Loss: 6.0281
+2026-04-16 08:27:47,793 - train - INFO - Training complete.
+2026-04-16 08:27:47,795 - root - INFO - Sweep complete. Best hyperparameters:
+2026-04-16 08:27:47,795 - root - INFO -     lr: 0.004449734869893568
+2026-04-16 08:27:47,795 - root - INFO -     w_forecast: 1.7690177024476128
+2026-04-16 08:27:47,795 - root - INFO -     w_impute: 2.904637557632315
+2026-04-16 08:27:47,796 - root - INFO - Best validation loss: 6.028089761734009

@@ -1,0 +1,7 @@
+/workspace/src/encoder.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+2026-04-16 08:51:09,806 - __main__ - INFO - Starting training loop...
+2026-04-16 08:51:10,043 - __main__ - INFO - Epoch 1/3 - Train Loss: 18.1075 (Impute: 1.1352, Forecast: 16.9723) | Val Loss: 11.0349
+2026-04-16 08:51:10,267 - __main__ - INFO - Epoch 2/3 - Train Loss: 11.1591 (Impute: 1.0872, Forecast: 10.0719) | Val Loss: 8.1726
+2026-04-16 08:51:10,481 - __main__ - INFO - Epoch 3/3 - Train Loss: 8.2648 (Impute: 1.0284, Forecast: 7.2364) | Val Loss: 7.6254
+2026-04-16 08:51:10,482 - __main__ - INFO - Training complete.
