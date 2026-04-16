@@ -22,7 +22,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Install Gemini via npm
 RUN npm install -g @google/gemini-cli
 # Install Claude via native binary
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && CLAUDE_BIN="$(find /root/.local/share/claude/versions -maxdepth 1 -type f | sort | tail -n 1)" \
+    && test -n "$CLAUDE_BIN" \
+    && ln -sf "$CLAUDE_BIN" /usr/local/bin/claude \
+    && chmod +x /usr/local/bin/claude
 
 # 4. Set up the working directory inside the container
 WORKDIR /workspace

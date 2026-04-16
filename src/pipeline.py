@@ -10,12 +10,14 @@ from dataset import RealIoTDataset
 
 from typing import Tuple
 
+logger = logging.getLogger(__name__)
+
 class ResilientIoTPipeline(nn.Module):
     """
     ResilientIoTPipeline: End-to-end spatiotemporal model for IoT sensor networks.
     Integrates Topology Inference, Spatiotemporal Encoding, and Multi-Task Decoders.
     """
-    def __init__(self, 
+    def __init__(self,
                  num_nodes: int,
                  static_feat_dim: int,
                  time_series_dim: int,
@@ -24,27 +26,30 @@ class ResilientIoTPipeline(nn.Module):
                  hidden_dim: int = 64,
                  sparsity_threshold: float = 0.5):
         super(ResilientIoTPipeline, self).__init__()
-        
+
         # 1. Topology Inference
         self.graph_learner = DynamicGraphLearner(
-            static_feat_dim=static_feat_dim, 
-            embedding_dim=embedding_dim, 
+            static_feat_dim=static_feat_dim,
+            embedding_dim=embedding_dim,
             sparsity_threshold=sparsity_threshold
         )
-        
+        logger.info(f"Initialized DynamicGraphLearner with static_feat_dim={static_feat_dim}, embedding_dim={embedding_dim}, sparsity_threshold={sparsity_threshold}, total_params={sum(p.numel() for p in self.graph_learner.parameters())}")
+
         # 2. Spatiotemporal Feature Extraction
         self.encoder = MaskedSpatiotemporalEncoder(
-            num_nodes=num_nodes, 
-            seq_len=seq_len, 
-            time_series_dim=time_series_dim, 
+            num_nodes=num_nodes,
+            seq_len=seq_len,
+            time_series_dim=time_series_dim,
             hidden_dim=hidden_dim
         )
-        
+        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
+
         # 3. Multi-Task Decoders
         self.decoders = DecoupledDecoders(
-            hidden_dim=hidden_dim, 
+            hidden_dim=hidden_dim,
             time_series_dim=time_series_dim
         )
+        logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
 
     def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -62,20 +67,20 @@ class ResilientIoTPipeline(nn.Module):
         dynamic_features = batch['dynamic_features']
         target_forecast = batch['target_forecast']
         target_impute = batch['target_impute']
-        
+
         # Defensive Data Handling
         # Replace NaNs (injected by our Dataset masking) with 0.0 to allow PyTorch ops
         dynamic_features_clean = torch.nan_to_num(dynamic_features, nan=0.0)
-        
+
         # 1. Graph Learner
         edge_index, edge_weight = self.graph_learner(static_features)
-        
+
         # 2. Encoder
         latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_weight)
-        
+
         # 3. Decoders
         imputed_features, mu, theta, pi = self.decoders(latent_embeddings)
-        
+
         # 4. Compute Joint Loss
         loss, loss_impute, loss_forecast = compute_loss(
             imputed_features=imputed_features,
@@ -85,10 +90,10 @@ class ResilientIoTPipeline(nn.Module):
             pi=pi,
             target_forecast=target_forecast
         )
-        
+
         # CRITICAL SAFEGUARD
         assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
-        
+
         return loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi
 
 if __name__ == "__main__":
@@ -110,10 +115,10 @@ if __name__ == "__main__":
     # --- 1. Dataset Initialization & Mock Data ---
     # The Dataset defined in dataset.py expects (N, S) for static and (N, T, D) for dynamic.
     # We want a pipeline that gets batches with the 'num_nodes' dimension intact.
-    # We will generate a mock Dataset that yields identical static features, and (N, T, D) 
+    # We will generate a mock Dataset that yields identical static features, and (N, T, D)
     # structured batches. However, since the dataset yields (T, D) per sample and we want
     # [B, N, T, D] out of the DataLoader, we must adjust how we interact with it or mock the batch.
-    
+
     # We'll create a custom mock Dataset specifically for testing the pipeline requirements.
     class MockPipelineDataset(torch.utils.data.Dataset):
         def __init__(self, size):
@@ -126,7 +131,7 @@ if __name__ == "__main__":
             mask = torch.rand_like(dyn) < 0.15
             dyn_masked = dyn.clone()
             dyn_masked[mask] = float('nan')
-            
+
             return {
                 # We return static feature entirely since it's shared across the batch
                 'static_features': torch.randn(num_nodes, static_feat_dim),
@@ -135,9 +140,9 @@ if __name__ == "__main__":
                 'target_forecast': torch.randint(0, 50, (num_nodes,)).float(),
                 'node_mask': mask
             }
-            
+
     dataset = MockPipelineDataset(size=20)
-    
+
     def custom_collate(batch_list):
         # The pipeline expects static_features to be exactly [num_nodes, static_feat_dim]
         # not [B, num_nodes, static_feat_dim]. So we just take the first one.
@@ -158,7 +163,7 @@ if __name__ == "__main__":
         time_series_dim=time_series_dim,
         seq_len=seq_len
     )
-    
+
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     # --- 3. Training Loop (2 Epochs) ---
@@ -167,21 +172,21 @@ if __name__ == "__main__":
         epoch_loss = 0.0
         for batch_idx, batch in enumerate(dataloader):
             optimizer.zero_grad()
-            
+
             # Forward Pass
             loss, _, _, _, _, _, _ = model(batch)
-            
+
             # Backward Pass
             loss.backward()
-            
+
             # CRITICAL SAFEGUARD: Gradient Clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            
+
             # Optimizer Step
             optimizer.step()
-            
+
             epoch_loss += loss.item()
-            
+
         avg_loss = epoch_loss / len(dataloader)
         logger.info(f"Epoch {epoch + 1}/{num_epochs} - Avg Loss: {avg_loss:.4f}")
 

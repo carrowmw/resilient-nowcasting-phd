@@ -104,6 +104,10 @@ docker compose run --rm agent-workspace bash
 Once you have pushed your main branch to GitHub and pulled it down to the server, you will run the GPU container to execute the W&B training script:
 
 ```Bash
+docker compose run --rm gpu-runner python src/process_all.py
+```
+
+```Bash
 # This builds the CUDA image and runs your training script
 docker compose run --rm gpu-runner python src/train.py --epochs 50 --batch_size 128
 ```
@@ -126,7 +130,7 @@ FILE: ARCHITECTURE.md
 
 ## Objective
 
-Implement an end-to-end, joint spatiotemporal graph neural network in PyTorch and PyTorch Geometric (PyG). The model is designed for an urban IoT sensor network (specifically pedestrian counting every 15 minutes). It must be self-healing, capable of dynamic graph inference, missing feature imputation, and uncertainty-aware forecasting.
+Implement an end-to-end, joint spatiotemporal graph neural network in PyTorch and PyTorch Geometric (PyG). The model is designed for an urban IoT sensor network (predicting a configurable target traffic stream, defined by vehicle class and spatial direction, every 15 minutes). It must be self-healing, capable of dynamic graph inference, missing feature imputation, and uncertainty-aware forecasting.
 
 ## Core Paradigm
 
@@ -164,7 +168,7 @@ static_features: [num_nodes, static_feat_dim] (Physical sensor attributes).
 
 dynamic_features: [batch_size, num_nodes, seq_len, time_series_dim] (Historical sequences with ~15% artificial NaN masking applied for self-supervised imputation training).
 
-target_forecast: [batch_size, num_nodes] (The ground-truth future pedestrian counts).
+target_forecast: [batch_size, num_nodes] (The ground-truth future target counts).
 
 target_impute: [batch_size, num_nodes, seq_len, time_series_dim] (The unmasked historical sequence to calculate imputation loss).
 
@@ -415,6 +419,7 @@ FILE: EXPERIMENTS.md
 | 2026-04-16 | main | Upgrade execution infrastructure and observability. | Deployed CPU and GPU environment Dockerfiles. Implemented robust crash-logging in src/logger.py overriding sys.excepthook to preserve tracebacks. Externalized Optuna search space definition to configs/sweep.yaml. Local execution successfully generated log artifacts and synchronized W&B configurations. |
 | 2026-04-16 | main | Transition to production dataloader and Pytest architecture. | Cleaned up architecture by migrating inline Burn Tests to a structured Pytest framework in tests/ directory. Implemented RealIoTDataset in src/dataset.py with memory-friendly parquet time-filtering (pd.read_parquet) and proper sliding window groupings over real 15-minute sensor grid data. Updated src/train.py to dynamically initialize sequence lengths and accept explicit --start_date and --end_date arguments, validating stability on real data sub-frames. |
 | 2026-04-16 | main | Implement Model Checkpointing and Statistical Engine for post-hoc analysis. | Created src/metrics.py with RMSE, MAE, Zero-Accuracy (pi > 0.5 for target=0), and Imputation MSE (masked nodes only). Updated src/pipeline.py and src/train.py to integrate these metrics and log them to W&B. Implemented best-model checkpointing to models/best_pipeline.pt based on val_loss. Verified via 2-epoch CPU test. |
+| 2026-04-16 | main | Implement Bulletproof DataLoader to resolve duplicate index errors. | Broadened ARCHITECTURE.md to support configurable traffic streams. Updated RealIoTDataset in src/dataset.py to filter by target_veh_class and aggregate over target_dir before setting the (dt, location) index. Exposed --veh_class and --dir in src/train.py and src/tune.py. Verified data loads and model runs successfully. |
 
 
 
@@ -726,7 +731,9 @@ class RealIoTDataset(Dataset):
                  start_date: str, 
                  end_date: str, 
                  seq_len: int = 12, 
-                 mask_prob: float = 0.15):
+                 mask_prob: float = 0.15,
+                 target_veh_class: str = 'person',
+                 target_dir: str = 'all'):
         
         logger.info(f"Loading data from {parquet_path} between {start_date} and {end_date}")
         
@@ -740,22 +747,38 @@ class RealIoTDataset(Dataset):
                 ('dt', '>=', start_dt), 
                 ('dt', '<', end_dt)
             ],
-            columns=['dt', 'location', 'value', 'Humidity', 'Solar Radiation', 'nearby_poi_count', 'dist_to_nearest_intersection']
+            columns=['dt', 'location', 'value', 'Humidity', 'Solar Radiation', 'nearby_poi_count', 'dist_to_nearest_intersection', 'veh_class', 'dir']
         )
         
         if df.empty:
             raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
             
-        # 2. Extract dimensions
+        # 2. Filter target stream to ensure unique (dt, location) indices
+        df = df[df['veh_class'] == target_veh_class]
+        
+        if target_dir == 'all':
+            # Group by dt and location, sum values, take first for weather/static features
+            agg_funcs = {
+                'value': 'sum',
+                'Humidity': 'first',
+                'Solar Radiation': 'first',
+                'nearby_poi_count': 'first',
+                'dist_to_nearest_intersection': 'first'
+            }
+            df = df.groupby(['dt', 'location'], as_index=False).agg(agg_funcs)
+        else:
+            df = df[df['dir'] == target_dir]
+            
+        # 3. Extract dimensions
         self.locations = sorted(df['location'].unique())
         self.times = sorted(df['dt'].unique())
         self.seq_len = seq_len
         self.mask_prob = mask_prob
         self.num_nodes = len(self.locations)
         
-        logger.info(f"Loaded {len(self.times)} timesteps across {self.num_nodes} locations.")
+        logger.info(f"Loaded {len(self.times)} timesteps across {self.num_nodes} locations for class={target_veh_class}, dir={target_dir}.")
         
-        # 3. Pivot for Sliding Window Logic
+        # 4. Pivot for Sliding Window Logic
         df = df.set_index(['dt', 'location'])
         
         # Dynamic features
@@ -1363,12 +1386,14 @@ from dataset import RealIoTDataset
 
 from typing import Tuple
 
+logger = logging.getLogger(__name__)
+
 class ResilientIoTPipeline(nn.Module):
     """
     ResilientIoTPipeline: End-to-end spatiotemporal model for IoT sensor networks.
     Integrates Topology Inference, Spatiotemporal Encoding, and Multi-Task Decoders.
     """
-    def __init__(self, 
+    def __init__(self,
                  num_nodes: int,
                  static_feat_dim: int,
                  time_series_dim: int,
@@ -1377,27 +1402,30 @@ class ResilientIoTPipeline(nn.Module):
                  hidden_dim: int = 64,
                  sparsity_threshold: float = 0.5):
         super(ResilientIoTPipeline, self).__init__()
-        
+
         # 1. Topology Inference
         self.graph_learner = DynamicGraphLearner(
-            static_feat_dim=static_feat_dim, 
-            embedding_dim=embedding_dim, 
+            static_feat_dim=static_feat_dim,
+            embedding_dim=embedding_dim,
             sparsity_threshold=sparsity_threshold
         )
-        
+        logger.info(f"Initialized DynamicGraphLearner with static_feat_dim={static_feat_dim}, embedding_dim={embedding_dim}, sparsity_threshold={sparsity_threshold}, total_params={sum(p.numel() for p in self.graph_learner.parameters())}")
+
         # 2. Spatiotemporal Feature Extraction
         self.encoder = MaskedSpatiotemporalEncoder(
-            num_nodes=num_nodes, 
-            seq_len=seq_len, 
-            time_series_dim=time_series_dim, 
+            num_nodes=num_nodes,
+            seq_len=seq_len,
+            time_series_dim=time_series_dim,
             hidden_dim=hidden_dim
         )
-        
+        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
+
         # 3. Multi-Task Decoders
         self.decoders = DecoupledDecoders(
-            hidden_dim=hidden_dim, 
+            hidden_dim=hidden_dim,
             time_series_dim=time_series_dim
         )
+        logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
 
     def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -1415,20 +1443,20 @@ class ResilientIoTPipeline(nn.Module):
         dynamic_features = batch['dynamic_features']
         target_forecast = batch['target_forecast']
         target_impute = batch['target_impute']
-        
+
         # Defensive Data Handling
         # Replace NaNs (injected by our Dataset masking) with 0.0 to allow PyTorch ops
         dynamic_features_clean = torch.nan_to_num(dynamic_features, nan=0.0)
-        
+
         # 1. Graph Learner
         edge_index, edge_weight = self.graph_learner(static_features)
-        
+
         # 2. Encoder
         latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_weight)
-        
+
         # 3. Decoders
         imputed_features, mu, theta, pi = self.decoders(latent_embeddings)
-        
+
         # 4. Compute Joint Loss
         loss, loss_impute, loss_forecast = compute_loss(
             imputed_features=imputed_features,
@@ -1438,10 +1466,10 @@ class ResilientIoTPipeline(nn.Module):
             pi=pi,
             target_forecast=target_forecast
         )
-        
+
         # CRITICAL SAFEGUARD
         assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
-        
+
         return loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi
 
 if __name__ == "__main__":
@@ -1463,10 +1491,10 @@ if __name__ == "__main__":
     # --- 1. Dataset Initialization & Mock Data ---
     # The Dataset defined in dataset.py expects (N, S) for static and (N, T, D) for dynamic.
     # We want a pipeline that gets batches with the 'num_nodes' dimension intact.
-    # We will generate a mock Dataset that yields identical static features, and (N, T, D) 
+    # We will generate a mock Dataset that yields identical static features, and (N, T, D)
     # structured batches. However, since the dataset yields (T, D) per sample and we want
     # [B, N, T, D] out of the DataLoader, we must adjust how we interact with it or mock the batch.
-    
+
     # We'll create a custom mock Dataset specifically for testing the pipeline requirements.
     class MockPipelineDataset(torch.utils.data.Dataset):
         def __init__(self, size):
@@ -1479,7 +1507,7 @@ if __name__ == "__main__":
             mask = torch.rand_like(dyn) < 0.15
             dyn_masked = dyn.clone()
             dyn_masked[mask] = float('nan')
-            
+
             return {
                 # We return static feature entirely since it's shared across the batch
                 'static_features': torch.randn(num_nodes, static_feat_dim),
@@ -1488,9 +1516,9 @@ if __name__ == "__main__":
                 'target_forecast': torch.randint(0, 50, (num_nodes,)).float(),
                 'node_mask': mask
             }
-            
+
     dataset = MockPipelineDataset(size=20)
-    
+
     def custom_collate(batch_list):
         # The pipeline expects static_features to be exactly [num_nodes, static_feat_dim]
         # not [B, num_nodes, static_feat_dim]. So we just take the first one.
@@ -1511,7 +1539,7 @@ if __name__ == "__main__":
         time_series_dim=time_series_dim,
         seq_len=seq_len
     )
-    
+
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     # --- 3. Training Loop (2 Epochs) ---
@@ -1520,21 +1548,21 @@ if __name__ == "__main__":
         epoch_loss = 0.0
         for batch_idx, batch in enumerate(dataloader):
             optimizer.zero_grad()
-            
+
             # Forward Pass
             loss, _, _, _, _, _, _ = model(batch)
-            
+
             # Backward Pass
             loss.backward()
-            
+
             # CRITICAL SAFEGUARD: Gradient Clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            
+
             # Optimizer Step
             optimizer.step()
-            
+
             epoch_loss += loss.item()
-            
+
         avg_loss = epoch_loss / len(dataloader)
         logger.info(f"Epoch {epoch + 1}/{num_epochs} - Avg Loss: {avg_loss:.4f}")
 
@@ -2011,6 +2039,8 @@ def parse_args():
     parser.add_argument("--start_date", type=str, default="2023-03-02", help="Start date for real data (inclusive)")
     parser.add_argument("--end_date", type=str, default="2023-04-02", help="End date for real data (exclusive)")
     parser.add_argument("--seq_len", type=int, default=12, help="Sequence length for temporal processing")
+    parser.add_argument("--veh_class", type=str, default="person", help="Target vehicle class")
+    parser.add_argument("--dir", type=str, default="all", help="Target spatial direction")
     
     return parser.parse_args()
 
@@ -2083,7 +2113,14 @@ def run_training(args, init_wandb=True) -> float:
         logger.info(f"Loading RealIoTDataset from {args.start_date} to {args.end_date}")
         parquet_path = "data/processed/master_dataset_15T.parquet"
         try:
-            full_dataset = RealIoTDataset(parquet_path, args.start_date, args.end_date, seq_len=args.seq_len)
+            full_dataset = RealIoTDataset(
+                parquet_path, 
+                args.start_date, 
+                args.end_date, 
+                seq_len=args.seq_len,
+                target_veh_class=args.veh_class,
+                target_dir=args.dir
+            )
             
             train_size = int(0.8 * len(full_dataset))
             val_size = len(full_dataset) - train_size
@@ -2274,7 +2311,13 @@ def objective(trial):
         batch_size=4,
         lr=params.get("lr", 1e-3),
         w_forecast=params.get("w_forecast", 1.0),
-        w_impute=params.get("w_impute", 1.0)
+        w_impute=params.get("w_impute", 1.0),
+        use_mock_data=False,
+        start_date="2023-03-02",
+        end_date="2023-04-02",
+        seq_len=12,
+        veh_class="person",
+        dir="all"
     )
     
     # Execute training loop. 
