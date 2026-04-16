@@ -22,7 +22,9 @@ class RealIoTDataset(Dataset):
                  start_date: str, 
                  end_date: str, 
                  seq_len: int = 12, 
-                 mask_prob: float = 0.15):
+                 mask_prob: float = 0.15,
+                 target_veh_class: str = 'person',
+                 target_dir: str = 'all'):
         
         logger.info(f"Loading data from {parquet_path} between {start_date} and {end_date}")
         
@@ -36,22 +38,38 @@ class RealIoTDataset(Dataset):
                 ('dt', '>=', start_dt), 
                 ('dt', '<', end_dt)
             ],
-            columns=['dt', 'location', 'value', 'Humidity', 'Solar Radiation', 'nearby_poi_count', 'dist_to_nearest_intersection']
+            columns=['dt', 'location', 'value', 'Humidity', 'Solar Radiation', 'nearby_poi_count', 'dist_to_nearest_intersection', 'veh_class', 'dir']
         )
         
         if df.empty:
             raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
             
-        # 2. Extract dimensions
+        # 2. Filter target stream to ensure unique (dt, location) indices
+        df = df[df['veh_class'] == target_veh_class]
+        
+        if target_dir == 'all':
+            # Group by dt and location, sum values, take first for weather/static features
+            agg_funcs = {
+                'value': 'sum',
+                'Humidity': 'first',
+                'Solar Radiation': 'first',
+                'nearby_poi_count': 'first',
+                'dist_to_nearest_intersection': 'first'
+            }
+            df = df.groupby(['dt', 'location'], as_index=False).agg(agg_funcs)
+        else:
+            df = df[df['dir'] == target_dir]
+            
+        # 3. Extract dimensions
         self.locations = sorted(df['location'].unique())
         self.times = sorted(df['dt'].unique())
         self.seq_len = seq_len
         self.mask_prob = mask_prob
         self.num_nodes = len(self.locations)
         
-        logger.info(f"Loaded {len(self.times)} timesteps across {self.num_nodes} locations.")
+        logger.info(f"Loaded {len(self.times)} timesteps across {self.num_nodes} locations for class={target_veh_class}, dir={target_dir}.")
         
-        # 3. Pivot for Sliding Window Logic
+        # 4. Pivot for Sliding Window Logic
         df = df.set_index(['dt', 'location'])
         
         # Dynamic features

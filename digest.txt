@@ -12,6 +12,7 @@ Directory structure:
     ├── MLOPS.md
     ├── plan.md
     ├── requirements.txt
+    ├── test_dataset_dev.py
     ├── configs/
     │   └── sweep.yaml
     ├── docs/
@@ -24,12 +25,19 @@ Directory structure:
     │   ├── features.py
     │   ├── graph_learner.py
     │   ├── logger.py
+    │   ├── metrics.py
     │   ├── pipeline.py
     │   ├── preprocess.py
     │   ├── process_all.py
     │   ├── smoke_test.py
     │   ├── train.py
     │   └── tune.py
+    ├── tests/
+    │   ├── conftest.py
+    │   ├── test_decoders.py
+    │   ├── test_encoder.py
+    │   ├── test_graph_learner.py
+    │   └── test_pipeline.py
     └── wandb/
         ├── latest-run -> run-20260416_085108-sywmlisp
         ├── offline-run-20260415_144305-6nk1esqf/
@@ -98,6 +106,15 @@ Once you have pushed your main branch to GitHub and pulled it down to the server
 ```Bash
 # This builds the CUDA image and runs your training script
 docker compose run --rm gpu-runner python src/train.py --epochs 50 --batch_size 128
+```
+
+```Bash
+# This maps the GPU, mounts the repo, and runs exactly one month of data
+docker compose run --rm gpu-runner python src/train.py \
+  --epochs 2 \
+  --batch_size 128 \
+  --start_date "2023-03-02" \
+  --end_date "2023-04-02"
 ```
 
 
@@ -309,7 +326,7 @@ FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 WORKDIR /workspace
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update --fix-missing && apt-get install -y \
     build-essential \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -396,6 +413,8 @@ FILE: EXPERIMENTS.md
 | 2026-04-15 | main | Build the evaluation and execution framework in src/train.py. | Implemented argument parsing for hyperparameters and integrated offline wandb logging at the epoch level. Generated dummy data loader splits for training and validation loops. Enforced mandatory gradient clipping during training and NaN divergence checking during validation via custom DivergenceError. Test executed successfully for 2 epochs without divergence. |
 | 2026-04-16 | main | Build hyperparameter tuning orchestrator in src/tune.py. | Refactored src/train.py to expose run_training callable. Implemented Optuna objective function with log-uniform (lr) and uniform (w_forecast, w_impute) parameter spaces. Integrated optuna.integration.wandb.WeightsAndBiasesCallback for centralized sweep logging. Confirmed correct multi-trial execution and loss capture. |
 | 2026-04-16 | main | Upgrade execution infrastructure and observability. | Deployed CPU and GPU environment Dockerfiles. Implemented robust crash-logging in src/logger.py overriding sys.excepthook to preserve tracebacks. Externalized Optuna search space definition to configs/sweep.yaml. Local execution successfully generated log artifacts and synchronized W&B configurations. |
+| 2026-04-16 | main | Transition to production dataloader and Pytest architecture. | Cleaned up architecture by migrating inline Burn Tests to a structured Pytest framework in tests/ directory. Implemented RealIoTDataset in src/dataset.py with memory-friendly parquet time-filtering (pd.read_parquet) and proper sliding window groupings over real 15-minute sensor grid data. Updated src/train.py to dynamically initialize sequence lengths and accept explicit --start_date and --end_date arguments, validating stability on real data sub-frames. |
+| 2026-04-16 | main | Implement Model Checkpointing and Statistical Engine for post-hoc analysis. | Created src/metrics.py with RMSE, MAE, Zero-Accuracy (pi > 0.5 for target=0), and Imputation MSE (masked nodes only). Updated src/pipeline.py and src/train.py to integrate these metrics and log them to W&B. Implemented best-model checkpointing to models/best_pipeline.pt based on val_loss. Verified via 2-epoch CPU test. |
 
 
 
@@ -500,40 +519,35 @@ We maintain a strict separation between development and execution using two sepa
 ================================================
 FILE: plan.md
 ================================================
-# Implementation Plan - Hyperparameter Tuning (src/tune.py)
+# Plan: Post-hoc Analysis Preparation
 
-## Objective
-Build an Optuna hyperparameter tuning orchestrator (`src/tune.py`) integrated with Weights & Biases to optimize learning rate and loss weighting parameters.
+## 1. Model Checkpointing (src/train.py)
+- Modify `src/train.py` to track `best_val_loss`.
+- Ensure `models/` directory exists using `os.makedirs`.
+- Save `model.state_dict()` to `models/best_pipeline.pt` when a new best validation loss is achieved.
 
-## Proposed Changes
+## 2. Statistical Engine (src/metrics.py)
+- Create `src/metrics.py`.
+- Implement `calculate_metrics(target_forecast, mu, pi, imputed_features, target_impute, node_mask)` function.
+- **RMSE**: `sqrt(mean((target_forecast - mu)^2))`
+- **MAE**: `mean(abs(target_forecast - mu))`
+- **Zero-Accuracy**: Percentage of `pi > 0.5` when `target_forecast == 0`.
+- **Imputation MSE**: `mean((imputed_features - target_impute)^2)` only where `node_mask` is True.
+- Use `torch` for calculations and return a dictionary of scalar floats.
 
-### 1. Prerequisite Setup
-- Install `optuna` and `optuna-integration`.
+## 3. Integration & Refactoring
+- **src/pipeline.py**:
+    - Modify `ResilientIoTPipeline.forward` to return `(loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)`.
+- **src/train.py**:
+    - Import `calculate_metrics` from `metrics`.
+    - Update training and validation loops to handle the expanded return values from the model.
+    - In the validation loop, call `calculate_metrics` for each batch and aggregate them.
+    - Log `val_rmse`, `val_mae`, `val_zero_acc`, `val_impute_mse` to W&B.
 
-### 2. Refactoring `src/train.py`
-- Extract the core training loop inside `main()` into a standalone function: `def run_training(args, init_wandb=True) -> float`.
-- Wrap the `wandb.init()` and `wandb.finish()` calls inside `if init_wandb:` blocks to prevent duplicate run initialization when called by Optuna.
-- Make `run_training` return `avg_val_loss`.
-- Keep `main()` intact by having it call `args = parse_args()` and `run_training(args)`.
-
-### 3. Module Implementation (`src/tune.py`)
-- **Imports**: `optuna`, `WeightsAndBiasesCallback`, `run_training` from `train`, `argparse`.
-- **Objective Function**:
-  - `def objective(trial)`
-  - Suggest `lr`: log-uniform `[1e-5, 1e-2]`.
-  - Suggest `w_forecast`: uniform `[0.5, 5.0]`.
-  - Suggest `w_impute`: uniform `[0.5, 5.0]`.
-  - Construct an `argparse.Namespace` with these suggestions, plus fixed `epochs=2` and `batch_size=4` for the test.
-  - Call `val_loss = run_training(args, init_wandb=False)`.
-  - Return `val_loss`.
-- **Study Setup**:
-  - Instantiate `WeightsAndBiasesCallback(metric_name="val_loss_total", wandb_kwargs={"project": "resilient-iot-sweeps"})`.
-  - `study = optuna.create_study(direction="minimize")`.
-  - `study.optimize(objective, n_trials=2, callbacks=[wandbc])`.
-
-### 4. Verification Plan
-- Run `export WANDB_MODE=offline && python src/tune.py` (or online, per prompt constraints, "The Online Local Test" but since the previous step asked for offline, I'll allow it to run and use offline/online as appropriate for testing).
-- Validate trials complete, results log, and no crashes occur.
+## 4. Verification
+- Run `python src/train.py --use_mock_data --epochs 2` on CPU.
+- Verify `models/best_pipeline.pt` exists.
+- Verify console logs show the new metrics.
 - Update `EXPERIMENTS.md`.
 
 
@@ -552,6 +566,21 @@ wandb
 optuna
 optuna-integration
 pyyaml
+
+
+================================================
+FILE: test_dataset_dev.py
+================================================
+import pandas as pd
+import numpy as np
+
+# Read small subset to see columns exactly
+df = pd.read_parquet('data/processed/master_dataset_15T.parquet', filters=[('dt', '>=', pd.Timestamp('2023-07-01')), ('dt', '<', pd.Timestamp('2023-07-02'))])
+print(df.columns)
+print(df.head())
+print("Unique locations:", len(df['location'].unique()))
+print("Unique times:", len(df['dt'].unique()))
+
 
 
 ================================================
@@ -676,6 +705,7 @@ FILE: src/dataset.py
 import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+import pandas as pd
 import logging
 
 # Standard random seed initialization
@@ -685,117 +715,107 @@ torch.manual_seed(42)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class ResilientIoTDataset(Dataset):
+class RealIoTDataset(Dataset):
     """
-    Custom PyTorch Dataset for the ResilientIoTPipeline.
-    Implements dynamic ~15% artificial NaN masking for self-supervised imputation training.
+    Production PyTorch Dataset for the ResilientIoTPipeline.
+    Loads real parquet data efficiently using memory-friendly time filters.
+    Groups data by location, applies sliding window extraction, and injects NaN masking.
     """
-    def __init__(self, static_features: torch.Tensor, dynamic_features: torch.Tensor, target_forecast: torch.Tensor, mask_prob: float = 0.15):
-        # Assertions for dimensional integrity
-        assert static_features.dim() == 2, f"static_features must be 2D (N, S), got {static_features.dim()}D"
-        assert dynamic_features.dim() == 3, f"dynamic_features must be 3D (N, T, D), got {dynamic_features.dim()}D"
-        assert target_forecast.dim() == 3, f"target_forecast must be 3D (N, F, D), got {target_forecast.dim()}D"
+    def __init__(self, 
+                 parquet_path: str, 
+                 start_date: str, 
+                 end_date: str, 
+                 seq_len: int = 12, 
+                 mask_prob: float = 0.15):
         
-        # Assertions for batch/sample size alignment
-        self.num_samples = static_features.shape[0]
-        assert dynamic_features.shape[0] == self.num_samples, "Mismatched sample counts between static and dynamic features."
-        assert target_forecast.shape[0] == self.num_samples, "Mismatched sample counts between static features and target forecast."
+        logger.info(f"Loading data from {parquet_path} between {start_date} and {end_date}")
         
-        # Assert valid mask probability
-        assert 0.0 <= mask_prob <= 1.0, f"mask_prob must be between 0.0 and 1.0, got {mask_prob}"
-
-        self.static_features = static_features
-        self.dynamic_features = dynamic_features
-        self.target_forecast = target_forecast
+        # 1. Load Data with Time Filter Constraints
+        start_dt = pd.Timestamp(start_date)
+        end_dt = pd.Timestamp(end_date)
+        
+        df = pd.read_parquet(
+            parquet_path,
+            filters=[
+                ('dt', '>=', start_dt), 
+                ('dt', '<', end_dt)
+            ],
+            columns=['dt', 'location', 'value', 'Humidity', 'Solar Radiation', 'nearby_poi_count', 'dist_to_nearest_intersection']
+        )
+        
+        if df.empty:
+            raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
+            
+        # 2. Extract dimensions
+        self.locations = sorted(df['location'].unique())
+        self.times = sorted(df['dt'].unique())
+        self.seq_len = seq_len
         self.mask_prob = mask_prob
-
-        logger.info(f"Initialized ResilientIoTDataset with {self.num_samples} samples and {self.mask_prob*100}% dynamic masking.")
+        self.num_nodes = len(self.locations)
+        
+        logger.info(f"Loaded {len(self.times)} timesteps across {self.num_nodes} locations.")
+        
+        # 3. Pivot for Sliding Window Logic
+        df = df.set_index(['dt', 'location'])
+        
+        # Dynamic features
+        dyn_df = df[['value', 'Humidity', 'Solar Radiation']].unstack('location')
+        locations_idx = pd.Index(self.locations, name='location')
+        
+        val_arr = dyn_df['value'].reindex(columns=locations_idx).fillna(0.0).values
+        hum_arr = dyn_df['Humidity'].reindex(columns=locations_idx).fillna(0.0).values
+        sol_arr = dyn_df['Solar Radiation'].reindex(columns=locations_idx).fillna(0.0).values
+        
+        # [num_times, num_nodes, 3]
+        self.dynamic_data = np.stack([val_arr, hum_arr, sol_arr], axis=-1)
+        self.time_series_dim = self.dynamic_data.shape[-1]
+        
+        # Static features
+        stat_df = df[['nearby_poi_count', 'dist_to_nearest_intersection']].groupby('location').first()
+        stat_df = stat_df.reindex(locations_idx).fillna(0.0)
+        self.static_features = torch.tensor(stat_df.values, dtype=torch.float32)
+        self.static_feat_dim = self.static_features.shape[-1]
+        
+        logger.info(f"Feature dimensions established. Static: {self.static_feat_dim}, Dynamic: {self.time_series_dim}")
 
     def __len__(self) -> int:
-        return self.num_samples
+        return max(0, len(self.times) - self.seq_len)
 
     def __getitem__(self, idx: int) -> dict:
-        static = self.static_features[idx]
-        dynamic_orig = self.dynamic_features[idx]
-        forecast = self.target_forecast[idx]
-
-        # Dynamic Masking logic (~15% artificial NaN injection)
-        # Creates a boolean tensor of the same shape where True indicates the element should be masked
-        node_mask = torch.rand_like(dynamic_orig) < self.mask_prob
+        # Extract sliding window
+        # Dynamic: [seq_len, num_nodes, D] -> permute -> [num_nodes, seq_len, D]
+        dyn_slice = self.dynamic_data[idx : idx + self.seq_len]
+        dyn_slice = np.transpose(dyn_slice, (1, 0, 2))
         
-        # Unmasked copy for the loss function targets
-        target_impute = dynamic_orig.clone()
+        # Forecast target: next timestep (seq_len), index 0 is 'value'
+        target = self.dynamic_data[idx + self.seq_len, :, 0]
         
-        # Apply the mask to the dynamic features using float('nan')
-        dynamic_masked = dynamic_orig.clone()
-        dynamic_masked[node_mask] = float('nan')
+        dyn_tensor = torch.tensor(dyn_slice, dtype=torch.float32)
+        target_tensor = torch.tensor(target, dtype=torch.float32)
+        
+        # 4. Dynamic Masking logic (~15% artificial NaN injection)
+        node_mask = torch.rand_like(dyn_tensor) < self.mask_prob
+        target_impute = dyn_tensor.clone()
+        dyn_masked = dyn_tensor.clone()
+        dyn_masked[node_mask] = float('nan')
 
         return {
-            'static_features': static,
-            'dynamic_features': dynamic_masked,
-            'target_forecast': forecast,
+            'static_features': self.static_features,
+            'dynamic_features': dyn_masked,
             'target_impute': target_impute,
+            'target_forecast': target_tensor,
             'node_mask': node_mask
         }
 
-if __name__ == "__main__":
-    logger.info("Executing dataset smoke test...")
-    
-    # Define dummy dimensions
-    num_samples = 100
-    static_dim = 5
-    seq_len = 24
-    dynamic_dim = 10
-    forecast_len = 6
-    forecast_dim = 10
-    batch_size = 32
-
-    # Create dummy tensors (representing our processed features)
-    static_dummy = torch.randn(num_samples, static_dim)
-    dynamic_dummy = torch.randn(num_samples, seq_len, dynamic_dim)
-    forecast_dummy = torch.randn(num_samples, forecast_len, forecast_dim)
-
-    # Initialize Dataset and DataLoader
-    dataset = ResilientIoTDataset(static_dummy, dynamic_dummy, forecast_dummy, mask_prob=0.15)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    # Fetch one batch
-    batch = next(iter(dataloader))
-
-    # OUTPUT ASSERTIONS & TRIPWIRES
-    assert isinstance(batch, dict), "Dataset must yield a dictionary"
-    
-    expected_keys = {'static_features', 'dynamic_features', 'target_forecast', 'target_impute', 'node_mask'}
-    assert set(batch.keys()) == expected_keys, f"Batch keys mismatch. Expected {expected_keys}, got {set(batch.keys())}"
-
-    logger.info("Validated Batch Dictionary Keys & Shapes:")
-    for key, val in batch.items():
-        logger.info(f" - {key}: shape={val.shape}, dtype={val.dtype}")
-
-    # Explicit Shape Assertions
-    assert batch['static_features'].shape == (batch_size, static_dim)
-    assert batch['dynamic_features'].shape == (batch_size, seq_len, dynamic_dim)
-    assert batch['target_forecast'].shape == (batch_size, forecast_len, forecast_dim)
-    assert batch['target_impute'].shape == (batch_size, seq_len, dynamic_dim)
-    assert batch['node_mask'].shape == (batch_size, seq_len, dynamic_dim)
-
-    # Explicit Data Type Assertions
-    assert batch['static_features'].dtype == torch.float32
-    assert batch['dynamic_features'].dtype == torch.float32
-    assert batch['target_forecast'].dtype == torch.float32
-    assert batch['target_impute'].dtype == torch.float32
-    assert batch['node_mask'].dtype == torch.bool
-
-    # Masking Validation Tripwire: 
-    # Ensure that exactly the positions indicated by 'node_mask' are NaN in 'dynamic_features'
-    masked_nans = torch.isnan(batch['dynamic_features'])
-    assert torch.equal(masked_nans, batch['node_mask']), "CRITICAL: NaN positions in dynamic_features do not perfectly match node_mask."
-    
-    # Calculate empirical mask percentage to ensure probabilistic logic is working
-    actual_mask_pct = batch['node_mask'].float().mean().item()
-    logger.info(f"Empirical masking percentage generated for this batch: {actual_mask_pct * 100:.2f}%")
-
-    logger.info("All assertions and tripwires passed. Dataset logic is validated.")
+def custom_collate_real(batch_list):
+    """Collate function to maintain node structural dimensions."""
+    return {
+        'static_features': batch_list[0]['static_features'], # Static across batch
+        'dynamic_features': torch.stack([b['dynamic_features'] for b in batch_list]),
+        'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
+        'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
+        'node_mask': torch.stack([b['node_mask'] for b in batch_list])
+    }
 
 
 
@@ -936,68 +956,6 @@ def compute_loss(imputed_features: torch.Tensor,
 
     return total_loss, loss_impute, loss_forecast
 
-if __name__ == "__main__":
-    import numpy as np
-    import logging
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    # Reproducibility
-    np.random.seed(42)
-    torch.manual_seed(42)
-
-    logger.info("Starting DecoupledDecoders Offensive Unit Test")
-
-    # Parameters
-    batch_size = 4
-    num_nodes = 50
-    seq_len = 12
-    hidden_dim = 64
-    time_series_dim = 3
-
-    # 1. Instantiate module
-    model = DecoupledDecoders(hidden_dim=hidden_dim, time_series_dim=time_series_dim)
-
-    # 2. Dummy Inputs
-    latent_embeddings = torch.randn(batch_size, num_nodes, seq_len, hidden_dim)
-    target_forecast = torch.randint(0, 100, (batch_size, num_nodes)).float()
-    target_impute = torch.randn(batch_size, num_nodes, seq_len, time_series_dim)
-
-    # 3. Forward Pass
-    imputed_features, mu, theta, pi = model(latent_embeddings)
-
-    # 4. Loss Calculation
-    loss, loss_impute, loss_forecast = compute_loss(
-        imputed_features=imputed_features,
-        target_impute=target_impute,
-        mu=mu,
-        theta=theta,
-        pi=pi,
-        target_forecast=target_forecast
-    )
-
-    logger.info(f"Loss calculated: {loss.item():.4f}")
-
-    # 5. NaN Tripwire Assertion
-    assert not torch.isnan(loss).any(), "The Burn Test Failed: Loss is NaN."
-    logger.info("NaN Tripwire Assertion PASSED")
-
-    # 6. Gradient Assertion
-    loss.backward()
-
-    # Check gradients in both heads
-    impute_grad = model.impute_layer.weight.grad
-    forecast_grad = model.forecast_layer.weight.grad
-
-    assert impute_grad is not None, "Gradient Assertion Failed: Imputation head has no gradient."
-    assert forecast_grad is not None, "Gradient Assertion Failed: Forecasting head has no gradient."
-
-    logger.info(f"Impute gradient norm: {impute_grad.norm().item():.4f}")
-    logger.info(f"Forecast gradient norm: {forecast_grad.norm().item():.4f}")
-    logger.info("Gradient Assertion PASSED (Both heads are learning)")
-
-    print("--- DecoupledDecoders Offensive Unit Test PASSED ---")
 
 
 ================================================
@@ -1126,75 +1084,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
 
         return x_out
 
-if __name__ == "__main__":
-    import numpy as np
-    import logging
 
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    # Reproducibility
-    np.random.seed(42)
-    torch.manual_seed(42)
-
-    logger.info("Starting MaskedSpatiotemporalEncoder Offensive Unit Test")
-
-    # Parameters
-    batch_size = 4
-    num_nodes = 50
-    seq_len = 12
-    time_series_dim = 3
-    hidden_dim = 64
-
-    # 1. Instantiate module
-    model = MaskedSpatiotemporalEncoder(
-        num_nodes=num_nodes,
-        seq_len=seq_len,
-        time_series_dim=time_series_dim,
-        hidden_dim=hidden_dim
-    )
-
-    # 2. Dummy Inputs
-    dynamic_features = torch.randn(batch_size, num_nodes, seq_len, time_series_dim)
-    
-    # Mock graph: fully connected for stress test
-    adj = torch.ones((num_nodes, num_nodes))
-    from torch_geometric.utils import dense_to_sparse
-    edge_index, edge_weight = dense_to_sparse(adj)
-
-    # 3. Forward Pass
-    logger.info(f"Input shape: {dynamic_features.shape}")
-    output = model(dynamic_features, edge_index, edge_weight)
-    logger.info(f"Output shape: {output.shape}")
-
-    # 4. Shape Assertion
-    expected_shape = (batch_size, num_nodes, seq_len, hidden_dim)
-    assert output.shape == expected_shape, f"Shape mismatch: {output.shape} != {expected_shape}"
-    logger.info("Shape Assertion PASSED")
-
-    # 5. Gradient Assertion
-    loss = output.sum()
-    loss.backward()
-
-    # Check GAT gradients
-    gat_has_grad = False
-    for name, param in model.gat.named_parameters():
-        if param.grad is not None:
-            gat_has_grad = True
-            break
-    assert gat_has_grad, "Gradient Assertion Failed: GAT layers have no gradient."
-
-    # Check Transformer gradients
-    transformer_has_grad = False
-    for name, param in model.transformer.named_parameters():
-        if param.grad is not None:
-            transformer_has_grad = True
-            break
-    assert transformer_has_grad, "Gradient Assertion Failed: Transformer layers have no gradient."
-
-    logger.info("Gradient Assertion PASSED (Spatial & Temporal paths are connected)")
-    
-    print("--- MaskedSpatiotemporalEncoder Offensive Unit Test PASSED ---")
 
 
 
@@ -1330,53 +1220,7 @@ class DynamicGraphLearner(nn.Module):
 
         return edge_index, edge_weight
 
-if __name__ == "__main__":
-    # Reproducibility
-    torch.manual_seed(42)
-    import numpy as np
-    np.random.seed(42)
 
-    print("--- Starting DynamicGraphLearner Offensive Unit Test ---")
-
-    # 1. Instantiate module
-    num_nodes = 50
-    static_feat_dim = 10
-    embedding_dim = 16
-    sparsity_threshold = 0.5
-    
-    model = DynamicGraphLearner(
-        static_feat_dim=static_feat_dim, 
-        embedding_dim=embedding_dim, 
-        sparsity_threshold=sparsity_threshold
-    )
-
-    # 2. Dummy input
-    static_features = torch.randn(num_nodes, static_feat_dim)
-
-    # 3. Forward pass
-    edge_index, edge_weight = model(static_features)
-
-    # 4. Shape Assertions
-    E = edge_weight.shape[0]
-    print(f"Number of edges: {E}")
-    assert edge_index.shape == (2, E), f"edge_index shape mismatch: {edge_index.shape}"
-    assert edge_weight.shape == (E,), f"edge_weight shape mismatch: {edge_weight.shape}"
-
-    # 5. Topology Assertions (The Burn Test)
-    print(f"Max possible edges: {num_nodes * num_nodes}")
-    assert E > 0, "The Burn Test Failed: Graph is completely disconnected (E=0)."
-    assert E < (num_nodes * num_nodes), f"The Burn Test Failed: Graph is fully connected (E={E}), sparsity threshold not working."
-
-    # 6. Gradient Assertion
-    loss = edge_weight.sum()
-    loss.backward()
-
-    # Check that model parameters have gradients
-    for name, param in model.named_parameters():
-        assert param.grad is not None, f"Gradient Assertion Failed: Parameter '{name}' has no gradient."
-        print(f"Gradient for '{name}' verified (norm: {param.grad.norm().item():.4f})")
-
-    print("--- DynamicGraphLearner Offensive Unit Test PASSED ---")
 
 
 
@@ -1442,6 +1286,69 @@ def setup_logger(experiment_name: str) -> logging.Logger:
 
 
 ================================================
+FILE: src/metrics.py
+================================================
+import torch
+import numpy as np
+from typing import Dict
+
+def calculate_metrics(
+    target_forecast: torch.Tensor, 
+    mu: torch.Tensor, 
+    pi: torch.Tensor, 
+    imputed_features: torch.Tensor, 
+    target_impute: torch.Tensor, 
+    node_mask: torch.Tensor
+) -> Dict[str, float]:
+    """
+    Calculates human-readable metrics for the ResilientIoTPipeline.
+    
+    Args:
+        target_forecast: [batch_size, num_nodes] Ground truth future counts.
+        mu: [batch_size, num_nodes] Predicted ZINB mean.
+        pi: [batch_size, num_nodes] Predicted zero-inflation probability.
+        imputed_features: [batch_size, num_nodes, seq_len, time_series_dim] Reconstructed features.
+        target_impute: [batch_size, num_nodes, seq_len, time_series_dim] Ground truth historical features.
+        node_mask: [batch_size, num_nodes, seq_len, time_series_dim] Mask where NaNs were artificially applied.
+        
+    Returns:
+        Dict[str, float]: Dictionary of scalar metrics.
+    """
+    # 1. RMSE and MAE (Forecasting)
+    # mu is predicted mean count
+    mse_forecast = torch.mean((target_forecast - mu)**2)
+    rmse = torch.sqrt(mse_forecast).item()
+    mae = torch.mean(torch.abs(target_forecast - mu)).item()
+    
+    # 2. Zero-Accuracy
+    # If target_forecast == 0, calculate what percentage of the time pi > 0.5
+    zero_indices = (target_forecast == 0)
+    if zero_indices.any():
+        pi_zero_pred = pi[zero_indices] > 0.5
+        zero_acc = torch.mean(pi_zero_pred.float()).item()
+    else:
+        zero_acc = 1.0 # Or NaN? Let's use 1.0 if no zeros to avoid NaN logging
+        
+    # 3. Imputation MSE
+    # Calculate MSE strictly where node_mask is True (the artificial NaNs)
+    if node_mask.any():
+        # Ensure node_mask matches the shape of imputed_features/target_impute
+        # Based on src/train.py mock data, node_mask has the same shape as dynamic_features [B, N, T, D]
+        diff_sq = (imputed_features - target_impute)**2
+        impute_mse = torch.mean(diff_sq[node_mask]).item()
+    else:
+        impute_mse = 0.0
+        
+    return {
+        "rmse": rmse,
+        "mae": mae,
+        "zero_acc": zero_acc,
+        "impute_mse": impute_mse
+    }
+
+
+
+================================================
 FILE: src/pipeline.py
 ================================================
 import torch
@@ -1452,7 +1359,7 @@ import logging
 from graph_learner import DynamicGraphLearner
 from encoder import MaskedSpatiotemporalEncoder
 from decoders import DecoupledDecoders, compute_loss
-from dataset import ResilientIoTDataset
+from dataset import RealIoTDataset
 
 from typing import Tuple
 
@@ -1492,7 +1399,7 @@ class ResilientIoTPipeline(nn.Module):
             time_series_dim=time_series_dim
         )
 
-    def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
             batch (dict): Expected keys:
@@ -1502,7 +1409,7 @@ class ResilientIoTPipeline(nn.Module):
                 - target_impute: [batch_size, num_nodes, seq_len, time_series_dim]
                 - node_mask: [batch_size, num_nodes, seq_len, time_series_dim] (or related)
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: (total_loss, loss_impute, loss_forecast)
+            Tuple[torch.Tensor, ...]: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
@@ -1535,7 +1442,7 @@ class ResilientIoTPipeline(nn.Module):
         # CRITICAL SAFEGUARD
         assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
         
-        return loss, loss_impute, loss_forecast
+        return loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -1615,7 +1522,7 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             
             # Forward Pass
-            loss = model(batch)
+            loss, _, _, _, _, _, _ = model(batch)
             
             # Backward Pass
             loss.backward()
@@ -2080,9 +1987,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import wandb
 import numpy as np
+import os
 
 from pipeline import ResilientIoTPipeline
-from dataset import ResilientIoTDataset
+from dataset import RealIoTDataset, custom_collate_real
+from logger import setup_logger
+from metrics import calculate_metrics
 
 class DivergenceError(Exception):
     """Custom exception raised when model loss diverges (NaNs)."""
@@ -2095,6 +2005,13 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--w_forecast", type=float, default=1.0, help="Weight for forecasting loss")
     parser.add_argument("--w_impute", type=float, default=1.0, help="Weight for imputation loss")
+    
+    # Dataset arguments
+    parser.add_argument("--use_mock_data", action="store_true", help="Use mock data instead of real parquet data")
+    parser.add_argument("--start_date", type=str, default="2023-03-02", help="Start date for real data (inclusive)")
+    parser.add_argument("--end_date", type=str, default="2023-04-02", help="End date for real data (exclusive)")
+    parser.add_argument("--seq_len", type=int, default=12, help="Sequence length for temporal processing")
+    
     return parser.parse_args()
 
 def create_mock_dataloader(batch_size: int, num_nodes: int, seq_len: int, time_series_dim: int, static_feat_dim: int, dataset_size: int):
@@ -2104,6 +2021,9 @@ def create_mock_dataloader(batch_size: int, num_nodes: int, seq_len: int, time_s
     class MockPipelineDataset(torch.utils.data.Dataset):
         def __init__(self, size):
             self.size = size
+            self.static_feat_dim = static_feat_dim
+            self.time_series_dim = time_series_dim
+            self.num_nodes = num_nodes
             
         def __len__(self):
             return self.size
@@ -2133,7 +2053,7 @@ def create_mock_dataloader(batch_size: int, num_nodes: int, seq_len: int, time_s
             'node_mask': torch.stack([b['node_mask'] for b in batch_list])
         }
 
-    return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate)
+    return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate), dataset
 
 def run_training(args, init_wandb=True) -> float:
     """
@@ -2150,26 +2070,45 @@ def run_training(args, init_wandb=True) -> float:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
 
-    # Initialize W&B only if requested (prevent multiple runs during sweeps)
+    # Initialize W&B only if requested
     if init_wandb:
         wandb.init(project="resilient-iot", config=args)
 
-    # Model parameters matching pipeline test
-    num_nodes = 50
-    static_feat_dim = 10
-    time_series_dim = 3
-    seq_len = 12
-
-    # DataLoaders
-    train_loader = create_mock_dataloader(args.batch_size, num_nodes, seq_len, time_series_dim, static_feat_dim, dataset_size=20)
-    val_loader = create_mock_dataloader(args.batch_size, num_nodes, seq_len, time_series_dim, static_feat_dim, dataset_size=8)
+    # Load Dataset
+    if args.use_mock_data:
+        logger.info("Using mock dataloader.")
+        train_loader, train_dataset = create_mock_dataloader(args.batch_size, 50, args.seq_len, 3, 10, 20)
+        val_loader, _ = create_mock_dataloader(args.batch_size, 50, args.seq_len, 3, 10, 8)
+    else:
+        logger.info(f"Loading RealIoTDataset from {args.start_date} to {args.end_date}")
+        parquet_path = "data/processed/master_dataset_15T.parquet"
+        try:
+            full_dataset = RealIoTDataset(parquet_path, args.start_date, args.end_date, seq_len=args.seq_len)
+            
+            train_size = int(0.8 * len(full_dataset))
+            val_size = len(full_dataset) - train_size
+            
+            if train_size == 0 or val_size == 0:
+                 raise ValueError("Not enough data to split into train and val. Try a wider date range.")
+                 
+            train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, val_size])
+            
+            train_dataset.num_nodes = full_dataset.num_nodes
+            train_dataset.static_feat_dim = full_dataset.static_feat_dim
+            train_dataset.time_series_dim = full_dataset.time_series_dim
+            
+            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=custom_collate_real, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=custom_collate_real)
+        except Exception as e:
+            logger.error(f"Failed to load RealIoTDataset: {e}")
+            raise
 
     # Model
     model = ResilientIoTPipeline(
-        num_nodes=num_nodes,
-        static_feat_dim=static_feat_dim,
-        time_series_dim=time_series_dim,
-        seq_len=seq_len
+        num_nodes=train_dataset.num_nodes,
+        static_feat_dim=train_dataset.static_feat_dim,
+        time_series_dim=train_dataset.time_series_dim,
+        seq_len=args.seq_len
     ).to(device)
 
     # Optimizer
@@ -2177,7 +2116,8 @@ def run_training(args, init_wandb=True) -> float:
 
     logger.info("Starting training loop...")
 
-    avg_val_loss = float('inf')
+    best_val_loss = float('inf')
+    os.makedirs("models", exist_ok=True)
 
     for epoch in range(args.epochs):
         model.train()
@@ -2190,7 +2130,7 @@ def run_training(args, init_wandb=True) -> float:
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
             
             optimizer.zero_grad()
-            loss, loss_impute, loss_forecast = model(batch)
+            loss, loss_impute, loss_forecast, _, _, _, _ = model(batch)
             loss.backward()
             
             # CRITICAL SAFEGUARD: Gradient Clipping (from ARCHITECTURE.md)
@@ -2209,31 +2149,64 @@ def run_training(args, init_wandb=True) -> float:
         # Validation Loop
         model.eval()
         val_loss_total = 0.0
+        val_metrics_accum = {
+            "rmse": 0.0,
+            "mae": 0.0,
+            "zero_acc": 0.0,
+            "impute_mse": 0.0
+        }
         
         with torch.no_grad():
             for batch in val_loader:
                 batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
-                loss, _, _ = model(batch)
+                loss, _, _, imputed_features, mu, _, pi = model(batch)
                 val_loss_total += loss.item()
                 
+                # Calculate batch metrics
+                batch_metrics = calculate_metrics(
+                    target_forecast=batch['target_forecast'],
+                    mu=mu,
+                    pi=pi,
+                    imputed_features=imputed_features,
+                    target_impute=batch['target_impute'],
+                    node_mask=batch['node_mask']
+                )
+                for k in val_metrics_accum:
+                    val_metrics_accum[k] += batch_metrics[k]
+                
         avg_val_loss = val_loss_total / len(val_loader)
+        val_rmse = val_metrics_accum["rmse"] / len(val_loader)
+        val_mae = val_metrics_accum["mae"] / len(val_loader)
+        val_zero_acc = val_metrics_accum["zero_acc"] / len(val_loader)
+        val_impute_mse = val_metrics_accum["impute_mse"] / len(val_loader)
         
         # Offensive Assertion for Divergence
         if torch.isnan(torch.tensor(avg_val_loss)):
             raise DivergenceError("Validation loss is NaN! The Burn Test Failed.")
             
         logger.info(f"Epoch {epoch+1}/{args.epochs} - "
-                    f"Train Loss: {avg_train_loss:.4f} "
-                    f"(Impute: {avg_train_impute:.4f}, Forecast: {avg_train_forecast:.4f}) | "
-                    f"Val Loss: {avg_val_loss:.4f}")
+                    f"Train Loss: {avg_train_loss:.4f} | "
+                    f"Val Loss: {avg_val_loss:.4f} "
+                    f"(RMSE: {val_rmse:.2f}, MAE: {val_mae:.2f}, ZeroAcc: {val_zero_acc:.2f}, ImputeMSE: {val_impute_mse:.4f})")
                     
+        # Checkpointing
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            checkpoint_path = "models/best_pipeline.pt"
+            torch.save(model.state_dict(), checkpoint_path)
+            logger.info(f"New best model saved to {checkpoint_path} with val_loss: {best_val_loss:.4f}")
+
         # W&B Logging
-        if init_wandb or wandb.run is not None:
+        if init_wandb or (wandb.run is not None):
             wandb.log({
                 "train_loss_total": avg_train_loss,
                 "train_loss_impute": avg_train_impute,
                 "train_loss_forecast": avg_train_forecast,
                 "val_loss_total": avg_val_loss,
+                "val_rmse": val_rmse,
+                "val_mae": val_mae,
+                "val_zero_acc": val_zero_acc,
+                "val_impute_mse": val_impute_mse,
                 "epoch": epoch + 1
             })
 
@@ -2242,8 +2215,6 @@ def run_training(args, init_wandb=True) -> float:
         wandb.finish()
         
     return avg_val_loss
-
-from logger import setup_logger
 
 def main():
     logger = setup_logger("train_pipeline")
@@ -2336,6 +2307,208 @@ if __name__ == "__main__":
     for key, value in study.best_params.items():
         logger.info(f"    {key}: {value}")
     logger.info(f"Best validation loss: {study.best_value}")
+
+
+
+================================================
+FILE: tests/conftest.py
+================================================
+# conftest.py
+import pytest
+
+
+
+================================================
+FILE: tests/test_decoders.py
+================================================
+import torch
+import pytest
+from decoders import DecoupledDecoders, compute_loss
+
+def test_decoupled_decoders_and_loss():
+    torch.manual_seed(42)
+
+    batch_size = 4
+    num_nodes = 50
+    seq_len = 12
+    hidden_dim = 64
+    time_series_dim = 3
+
+    model = DecoupledDecoders(hidden_dim=hidden_dim, time_series_dim=time_series_dim)
+
+    latent_embeddings = torch.randn(batch_size, num_nodes, seq_len, hidden_dim)
+    target_forecast = torch.randint(0, 100, (batch_size, num_nodes)).float()
+    target_impute = torch.randn(batch_size, num_nodes, seq_len, time_series_dim)
+
+    imputed_features, mu, theta, pi = model(latent_embeddings)
+
+    loss, loss_impute, loss_forecast = compute_loss(
+        imputed_features=imputed_features,
+        target_impute=target_impute,
+        mu=mu,
+        theta=theta,
+        pi=pi,
+        target_forecast=target_forecast
+    )
+
+    assert not torch.isnan(loss).any()
+
+    loss.backward()
+
+    assert model.impute_layer.weight.grad is not None
+    assert model.forecast_layer.weight.grad is not None
+
+
+
+================================================
+FILE: tests/test_encoder.py
+================================================
+import torch
+import pytest
+from torch_geometric.utils import dense_to_sparse
+from encoder import MaskedSpatiotemporalEncoder
+
+def test_masked_spatiotemporal_encoder():
+    torch.manual_seed(42)
+
+    batch_size = 4
+    num_nodes = 50
+    seq_len = 12
+    time_series_dim = 3
+    hidden_dim = 64
+
+    model = MaskedSpatiotemporalEncoder(
+        num_nodes=num_nodes,
+        seq_len=seq_len,
+        time_series_dim=time_series_dim,
+        hidden_dim=hidden_dim
+    )
+
+    dynamic_features = torch.randn(batch_size, num_nodes, seq_len, time_series_dim)
+    adj = torch.ones((num_nodes, num_nodes))
+    edge_index, edge_weight = dense_to_sparse(adj)
+
+    output = model(dynamic_features, edge_index, edge_weight)
+
+    expected_shape = (batch_size, num_nodes, seq_len, hidden_dim)
+    assert output.shape == expected_shape
+
+    loss = output.sum()
+    loss.backward()
+
+    gat_has_grad = any(param.grad is not None for _, param in model.gat.named_parameters())
+    assert gat_has_grad
+
+    transformer_has_grad = any(param.grad is not None for _, param in model.transformer.named_parameters())
+    assert transformer_has_grad
+
+
+
+================================================
+FILE: tests/test_graph_learner.py
+================================================
+import torch
+import pytest
+from graph_learner import DynamicGraphLearner
+
+def test_dynamic_graph_learner():
+    torch.manual_seed(42)
+    import numpy as np
+    np.random.seed(42)
+
+    num_nodes = 50
+    static_feat_dim = 10
+    embedding_dim = 16
+    sparsity_threshold = 0.5
+    
+    model = DynamicGraphLearner(
+        static_feat_dim=static_feat_dim, 
+        embedding_dim=embedding_dim, 
+        sparsity_threshold=sparsity_threshold
+    )
+
+    static_features = torch.randn(num_nodes, static_feat_dim)
+    edge_index, edge_weight = model(static_features)
+
+    E = edge_weight.shape[0]
+    assert edge_index.shape == (2, E), f"edge_index shape mismatch: {edge_index.shape}"
+    assert edge_weight.shape == (E,), f"edge_weight shape mismatch: {edge_weight.shape}"
+
+    assert E > 0, "Graph is completely disconnected (E=0)."
+    assert E < (num_nodes * num_nodes), f"Graph is fully connected (E={E}), sparsity threshold not working."
+
+    loss = edge_weight.sum()
+    loss.backward()
+
+    for name, param in model.named_parameters():
+        assert param.grad is not None, f"Parameter '{name}' has no gradient."
+
+
+
+================================================
+FILE: tests/test_pipeline.py
+================================================
+import torch
+import pytest
+from pipeline import ResilientIoTPipeline
+from torch.utils.data import DataLoader
+
+def test_resilient_iot_pipeline():
+    torch.manual_seed(42)
+
+    batch_size = 4
+    num_nodes = 50
+    static_feat_dim = 10
+    time_series_dim = 3
+    seq_len = 12
+
+    class MockPipelineDataset(torch.utils.data.Dataset):
+        def __init__(self, size):
+            self.size = size
+        def __len__(self):
+            return self.size
+        def __getitem__(self, idx):
+            dyn = torch.randn(num_nodes, seq_len, time_series_dim)
+            mask = torch.rand_like(dyn) < 0.15
+            dyn_masked = dyn.clone()
+            dyn_masked[mask] = float('nan')
+            return {
+                'static_features': torch.randn(num_nodes, static_feat_dim),
+                'dynamic_features': dyn_masked,
+                'target_impute': dyn.clone(),
+                'target_forecast': torch.randint(0, 50, (num_nodes,)).float(),
+                'node_mask': mask
+            }
+            
+    dataset = MockPipelineDataset(size=8)
+    
+    def custom_collate(batch_list):
+        return {
+            'static_features': batch_list[0]['static_features'],
+            'dynamic_features': torch.stack([b['dynamic_features'] for b in batch_list]),
+            'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
+            'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
+            'node_mask': torch.stack([b['node_mask'] for b in batch_list])
+        }
+
+    dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate)
+
+    model = ResilientIoTPipeline(
+        num_nodes=num_nodes,
+        static_feat_dim=static_feat_dim,
+        time_series_dim=time_series_dim,
+        seq_len=seq_len
+    )
+    
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    for batch in dataloader:
+        optimizer.zero_grad()
+        loss, _, _ = model(batch)
+        assert not torch.isnan(loss).any()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
 
 
 

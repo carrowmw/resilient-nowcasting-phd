@@ -43,7 +43,13 @@ def objective(trial):
         batch_size=4,
         lr=params.get("lr", 1e-3),
         w_forecast=params.get("w_forecast", 1.0),
-        w_impute=params.get("w_impute", 1.0)
+        w_impute=params.get("w_impute", 1.0),
+        use_mock_data=False,
+        start_date="2023-03-02",
+        end_date="2023-04-02",
+        seq_len=12,
+        veh_class="person",
+        dir="all"
     )
     
     # Execute training loop. 

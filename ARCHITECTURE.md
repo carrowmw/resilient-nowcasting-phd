@@ -2,7 +2,7 @@
 
 ## Objective
 
-Implement an end-to-end, joint spatiotemporal graph neural network in PyTorch and PyTorch Geometric (PyG). The model is designed for an urban IoT sensor network (specifically pedestrian counting every 15 minutes). It must be self-healing, capable of dynamic graph inference, missing feature imputation, and uncertainty-aware forecasting.
+Implement an end-to-end, joint spatiotemporal graph neural network in PyTorch and PyTorch Geometric (PyG). The model is designed for an urban IoT sensor network (predicting a configurable target traffic stream, defined by vehicle class and spatial direction, every 15 minutes). It must be self-healing, capable of dynamic graph inference, missing feature imputation, and uncertainty-aware forecasting.
 
 ## Core Paradigm
 
@@ -40,7 +40,7 @@ static_features: [num_nodes, static_feat_dim] (Physical sensor attributes).
 
 dynamic_features: [batch_size, num_nodes, seq_len, time_series_dim] (Historical sequences with ~15% artificial NaN masking applied for self-supervised imputation training).
 
-target_forecast: [batch_size, num_nodes] (The ground-truth future pedestrian counts).
+target_forecast: [batch_size, num_nodes] (The ground-truth future target counts).
 
 target_impute: [batch_size, num_nodes, seq_len, time_series_dim] (The unmasked historical sequence to calculate imputation loss).
 

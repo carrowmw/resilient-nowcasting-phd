@@ -29,6 +29,8 @@ def parse_args():
     parser.add_argument("--start_date", type=str, default="2023-03-02", help="Start date for real data (inclusive)")
     parser.add_argument("--end_date", type=str, default="2023-04-02", help="End date for real data (exclusive)")
     parser.add_argument("--seq_len", type=int, default=12, help="Sequence length for temporal processing")
+    parser.add_argument("--veh_class", type=str, default="person", help="Target vehicle class")
+    parser.add_argument("--dir", type=str, default="all", help="Target spatial direction")
     
     return parser.parse_args()
 
@@ -101,7 +103,14 @@ def run_training(args, init_wandb=True) -> float:
         logger.info(f"Loading RealIoTDataset from {args.start_date} to {args.end_date}")
         parquet_path = "data/processed/master_dataset_15T.parquet"
         try:
-            full_dataset = RealIoTDataset(parquet_path, args.start_date, args.end_date, seq_len=args.seq_len)
+            full_dataset = RealIoTDataset(
+                parquet_path, 
+                args.start_date, 
+                args.end_date, 
+                seq_len=args.seq_len,
+                target_veh_class=args.veh_class,
+                target_dir=args.dir
+            )
             
             train_size = int(0.8 * len(full_dataset))
             val_size = len(full_dataset) - train_size
