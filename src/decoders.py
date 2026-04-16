@@ -16,12 +16,24 @@ class DecoupledDecoders(nn.Module):
         self.hidden_dim = hidden_dim
         self.time_series_dim = time_series_dim
 
-        # Imputation Decoder: Reconstructs the entire sequence
-        self.impute_layer = nn.Linear(hidden_dim, time_series_dim)
+        # Imputation Decoder: Reconstructs the entire sequence.
+        # Deepened to a 2-layer MLP to give the model enough capacity to recover
+        # masked sensor readings from the latent graph representation.
+        self.impute_layer = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim * 2, time_series_dim)
+        )
 
-        # Forecasting Decoder: Predicts ZINB parameters for the future timestep
-        # Outputs 3 parameters: mu, theta, pi
-        self.forecast_layer = nn.Linear(hidden_dim, 3)
+        # Forecasting Decoder: Predicts ZINB parameters (mu, theta, pi).
+        # Deepened to match imputation head capacity and reduce gradient starvation.
+        self.forecast_layer = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim * 2, 3)
+        )
 
     def forward(self, latent_embeddings: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """

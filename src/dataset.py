@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import pandas as pd
 import logging
+from sklearn.preprocessing import StandardScaler
 
 # Standard random seed initialization
 np.random.seed(42)
@@ -83,12 +84,27 @@ class RealIoTDataset(Dataset):
         # [num_times, num_nodes, 3]
         self.dynamic_data = np.stack([val_arr, hum_arr, sol_arr], axis=-1)
         self.time_series_dim = self.dynamic_data.shape[-1]
-        
+
+        # Scale dynamic features across the full dataset so the model receives
+        # zero-mean, unit-variance inputs — critical for stable gradient flow.
+        num_times, num_nodes_d, n_dyn_features = self.dynamic_data.shape
+        dyn_flat = self.dynamic_data.reshape(-1, n_dyn_features)
+        self.scaler = StandardScaler()
+        dyn_scaled = self.scaler.fit_transform(dyn_flat)
+        self.dynamic_data = dyn_scaled.reshape(num_times, num_nodes_d, n_dyn_features)
+        logger.info(f"Dynamic features scaled: mean≈0, std≈1 over {num_times * num_nodes_d} samples.")
+
         # Static features
         stat_df = df[['nearby_poi_count', 'dist_to_nearest_intersection']].groupby('location').first()
         stat_df = stat_df.reindex(locations_idx).fillna(0.0)
-        self.static_features = torch.tensor(stat_df.values, dtype=torch.float32)
+
+        # Scale static features so DynamicGraphLearner receives normalised coordinates/metadata.
+        stat_np = stat_df.values  # [num_nodes, static_feat_dim]
+        self.static_scaler = StandardScaler()
+        stat_np_scaled = self.static_scaler.fit_transform(stat_np)
+        self.static_features = torch.tensor(stat_np_scaled, dtype=torch.float32)
         self.static_feat_dim = self.static_features.shape[-1]
+        logger.info(f"Static features scaled: mean≈0, std≈1 over {stat_np.shape[0]} nodes.")
         
         logger.info(f"Feature dimensions established. Static: {self.static_feat_dim}, Dynamic: {self.time_series_dim}")
 

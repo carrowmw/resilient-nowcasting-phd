@@ -32,5 +32,7 @@ def test_decoupled_decoders_and_loss():
 
     loss.backward()
 
-    assert model.impute_layer.weight.grad is not None
-    assert model.forecast_layer.weight.grad is not None
+    # impute_layer and forecast_layer are now nn.Sequential MLPs.
+    # Verify gradient flow through the first Linear in each head.
+    assert model.impute_layer[0].weight.grad is not None
+    assert model.forecast_layer[0].weight.grad is not None

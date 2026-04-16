@@ -5,7 +5,9 @@
       "Bash(git commit *)",
       "Bash(python *)",
       "Bash(pip install *)",
-      "Bash(wandb status *)"
+      "Bash(wandb status *)",
+      "Bash(WANDB_MODE=offline PYTHONPATH=/workspace/src python *)",
+      "Bash(PYTHONPATH=/workspace/src python *)"
     ]
   }
 }
