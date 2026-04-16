@@ -5,10 +5,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import wandb
 import numpy as np
+import os
 
 from pipeline import ResilientIoTPipeline
 from dataset import RealIoTDataset, custom_collate_real
 from logger import setup_logger
+from metrics import calculate_metrics
 
 class DivergenceError(Exception):
     """Custom exception raised when model loss diverges (NaNs)."""
@@ -99,12 +101,8 @@ def run_training(args, init_wandb=True) -> float:
         logger.info(f"Loading RealIoTDataset from {args.start_date} to {args.end_date}")
         parquet_path = "data/processed/master_dataset_15T.parquet"
         try:
-            # We must create disjoint datasets or just use a single one and split it
-            # For simplicity in this step, let's load train and val identically if they overlap, 
-            # or ideally we'd split. We'll use the same dataset object for test purposes or split it.
             full_dataset = RealIoTDataset(parquet_path, args.start_date, args.end_date, seq_len=args.seq_len)
             
-            # Simple sequential split: 80% train, 20% val
             train_size = int(0.8 * len(full_dataset))
             val_size = len(full_dataset) - train_size
             
@@ -113,7 +111,6 @@ def run_training(args, init_wandb=True) -> float:
                  
             train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, val_size])
             
-            # The dimensions are stored on the parent dataset object
             train_dataset.num_nodes = full_dataset.num_nodes
             train_dataset.static_feat_dim = full_dataset.static_feat_dim
             train_dataset.time_series_dim = full_dataset.time_series_dim
@@ -137,7 +134,8 @@ def run_training(args, init_wandb=True) -> float:
 
     logger.info("Starting training loop...")
 
-    avg_val_loss = float('inf')
+    best_val_loss = float('inf')
+    os.makedirs("models", exist_ok=True)
 
     for epoch in range(args.epochs):
         model.train()
@@ -150,7 +148,7 @@ def run_training(args, init_wandb=True) -> float:
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
             
             optimizer.zero_grad()
-            loss, loss_impute, loss_forecast = model(batch)
+            loss, loss_impute, loss_forecast, _, _, _, _ = model(batch)
             loss.backward()
             
             # CRITICAL SAFEGUARD: Gradient Clipping (from ARCHITECTURE.md)
@@ -169,31 +167,64 @@ def run_training(args, init_wandb=True) -> float:
         # Validation Loop
         model.eval()
         val_loss_total = 0.0
+        val_metrics_accum = {
+            "rmse": 0.0,
+            "mae": 0.0,
+            "zero_acc": 0.0,
+            "impute_mse": 0.0
+        }
         
         with torch.no_grad():
             for batch in val_loader:
                 batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
-                loss, _, _ = model(batch)
+                loss, _, _, imputed_features, mu, _, pi = model(batch)
                 val_loss_total += loss.item()
                 
+                # Calculate batch metrics
+                batch_metrics = calculate_metrics(
+                    target_forecast=batch['target_forecast'],
+                    mu=mu,
+                    pi=pi,
+                    imputed_features=imputed_features,
+                    target_impute=batch['target_impute'],
+                    node_mask=batch['node_mask']
+                )
+                for k in val_metrics_accum:
+                    val_metrics_accum[k] += batch_metrics[k]
+                
         avg_val_loss = val_loss_total / len(val_loader)
+        val_rmse = val_metrics_accum["rmse"] / len(val_loader)
+        val_mae = val_metrics_accum["mae"] / len(val_loader)
+        val_zero_acc = val_metrics_accum["zero_acc"] / len(val_loader)
+        val_impute_mse = val_metrics_accum["impute_mse"] / len(val_loader)
         
         # Offensive Assertion for Divergence
         if torch.isnan(torch.tensor(avg_val_loss)):
             raise DivergenceError("Validation loss is NaN! The Burn Test Failed.")
             
         logger.info(f"Epoch {epoch+1}/{args.epochs} - "
-                    f"Train Loss: {avg_train_loss:.4f} "
-                    f"(Impute: {avg_train_impute:.4f}, Forecast: {avg_train_forecast:.4f}) | "
-                    f"Val Loss: {avg_val_loss:.4f}")
+                    f"Train Loss: {avg_train_loss:.4f} | "
+                    f"Val Loss: {avg_val_loss:.4f} "
+                    f"(RMSE: {val_rmse:.2f}, MAE: {val_mae:.2f}, ZeroAcc: {val_zero_acc:.2f}, ImputeMSE: {val_impute_mse:.4f})")
                     
+        # Checkpointing
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            checkpoint_path = "models/best_pipeline.pt"
+            torch.save(model.state_dict(), checkpoint_path)
+            logger.info(f"New best model saved to {checkpoint_path} with val_loss: {best_val_loss:.4f}")
+
         # W&B Logging
-        if init_wandb or wandb.run is not None:
+        if init_wandb or (wandb.run is not None):
             wandb.log({
                 "train_loss_total": avg_train_loss,
                 "train_loss_impute": avg_train_impute,
                 "train_loss_forecast": avg_train_forecast,
                 "val_loss_total": avg_val_loss,
+                "val_rmse": val_rmse,
+                "val_mae": val_mae,
+                "val_zero_acc": val_zero_acc,
+                "val_impute_mse": val_impute_mse,
                 "epoch": epoch + 1
             })
 
@@ -202,8 +233,6 @@ def run_training(args, init_wandb=True) -> float:
         wandb.finish()
         
     return avg_val_loss
-
-from logger import setup_logger
 
 def main():
     logger = setup_logger("train_pipeline")

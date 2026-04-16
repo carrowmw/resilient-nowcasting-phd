@@ -1,35 +1,30 @@
-# Implementation Plan - Hyperparameter Tuning (src/tune.py)
+# Plan: Post-hoc Analysis Preparation
 
-## Objective
-Build an Optuna hyperparameter tuning orchestrator (`src/tune.py`) integrated with Weights & Biases to optimize learning rate and loss weighting parameters.
+## 1. Model Checkpointing (src/train.py)
+- Modify `src/train.py` to track `best_val_loss`.
+- Ensure `models/` directory exists using `os.makedirs`.
+- Save `model.state_dict()` to `models/best_pipeline.pt` when a new best validation loss is achieved.
 
-## Proposed Changes
+## 2. Statistical Engine (src/metrics.py)
+- Create `src/metrics.py`.
+- Implement `calculate_metrics(target_forecast, mu, pi, imputed_features, target_impute, node_mask)` function.
+- **RMSE**: `sqrt(mean((target_forecast - mu)^2))`
+- **MAE**: `mean(abs(target_forecast - mu))`
+- **Zero-Accuracy**: Percentage of `pi > 0.5` when `target_forecast == 0`.
+- **Imputation MSE**: `mean((imputed_features - target_impute)^2)` only where `node_mask` is True.
+- Use `torch` for calculations and return a dictionary of scalar floats.
 
-### 1. Prerequisite Setup
-- Install `optuna` and `optuna-integration`.
+## 3. Integration & Refactoring
+- **src/pipeline.py**:
+    - Modify `ResilientIoTPipeline.forward` to return `(loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)`.
+- **src/train.py**:
+    - Import `calculate_metrics` from `metrics`.
+    - Update training and validation loops to handle the expanded return values from the model.
+    - In the validation loop, call `calculate_metrics` for each batch and aggregate them.
+    - Log `val_rmse`, `val_mae`, `val_zero_acc`, `val_impute_mse` to W&B.
 
-### 2. Refactoring `src/train.py`
-- Extract the core training loop inside `main()` into a standalone function: `def run_training(args, init_wandb=True) -> float`.
-- Wrap the `wandb.init()` and `wandb.finish()` calls inside `if init_wandb:` blocks to prevent duplicate run initialization when called by Optuna.
-- Make `run_training` return `avg_val_loss`.
-- Keep `main()` intact by having it call `args = parse_args()` and `run_training(args)`.
-
-### 3. Module Implementation (`src/tune.py`)
-- **Imports**: `optuna`, `WeightsAndBiasesCallback`, `run_training` from `train`, `argparse`.
-- **Objective Function**:
-  - `def objective(trial)`
-  - Suggest `lr`: log-uniform `[1e-5, 1e-2]`.
-  - Suggest `w_forecast`: uniform `[0.5, 5.0]`.
-  - Suggest `w_impute`: uniform `[0.5, 5.0]`.
-  - Construct an `argparse.Namespace` with these suggestions, plus fixed `epochs=2` and `batch_size=4` for the test.
-  - Call `val_loss = run_training(args, init_wandb=False)`.
-  - Return `val_loss`.
-- **Study Setup**:
-  - Instantiate `WeightsAndBiasesCallback(metric_name="val_loss_total", wandb_kwargs={"project": "resilient-iot-sweeps"})`.
-  - `study = optuna.create_study(direction="minimize")`.
-  - `study.optimize(objective, n_trials=2, callbacks=[wandbc])`.
-
-### 4. Verification Plan
-- Run `export WANDB_MODE=offline && python src/tune.py` (or online, per prompt constraints, "The Online Local Test" but since the previous step asked for offline, I'll allow it to run and use offline/online as appropriate for testing).
-- Validate trials complete, results log, and no crashes occur.
+## 4. Verification
+- Run `python src/train.py --use_mock_data --epochs 2` on CPU.
+- Verify `models/best_pipeline.pt` exists.
+- Verify console logs show the new metrics.
 - Update `EXPERIMENTS.md`.

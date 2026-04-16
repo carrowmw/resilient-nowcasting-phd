@@ -46,7 +46,7 @@ class ResilientIoTPipeline(nn.Module):
             time_series_dim=time_series_dim
         )
 
-    def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
             batch (dict): Expected keys:
@@ -56,7 +56,7 @@ class ResilientIoTPipeline(nn.Module):
                 - target_impute: [batch_size, num_nodes, seq_len, time_series_dim]
                 - node_mask: [batch_size, num_nodes, seq_len, time_series_dim] (or related)
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: (total_loss, loss_impute, loss_forecast)
+            Tuple[torch.Tensor, ...]: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
@@ -89,7 +89,7 @@ class ResilientIoTPipeline(nn.Module):
         # CRITICAL SAFEGUARD
         assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
         
-        return loss, loss_impute, loss_forecast
+        return loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -169,7 +169,7 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             
             # Forward Pass
-            loss = model(batch)
+            loss, _, _, _, _, _, _ = model(batch)
             
             # Backward Pass
             loss.backward()
