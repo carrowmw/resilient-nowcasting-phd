@@ -7,7 +7,8 @@ import wandb
 import numpy as np
 
 from pipeline import ResilientIoTPipeline
-from dataset import ResilientIoTDataset
+from dataset import RealIoTDataset, custom_collate_real
+from logger import setup_logger
 
 class DivergenceError(Exception):
     """Custom exception raised when model loss diverges (NaNs)."""
@@ -20,6 +21,13 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--w_forecast", type=float, default=1.0, help="Weight for forecasting loss")
     parser.add_argument("--w_impute", type=float, default=1.0, help="Weight for imputation loss")
+    
+    # Dataset arguments
+    parser.add_argument("--use_mock_data", action="store_true", help="Use mock data instead of real parquet data")
+    parser.add_argument("--start_date", type=str, default="2023-03-02", help="Start date for real data (inclusive)")
+    parser.add_argument("--end_date", type=str, default="2023-04-02", help="End date for real data (exclusive)")
+    parser.add_argument("--seq_len", type=int, default=12, help="Sequence length for temporal processing")
+    
     return parser.parse_args()
 
 def create_mock_dataloader(batch_size: int, num_nodes: int, seq_len: int, time_series_dim: int, static_feat_dim: int, dataset_size: int):
@@ -29,6 +37,9 @@ def create_mock_dataloader(batch_size: int, num_nodes: int, seq_len: int, time_s
     class MockPipelineDataset(torch.utils.data.Dataset):
         def __init__(self, size):
             self.size = size
+            self.static_feat_dim = static_feat_dim
+            self.time_series_dim = time_series_dim
+            self.num_nodes = num_nodes
             
         def __len__(self):
             return self.size
@@ -58,7 +69,7 @@ def create_mock_dataloader(batch_size: int, num_nodes: int, seq_len: int, time_s
             'node_mask': torch.stack([b['node_mask'] for b in batch_list])
         }
 
-    return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate)
+    return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate), dataset
 
 def run_training(args, init_wandb=True) -> float:
     """
@@ -75,26 +86,50 @@ def run_training(args, init_wandb=True) -> float:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
 
-    # Initialize W&B only if requested (prevent multiple runs during sweeps)
+    # Initialize W&B only if requested
     if init_wandb:
         wandb.init(project="resilient-iot", config=args)
 
-    # Model parameters matching pipeline test
-    num_nodes = 50
-    static_feat_dim = 10
-    time_series_dim = 3
-    seq_len = 12
-
-    # DataLoaders
-    train_loader = create_mock_dataloader(args.batch_size, num_nodes, seq_len, time_series_dim, static_feat_dim, dataset_size=20)
-    val_loader = create_mock_dataloader(args.batch_size, num_nodes, seq_len, time_series_dim, static_feat_dim, dataset_size=8)
+    # Load Dataset
+    if args.use_mock_data:
+        logger.info("Using mock dataloader.")
+        train_loader, train_dataset = create_mock_dataloader(args.batch_size, 50, args.seq_len, 3, 10, 20)
+        val_loader, _ = create_mock_dataloader(args.batch_size, 50, args.seq_len, 3, 10, 8)
+    else:
+        logger.info(f"Loading RealIoTDataset from {args.start_date} to {args.end_date}")
+        parquet_path = "data/processed/master_dataset_15T.parquet"
+        try:
+            # We must create disjoint datasets or just use a single one and split it
+            # For simplicity in this step, let's load train and val identically if they overlap, 
+            # or ideally we'd split. We'll use the same dataset object for test purposes or split it.
+            full_dataset = RealIoTDataset(parquet_path, args.start_date, args.end_date, seq_len=args.seq_len)
+            
+            # Simple sequential split: 80% train, 20% val
+            train_size = int(0.8 * len(full_dataset))
+            val_size = len(full_dataset) - train_size
+            
+            if train_size == 0 or val_size == 0:
+                 raise ValueError("Not enough data to split into train and val. Try a wider date range.")
+                 
+            train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, val_size])
+            
+            # The dimensions are stored on the parent dataset object
+            train_dataset.num_nodes = full_dataset.num_nodes
+            train_dataset.static_feat_dim = full_dataset.static_feat_dim
+            train_dataset.time_series_dim = full_dataset.time_series_dim
+            
+            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=custom_collate_real, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=custom_collate_real)
+        except Exception as e:
+            logger.error(f"Failed to load RealIoTDataset: {e}")
+            raise
 
     # Model
     model = ResilientIoTPipeline(
-        num_nodes=num_nodes,
-        static_feat_dim=static_feat_dim,
-        time_series_dim=time_series_dim,
-        seq_len=seq_len
+        num_nodes=train_dataset.num_nodes,
+        static_feat_dim=train_dataset.static_feat_dim,
+        time_series_dim=train_dataset.time_series_dim,
+        seq_len=args.seq_len
     ).to(device)
 
     # Optimizer
