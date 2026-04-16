@@ -179,16 +179,17 @@ def run_training(args, init_wandb=True) -> float:
         val_metrics_accum = {
             "rmse": 0.0,
             "mae": 0.0,
-            "zero_acc": 0.0,
             "impute_mse": 0.0
         }
-        
+        zero_true_total = 0
+        zero_correct_total = 0
+
         with torch.no_grad():
             for batch in val_loader:
                 batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
                 loss, _, _, imputed_features, mu, _, pi = model(batch)
                 val_loss_total += loss.item()
-                
+
                 # Calculate batch metrics
                 batch_metrics = calculate_metrics(
                     target_forecast=batch['target_forecast'],
@@ -200,11 +201,13 @@ def run_training(args, init_wandb=True) -> float:
                 )
                 for k in val_metrics_accum:
                     val_metrics_accum[k] += batch_metrics[k]
-                
+                zero_true_total += batch_metrics["zero_true_count"]
+                zero_correct_total += batch_metrics["zero_correct_count"]
+
         avg_val_loss = val_loss_total / len(val_loader)
         val_rmse = val_metrics_accum["rmse"] / len(val_loader)
         val_mae = val_metrics_accum["mae"] / len(val_loader)
-        val_zero_acc = val_metrics_accum["zero_acc"] / len(val_loader)
+        val_zero_acc = zero_correct_total / zero_true_total if zero_true_total > 0 else 0.0
         val_impute_mse = val_metrics_accum["impute_mse"] / len(val_loader)
         
         # Offensive Assertion for Divergence
