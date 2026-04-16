@@ -60,11 +60,12 @@ def create_mock_dataloader(batch_size: int, num_nodes: int, seq_len: int, time_s
 
     return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate)
 
-def main():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+def run_training(args, init_wandb=True) -> float:
+    """
+    Core execution logic for a single training run.
+    Returns the final validation loss.
+    """
     logger = logging.getLogger(__name__)
-
-    args = parse_args()
 
     # Reproducibility
     torch.manual_seed(42)
@@ -74,8 +75,9 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
 
-    # Initialize W&B
-    wandb.init(project="resilient-iot", config=args)
+    # Initialize W&B only if requested (prevent multiple runs during sweeps)
+    if init_wandb:
+        wandb.init(project="resilient-iot", config=args)
 
     # Model parameters matching pipeline test
     num_nodes = 50
@@ -100,6 +102,8 @@ def main():
 
     logger.info("Starting training loop...")
 
+    avg_val_loss = float('inf')
+
     for epoch in range(args.epochs):
         model.train()
         
@@ -108,15 +112,10 @@ def main():
         epoch_loss_impute = 0.0
         
         for batch in train_loader:
-            # Move batch to device
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
             
             optimizer.zero_grad()
-            
-            # Forward pass
             loss, loss_impute, loss_forecast = model(batch)
-            
-            # Backward pass
             loss.backward()
             
             # CRITICAL SAFEGUARD: Gradient Clipping (from ARCHITECTURE.md)
@@ -128,7 +127,6 @@ def main():
             epoch_loss_impute += loss_impute.item()
             epoch_loss_forecast += loss_forecast.item()
             
-        # Calculate averages for training epoch
         avg_train_loss = epoch_loss_total / len(train_loader)
         avg_train_impute = epoch_loss_impute / len(train_loader)
         avg_train_forecast = epoch_loss_forecast / len(train_loader)
@@ -154,17 +152,26 @@ def main():
                     f"(Impute: {avg_train_impute:.4f}, Forecast: {avg_train_forecast:.4f}) | "
                     f"Val Loss: {avg_val_loss:.4f}")
                     
-        # W&B Logging (epoch level, not batch level)
-        wandb.log({
-            "train_loss_total": avg_train_loss,
-            "train_loss_impute": avg_train_impute,
-            "train_loss_forecast": avg_train_forecast,
-            "val_loss_total": avg_val_loss,
-            "epoch": epoch + 1
-        })
+        # W&B Logging
+        if init_wandb or wandb.run is not None:
+            wandb.log({
+                "train_loss_total": avg_train_loss,
+                "train_loss_impute": avg_train_impute,
+                "train_loss_forecast": avg_train_forecast,
+                "val_loss_total": avg_val_loss,
+                "epoch": epoch + 1
+            })
 
     logger.info("Training complete.")
-    wandb.finish()
+    if init_wandb:
+        wandb.finish()
+        
+    return avg_val_loss
+
+def main():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    args = parse_args()
+    run_training(args, init_wandb=True)
 
 if __name__ == "__main__":
     main()
