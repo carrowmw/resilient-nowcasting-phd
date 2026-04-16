@@ -1,0 +1,30 @@
+2026-04-16 16:45:26,345 - root - INFO - Logger initialized. Writing to /workspace/logs/train_pipeline_20260416_164526.log
+2026-04-16 16:45:26,346 - __main__ - INFO - Using device: cpu
+2026-04-16 16:45:26,798 - __main__ - INFO - Loading RealIoTDataset from 2023-03-02 to 2023-03-05
+2026-04-16 16:45:26,799 - dataset - INFO - Loading data from data/processed/master_dataset_15T.parquet between 2023-03-02 and 2023-03-05
+2026-04-16 16:45:26,828 - dataset - INFO - Loaded 0 timesteps across 0 locations for class=person, dir=all.
+2026-04-16 16:45:26,831 - __main__ - ERROR - Failed to load RealIoTDataset: 'value'
+2026-04-16 16:45:26,833 - root - CRITICAL - Uncaught exception or assertion failure!
+Traceback (most recent call last):
+  File "/workspace/src/train.py", line 255, in <module>
+    main()
+  File "/workspace/src/train.py", line 252, in main
+    run_training(args, init_wandb=True)
+  File "/workspace/src/train.py", line 106, in run_training
+    full_dataset = RealIoTDataset(
+                   ^^^^^^^^^^^^^^^
+  File "/workspace/src/dataset.py", line 80, in __init__
+    val_arr = dyn_df['value'].reindex(columns=locations_idx).fillna(0.0).values
+              ~~~~~~^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pandas/core/frame.py", line 4377, in __getitem__
+    return self._getitem_multilevel(key)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pandas/core/frame.py", line 4435, in _getitem_multilevel
+    loc = self.columns.get_loc(key)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pandas/core/indexes/multi.py", line 3523, in get_loc
+    loc = self._get_level_indexer(key, level=0)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pandas/core/indexes/multi.py", line 3912, in _get_level_indexer
+    raise KeyError(key)
+KeyError: 'value'

@@ -80,7 +80,12 @@ class RealIoTDataset(Dataset):
         val_arr = dyn_df['value'].reindex(columns=locations_idx).fillna(0.0).values
         hum_arr = dyn_df['Humidity'].reindex(columns=locations_idx).fillna(0.0).values
         sol_arr = dyn_df['Solar Radiation'].reindex(columns=locations_idx).fillna(0.0).values
-        
+
+        # Preserve a raw, unscaled copy of traffic counts BEFORE any scaling.
+        # ZINB NLL requires non-negative counts as targets; StandardScaler would
+        # convert these to signed floats and corrupt the loss domain.
+        self.unscaled_traffic = val_arr.copy()  # [num_times, num_nodes]
+
         # [num_times, num_nodes, 3]
         self.dynamic_data = np.stack([val_arr, hum_arr, sol_arr], axis=-1)
         self.time_series_dim = self.dynamic_data.shape[-1]
@@ -117,11 +122,13 @@ class RealIoTDataset(Dataset):
         dyn_slice = self.dynamic_data[idx : idx + self.seq_len]
         dyn_slice = np.transpose(dyn_slice, (1, 0, 2))
         
-        # Forecast target: next timestep (seq_len), index 0 is 'value'
-        target = self.dynamic_data[idx + self.seq_len, :, 0]
-        
         dyn_tensor = torch.tensor(dyn_slice, dtype=torch.float32)
-        target_tensor = torch.tensor(target, dtype=torch.float32)
+
+        # Forecast target: pull from unscaled traffic counts, not scaled dynamic_data.
+        # clamp(min=0) is a hard tripwire — raw counts must never be negative,
+        # but guards against any residual float precision artifacts from the parquet.
+        target = self.unscaled_traffic[idx + self.seq_len]  # [num_nodes]
+        target_tensor = torch.tensor(target, dtype=torch.float32).clamp(min=0)
         
         # 4. Dynamic Masking logic (~15% artificial NaN injection)
         node_mask = torch.rand_like(dyn_tensor) < self.mask_prob

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 class MaskedSpatiotemporalEncoder(nn.Module):
     """
@@ -51,17 +51,23 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-    def forward(self, 
-                dynamic_features: torch.Tensor, 
-                edge_index: torch.Tensor, 
-                edge_weight: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        dynamic_features: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_weight: torch.Tensor,
+        return_attention_weights: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
             dynamic_features: [batch_size, num_nodes, seq_len, time_series_dim]
             edge_index: [2, E]
             edge_weight: [E]
+            return_attention_weights: If True, also return the GAT attention
+                coefficients alpha [batched_E, num_heads] for downstream analysis.
         Returns:
             latent_embeddings: [batch_size, num_nodes, seq_len, hidden_dim]
+            alpha (optional): [batched_E, num_heads] — only when return_attention_weights=True.
         """
         # --- Defensive Data Handling (Rule 2) ---
         assert dynamic_features.dim() == 4, f"Expected 4D features, got {dynamic_features.shape}"
@@ -92,9 +98,17 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         # edge_weight also needs repeating
         batched_edge_weight = edge_weight.repeat(num_graphs)
 
-        # Apply GAT
-        # x_spatial: [B * T * N, hidden_dim]
-        x_spatial = self.gat(x, batched_edge_index, edge_attr=batched_edge_weight)
+        # Apply GAT — optionally collect attention coefficients for analysis.
+        if return_attention_weights:
+            # PyG returns (out, (edge_index_used, alpha)) when return_attention_weights=True
+            x_spatial, (_, alpha) = self.gat(
+                x, batched_edge_index,
+                edge_attr=batched_edge_weight,
+                return_attention_weights=True,
+            )
+        else:
+            x_spatial = self.gat(x, batched_edge_index, edge_attr=batched_edge_weight)
+            alpha = None
 
         # --- Temporal Processing ---
         # Reshape back to [B, T, N, H]
@@ -119,6 +133,8 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         if torch.isnan(x_out).any():
             raise ValueError("NaN detected in MaskedSpatiotemporalEncoder output!")
 
+        if return_attention_weights:
+            return x_out, alpha
         return x_out
 
 

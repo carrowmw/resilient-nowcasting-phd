@@ -8,7 +8,7 @@ from encoder import MaskedSpatiotemporalEncoder
 from decoders import DecoupledDecoders, compute_loss
 from dataset import RealIoTDataset
 
-from typing import Tuple
+from typing import Dict, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,11 @@ class ResilientIoTPipeline(nn.Module):
         )
         logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
 
-    def forward(self, batch: dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        batch: dict,
+        return_analysis: bool = False,
+    ) -> Union[Tuple[torch.Tensor, ...], Dict[str, torch.Tensor]]:
         """
         Args:
             batch (dict): Expected keys:
@@ -59,9 +63,13 @@ class ResilientIoTPipeline(nn.Module):
                 - dynamic_features: [batch_size, num_nodes, seq_len, time_series_dim]
                 - target_forecast: [batch_size, num_nodes]
                 - target_impute: [batch_size, num_nodes, seq_len, time_series_dim]
-                - node_mask: [batch_size, num_nodes, seq_len, time_series_dim] (or related)
+                - node_mask: [batch_size, num_nodes, seq_len, time_series_dim]
+            return_analysis: If True, bypass loss calculation and return a dict
+                containing the inferred graph structure and GAT attention weights
+                for post-hoc interpretability analysis.
         Returns:
-            Tuple[torch.Tensor, ...]: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)
+            Normal mode: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)
+            Analysis mode: {'edge_index', 'edge_weight', 'attention_weights'}
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
@@ -75,7 +83,18 @@ class ResilientIoTPipeline(nn.Module):
         # 1. Graph Learner
         edge_index, edge_weight = self.graph_learner(static_features)
 
-        # 2. Encoder
+        # 2. Encoder — request attention weights when in analysis mode
+        if return_analysis:
+            latent_embeddings, alpha = self.encoder(
+                dynamic_features_clean, edge_index, edge_weight,
+                return_attention_weights=True,
+            )
+            return {
+                'edge_index': edge_index,
+                'edge_weight': edge_weight,
+                'attention_weights': alpha,
+            }
+
         latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_weight)
 
         # 3. Decoders

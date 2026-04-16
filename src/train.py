@@ -217,7 +217,9 @@ def run_training(args, init_wandb=True) -> float:
         logger.info(f"Epoch {epoch+1}/{args.epochs} - "
                     f"Train Loss: {avg_train_loss:.4f} | "
                     f"Val Loss: {avg_val_loss:.4f} "
-                    f"(RMSE: {val_rmse:.2f}, MAE: {val_mae:.2f}, ZeroAcc: {val_zero_acc:.2f}, ImputeMSE: {val_impute_mse:.4f})")
+                    f"(RMSE: {val_rmse:.2f}, MAE: {val_mae:.2f}, "
+                    f"ZeroAcc: {val_zero_acc:.4f} [{zero_correct_total}/{zero_true_total}], "
+                    f"ImputeMSE: {val_impute_mse:.4f})")
                     
         # Checkpointing
         if avg_val_loss < best_val_loss:
@@ -236,6 +238,8 @@ def run_training(args, init_wandb=True) -> float:
                 "val_rmse": val_rmse,
                 "val_mae": val_mae,
                 "val_zero_acc": val_zero_acc,
+                "val_zero_true_count": zero_true_total,
+                "val_zero_correct_count": zero_correct_total,
                 "val_impute_mse": val_impute_mse,
                 "epoch": epoch + 1
             })
