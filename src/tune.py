@@ -12,7 +12,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs"
 with open(CONFIG_PATH, "r") as f:
     SWEEP_CONFIG = yaml.safe_load(f)
 
-def make_objective(use_mock_data: bool):
+def make_objective(cli_args: argparse.Namespace):
     """
     Factory that returns an Optuna objective bound to the requested data mode.
     Separating the factory from __main__ lets us inject --use_mock_data at the
@@ -45,17 +45,17 @@ def make_objective(use_mock_data: bool):
 
         # Map to configuration object for the training runner
         args = argparse.Namespace(
-            epochs=2,
-            batch_size=4,
+            epochs=cli_args.epochs,
+            batch_size=cli_args.batch_size,
             lr=params.get("lr", 1e-3),
             w_forecast=params.get("w_forecast", 1.0),
             w_impute=params.get("w_impute", 1.0),
-            use_mock_data=use_mock_data,
-            start_date="2023-03-02",
-            end_date="2023-04-02",
-            seq_len=12,
-            veh_class="person",
-            dir="all"
+            use_mock_data=cli_args.use_mock_data,
+            start_date=cli_args.start_date,
+            end_date=cli_args.end_date,
+            seq_len=cli_args.seq_len,
+            veh_class=cli_args.veh_class,
+            dir=cli_args.dir
         )
 
         # Execute training loop.
@@ -73,6 +73,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Optuna hyperparameter sweep")
     parser.add_argument("--use_mock_data", action="store_true",
                         help="Use synthetic mock data instead of real parquet data (for local CPU integration tests)")
+    parser.add_argument("--n_trials", type=int, default=2, help="Number of Optuna trials")
+    parser.add_argument("--epochs", type=int, default=2, help="Training epochs per trial")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size per trial")
+    parser.add_argument("--start_date", type=str, default="2023-03-02", help="Start date for real data (inclusive)")
+    parser.add_argument("--end_date", type=str, default="2023-04-02", help="End date for real data (exclusive)")
+    parser.add_argument("--seq_len", type=int, default=12, help="Sequence length")
+    parser.add_argument("--veh_class", type=str, default="person", help="Target vehicle class")
+    parser.add_argument("--dir", type=str, default="all", help="Target direction")
     cli_args = parser.parse_args()
 
     logger = setup_logger("optuna_sweep")
@@ -91,7 +99,7 @@ if __name__ == "__main__":
 
     # Execute study (The Online Local Test)
     # n_trials=2 to ensure the loop runs efficiently and validates the architecture
-    study.optimize(make_objective(cli_args.use_mock_data), n_trials=2, callbacks=[wandbc])
+    study.optimize(make_objective(cli_args), n_trials=cli_args.n_trials, callbacks=[wandbc])
 
     logger.info("Sweep complete. Best hyperparameters:")
     for key, value in study.best_params.items():

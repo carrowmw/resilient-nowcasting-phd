@@ -44,9 +44,17 @@ class RealIoTDataset(Dataset):
         
         if df.empty:
             raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
+
+        available_classes = sorted(df['veh_class'].dropna().astype(str).unique().tolist())
+        available_dirs = sorted(df['dir'].dropna().astype(str).unique().tolist())
             
         # 2. Filter target stream to ensure unique (dt, location) indices
         df = df[df['veh_class'] == target_veh_class]
+        if df.empty:
+            raise ValueError(
+                f"No rows after veh_class filter. Requested veh_class='{target_veh_class}' "
+                f"for range {start_date} to {end_date}. Available veh_class values: {available_classes}"
+            )
         
         if target_dir == 'all':
             # Group by dt and location, sum values, take first for weather/static features
@@ -60,6 +68,17 @@ class RealIoTDataset(Dataset):
             df = df.groupby(['dt', 'location'], as_index=False).agg(agg_funcs)
         else:
             df = df[df['dir'] == target_dir]
+            if df.empty:
+                raise ValueError(
+                    f"No rows after dir filter. Requested dir='{target_dir}' with veh_class='{target_veh_class}' "
+                    f"for range {start_date} to {end_date}. Available dir values before filtering: {available_dirs}"
+                )
+
+        if df.empty:
+            raise ValueError(
+                f"No rows available after filtering and aggregation for range {start_date} to {end_date}, "
+                f"veh_class='{target_veh_class}', dir='{target_dir}'."
+            )
             
         # 3. Extract dimensions
         self.locations = sorted(df['location'].unique())
