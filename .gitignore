@@ -3,3 +3,6 @@ wandb/
 models/
 .env
 digest.txt
+# Allow the browser-served static payload inside the Next.js public dir
+!frontend/public/data/
+!frontend/public/data/**
