@@ -10,7 +10,26 @@
       "Bash(PYTHONPATH=/workspace/src python *)",
       "Bash(WANDB_MODE=offline PYTHONPATH=src python *)",
       "Bash(python3 *)",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "Bash(npx create-next-app@latest *)",
+      "Bash(npm install *)",
+      "Bash(mkdir -p /workspace/frontend/public/data)",
+      "Bash(cp /workspace/data/processed/ui_payload.json /workspace/frontend/public/data/ui_payload.json)",
+      "Bash(mkdir -p /workspace/frontend/src/store)",
+      "Bash(mkdir -p /workspace/frontend/src/components)",
+      "Bash(mkdir -p /workspace/frontend/src/types)",
+      "Bash(ls /workspace/frontend/node_modules/next/dist/docs/*.md)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/data/ui_payload.json)",
+      "Bash(fuser -k 3000/tcp)",
+      "Bash(awk '{print $1, $2, $11, $12}')",
+      "Bash(netstat -tlnp)",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -I{} readlink {})",
+      "Bash(curl -s http://localhost:3000/data/ui_payload.json)"
     ]
   }
 }
