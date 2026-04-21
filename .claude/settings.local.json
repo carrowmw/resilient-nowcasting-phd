@@ -9,7 +9,8 @@
       "Bash(WANDB_MODE=offline PYTHONPATH=/workspace/src python *)",
       "Bash(PYTHONPATH=/workspace/src python *)",
       "Bash(WANDB_MODE=offline PYTHONPATH=src python *)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(npm --version)"
     ]
   }
 }

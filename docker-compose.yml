@@ -7,6 +7,9 @@ services:
     container_name: my-ml-agent
     volumes:
       - .:/workspace
+    # Port mapping to allow the browser to access the app inside the container.
+    ports:
+      - "3000:3000"
     # Notice we don't even need the 'environment:' block anymore!
     # Compose passes the .env file automatically.
     stdin_open: true
