@@ -61,23 +61,22 @@ class ResilientIoTPipeline(nn.Module):
             batch (dict): Expected keys:
                 - static_features: [num_nodes, static_feat_dim]
                 - dynamic_features: [batch_size, num_nodes, seq_len, time_series_dim]
-                - target_forecast: [batch_size, num_nodes]
-                - target_impute: [batch_size, num_nodes, seq_len, time_series_dim]
-                - node_mask: [batch_size, num_nodes, seq_len, time_series_dim]
-            return_analysis: If True, bypass loss calculation and return a dict
-                containing the inferred graph structure and GAT attention weights
-                for post-hoc interpretability analysis.
+                - target_forecast: [batch_size, num_nodes]  (not required in analysis mode)
+                - target_impute: [batch_size, num_nodes, seq_len, time_series_dim]  (not required in analysis mode)
+                - node_mask: [batch_size, num_nodes, seq_len, time_series_dim]  (not required in analysis mode)
+            return_analysis: If True, complete the full forward pass through the decoders
+                but bypass loss calculation. Returns a comprehensive dict with graph
+                structure, attention weights, and ZINB distribution parameters for
+                post-hoc interpretability and UI payload generation.
         Returns:
             Normal mode: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)
-            Analysis mode: {'edge_index', 'edge_weight', 'attention_weights'}
+            Analysis mode: {'edge_index', 'edge_weight', 'attention_weights', 'mu', 'theta', 'pi'}
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
-        target_forecast = batch['target_forecast']
-        target_impute = batch['target_impute']
 
         # Defensive Data Handling
-        # Replace NaNs (injected by our Dataset masking) with 0.0 to allow PyTorch ops
+        # Replace NaNs (injected by our Dataset masking or simulated nodes) with 0.0
         dynamic_features_clean = torch.nan_to_num(dynamic_features, nan=0.0)
 
         # 1. Graph Learner
@@ -89,11 +88,22 @@ class ResilientIoTPipeline(nn.Module):
                 dynamic_features_clean, edge_index, edge_weight,
                 return_attention_weights=True,
             )
+
+            # 3. Decoders (complete the full pass to get ZINB parameters)
+            _, mu, theta, pi = self.decoders(latent_embeddings)
+
             return {
                 'edge_index': edge_index,
                 'edge_weight': edge_weight,
                 'attention_weights': alpha,
+                'mu': mu,
+                'theta': theta,
+                'pi': pi,
             }
+
+        # Normal training mode — need loss targets
+        target_forecast = batch['target_forecast']
+        target_impute = batch['target_impute']
 
         latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_weight)
 
