@@ -55,3 +55,8 @@ You are an autonomous Machine Learning Agent operating within a containerized Li
 - Piecewise Execution: DO NOT attempt to build the entire system at once. You must only build the specific component requested in the user's prompt.
 
 - Strict Adherence: The constraints listed in ARCHITECTURE.md (especially regarding loss functions, tripwires, and data masking) are absolute. Do not substitute them with standard generic functions.
+
+
+## 8. THE DESK CHECK MANDATE
+
+When asked to review mathematical logic, metrics, or loss functions, you are forbidden from simply saying "the logic looks correct." You MUST run a simulated "Desk Check." You must create a dummy scenario with extreme, unbalanced numbers (e.g., a batch of 100 vs a batch of 1, or an input tensor of exactly 0.0), trace the exact mathematical execution of the code, and prove that the final output matches the theoretical target.

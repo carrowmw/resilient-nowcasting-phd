@@ -8,7 +8,8 @@
       "Bash(wandb status *)",
       "Bash(WANDB_MODE=offline PYTHONPATH=/workspace/src python *)",
       "Bash(PYTHONPATH=/workspace/src python *)",
-      "Bash(WANDB_MODE=offline PYTHONPATH=src python *)"
+      "Bash(WANDB_MODE=offline PYTHONPATH=src python *)",
+      "Bash(python3 *)"
     ]
   }
 }

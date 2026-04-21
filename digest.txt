@@ -9,6 +9,7 @@ Directory structure:
     ├── Dockerfile.gpu
     ├── eda_summary.md
     ├── EXPERIMENTS.md
+    ├── FRONTEND_ARCHITECTURE.md
     ├── GEMINI.md
     ├── MLOPS.md
     ├── plan.md
@@ -99,6 +100,80 @@ docker compose run --rm gpu-runner python src/train.py \
   --start_date "2023-03-02" \
   --end_date "2023-04-02"
 ```
+
+## Hyperparameter Tuning (Optuna)
+
+The tuning entry point is `src/tune.py`. It launches an Optuna study and logs trial metrics to Weights & Biases through `WeightsAndBiasesCallback`.
+
+The search space is defined in `configs/sweep.yaml`:
+
+- `lr` (log-uniform)
+- `w_forecast` (uniform)
+- `w_impute` (uniform)
+
+### Local CPU Smoke Sweep (Mock Data)
+
+Use this first to validate the full tuning loop quickly on your Mac:
+
+```Bash
+docker compose run --rm cpu-runner python src/tune.py --use_mock_data
+```
+
+If you want to keep runs local-only and avoid syncing to W&B cloud:
+
+```Bash
+docker compose run --rm cpu-runner bash -lc 'WANDB_MODE=offline python src/tune.py --use_mock_data'
+```
+
+### GPU Server Sweep (Real Data)
+
+Run this on the GPU server after pulling the latest code and setting your `.env`:
+
+```Bash
+docker compose run --rm gpu-runner python src/tune.py
+```
+
+Recommended explicit run (select your exact data window and stream):
+
+```Bash
+docker compose run --rm gpu-runner python src/tune.py \
+  --n_trials 2 \
+  --epochs 2 \
+  --batch_size 4 \
+  --start_date 2023-10-01 \
+  --end_date 2023-10-04 \
+  --veh_class person \
+  --dir all
+```
+
+### Logs and Outputs
+
+- Sweep logs are written to `logs/optuna_sweep_YYYYMMDD_HHMMSS.log`
+- Best parameters and best validation loss are printed at the end of the run
+
+### Tune CLI Options
+
+`src/tune.py` now supports CLI overrides so you do not need to edit source code for most sweep changes:
+
+- `--n_trials`
+- `--epochs`
+- `--batch_size`
+- `--start_date`
+- `--end_date`
+- `--seq_len`
+- `--veh_class`
+- `--dir`
+- `--use_mock_data`
+
+Show all options:
+
+```Bash
+docker compose run --rm cpu-runner python src/tune.py --help
+```
+
+### Troubleshooting: Empty Data Window / Filter Errors
+
+If your selected `--start_date`, `--end_date`, `--veh_class`, or `--dir` produces no rows, tuning will fail fast with a clear error explaining which filter removed all rows and which values were available in the loaded data. Adjust the date window or stream arguments and rerun.
 
 
 
@@ -249,6 +324,10 @@ You are an autonomous Machine Learning Agent operating within a containerized Li
 
 - Strict Adherence: The constraints listed in ARCHITECTURE.md (especially regarding loss functions, tripwires, and data masking) are absolute. Do not substitute them with standard generic functions.
 
+
+## 8. THE DESK CHECK MANDATE
+
+When asked to review mathematical logic, metrics, or loss functions, you are forbidden from simply saying "the logic looks correct." You MUST run a simulated "Desk Check." You must create a dummy scenario with extreme, unbalanced numbers (e.g., a batch of 100 vs a batch of 1, or an input tensor of exactly 0.0), trace the exact mathematical execution of the code, and prove that the final output matches the theoretical target.
 
 
 ================================================
@@ -450,26 +529,98 @@ FILE: EXPERIMENTS.md
 ================================================
 # Machine Learning Experiment Ledger
 
-| Date       | Branch | Core Prompt / Goal                                                     | Outcome                                                                                                                                                                                                                                                                                                                                  |
-| :--------- | :----- | :--------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-01 | main   | Initial EDA and data quality assessment of traffic dataset.            | Identified significant temporal gaps (23.2% > 15m) and the likely pre-filtering of zero-count rows. Recommending resampling/re-indexing for future pipeline steps.                                                                                                                                                                       |
-| 2026-04-01 | main   | Implementation of 15-min robust preprocessing and static feature join. | Smoke test passed; 15-min grid validated; 'Structural Zeros' logic verified (correctly ignored mid-day gaps); Spatial join with static Google Places metadata verified.                                                                                                                                                                  |
-| 2026-04-02 | main   | Full-Scale Processing of traffic and weather datasets.                 | Scaled processing using PyArrow chunking to safely process data into 15T grid. Output saved to master_dataset_15T.parquet. Final Row Count: 121,198,026. Remaining target value missingness: 63.55%. Post-action assertions verified full spatial coverage and temporal continuity.                                                      |
-| 2026-04-02 | main   | Implement ResilientIoTDataset in PyTorch.                              | Dataset implemented with dynamic ~15% NaN masking for self-supervised imputation. Smoke tests passed: batch dictionary yielded correctly (static, dynamic, targets, mask), shapes and types strictly validated (torch.float32/torch.bool), and empirical masking rate confirmed at ~15%.                                                 |
-| 2026-04-09 | main   | Implement DynamicGraphLearner nn.Module.                               | Module implemented with parameterized similarity and sparsity thresholding. Passed "The Burn Test" (E=1256/2500) and verified differentiability via gradient assertion.                                                                                                                                                                  |
-| 2026-04-15 | main | Implement MaskedSpatiotemporalEncoder nn.Module in src/encoder.py. | Module implemented with GATv2Conv and TransformerEncoder. Passed offensive unit test: Generated dummy inputs (B=4, N=50, T=12, D=3) and edge_index. Verified exact output shape [4, 50, 12, 64]. Confirmed computation graph connectivity (grad != None) for both GAT and Transformer layers after simulated loss. Tested NaN tripwires. |
-| 2026-04-15 | main | Implement DecoupledDecoders and compute_loss in src/decoders.py. | Module implemented with multi-task heads for imputation and ZINB forecasting. Passed offensive unit test: verified joint loss calculation, NaN tripwires, and gradient flow to both decoder heads. ZINB parameters (mu, theta, pi) correctly constrained with softplus/sigmoid and eps. |
-| 2026-04-15 | main | Assemble the final architecture ResilientIoTPipeline in src/pipeline.py. | Pipeline integrated DynamicGraphLearner, MaskedSpatiotemporalEncoder, and DecoupledDecoders. Handled NaN-to-zero conversion for dynamic features. Passed The Burn Test: completed 2 epochs without crashing, indicating a fully connected computation graph without NaN propagation, enforcing gradient clipping. |
-| 2026-04-15 | main | Build the evaluation and execution framework in src/train.py. | Implemented argument parsing for hyperparameters and integrated offline wandb logging at the epoch level. Generated dummy data loader splits for training and validation loops. Enforced mandatory gradient clipping during training and NaN divergence checking during validation via custom DivergenceError. Test executed successfully for 2 epochs without divergence. |
-| 2026-04-16 | main | Build hyperparameter tuning orchestrator in src/tune.py. | Refactored src/train.py to expose run_training callable. Implemented Optuna objective function with log-uniform (lr) and uniform (w_forecast, w_impute) parameter spaces. Integrated optuna.integration.wandb.WeightsAndBiasesCallback for centralized sweep logging. Confirmed correct multi-trial execution and loss capture. |
-| 2026-04-16 | main | Upgrade execution infrastructure and observability. | Deployed CPU and GPU environment Dockerfiles. Implemented robust crash-logging in src/logger.py overriding sys.excepthook to preserve tracebacks. Externalized Optuna search space definition to configs/sweep.yaml. Local execution successfully generated log artifacts and synchronized W&B configurations. |
-| 2026-04-16 | main | Transition to production dataloader and Pytest architecture. | Cleaned up architecture by migrating inline Burn Tests to a structured Pytest framework in tests/ directory. Implemented RealIoTDataset in src/dataset.py with memory-friendly parquet time-filtering (pd.read_parquet) and proper sliding window groupings over real 15-minute sensor grid data. Updated src/train.py to dynamically initialize sequence lengths and accept explicit --start_date and --end_date arguments, validating stability on real data sub-frames. |
-| 2026-04-16 | main | Implement Model Checkpointing and Statistical Engine for post-hoc analysis. | Created src/metrics.py with RMSE, MAE, Zero-Accuracy (pi > 0.5 for target=0), and Imputation MSE (masked nodes only). Updated src/pipeline.py and src/train.py to integrate these metrics and log them to W&B. Implemented best-model checkpointing to models/best_pipeline.pt based on val_loss. Verified via 2-epoch CPU test. |
-| 2026-04-16 | main | Implement Bulletproof DataLoader to resolve duplicate index errors. | Broadened ARCHITECTURE.md to support configurable traffic streams. Updated RealIoTDataset in src/dataset.py to filter by target_veh_class and aggregate over target_dir before setting the (dt, location) index. Exposed --veh_class and --dir in src/train.py and src/tune.py. Verified data loads and model runs successfully. |
-| 2026-04-16 | main | Fix mathematical flaw in val_zero_acc batch aggregation. | Identified that averaging per-batch zero_acc percentages introduces sample-count bias (batches with fewer zeros skew the epoch metric). Refactored calculate_metrics in src/metrics.py to return zero_true_count (int) and zero_correct_count (int) instead of a float percentage; removed the fallback 1.0 for no-zero batches. Refactored src/train.py validation loop to accumulate raw integer counts across all batches and compute val_zero_acc = zero_correct_total / zero_true_total post-loop (0.0 when no zeros exist in the epoch). Added tests/test_metrics.py (9 unit tests covering all count branches, type assertions, and absence of legacy zero_acc key). Also fixed pre-existing test_pipeline.py unpack arity mismatch. All 13 pytest tests pass. |
-| 2026-04-16 | main | Stabilise training: StandardScaler for features + deeper decoder MLPs. | Motivated by gradient starvation observed in the initial 25-epoch run. (1) Feature Scaling: Added sklearn StandardScaler to RealIoTDataset.__init__ in src/dataset.py — dynamic_data [T, N, 3] flattened to 2D, fit_transform'd, reshaped back; static_features [N, 2] likewise scaled. Both scalers saved as self.scaler / self.static_scaler for future inverse transforms. (2) Decoder Deepening: Replaced single nn.Linear layers in both impute_layer and forecast_layer (src/decoders.py) with 2-layer MLPs: Linear(hidden_dim, hidden_dim*2) → GELU → Dropout(0.1) → Linear(hidden_dim*2, out_dim). Decoder param count increased from ~390 to 17,414. (3) tune.py refactored to use a make_objective factory with --use_mock_data CLI flag for local integration testing. Local 2-trial Optuna sweep (WANDB_MODE=offline, mock data) completed without errors; best trial val_loss=5.21. Updated test_decoders.py gradient assertion to index into nn.Sequential. All 13 tests pass. |
-| 2026-04-16 | main | Fix ZINB domain contradiction from StandardScaler + add analysis hooks. | Root cause: StandardScaler converted non-negative traffic counts to signed floats, making target_forecast always non-integer and rarely == 0, which crashed the ZINB NLL and suppressed zero_true_total to 0. (1) Dataset fix: saved self.unscaled_traffic = val_arr.copy() before stacking with weather features; __getitem__ now pulls target_forecast from self.unscaled_traffic[idx+seq_len] with .clamp(min=0) guard. Dynamic encoder input still uses scaled self.dynamic_data. (2) Encoder analysis hook: MaskedSpatiotemporalEncoder.forward() accepts return_attention_weights=False; when True, GATv2Conv is called with return_attention_weights=True and (x_spatial, (_, alpha)) is unpacked; returns (x_out, alpha). (3) Pipeline analysis mode: ResilientIoTPipeline.forward() accepts return_analysis=False; when True, encoder is called with return_attention_weights=True and returns {'edge_index', 'edge_weight', 'attention_weights'} without computing loss. (4) train.py logging upgraded: ZeroAcc line now shows [zero_correct/zero_true] raw counts; val_zero_true_count and val_zero_correct_count added to W&B. Verification: 10-epoch run on real Oct 2023 data (53 nodes, 3 days, 23.5% zero-count targets) completed without NaN. zero_true_total=660 per epoch confirms targets are now correct non-negative integers. ZeroAcc=0/660=0.00 is mathematically correct — pi stabilises at ~0.46 because optimal pi for 23.5% structural-zero data is ~0.23, well below the 0.5 threshold; ZeroAcc>0 requires more epochs. All 13 pytest tests pass. |
+| Date       | Branch | Core Prompt / Goal                                                          | Outcome                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| :--------- | :----- | :-------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-04-01 | main   | Initial EDA and data quality assessment of traffic dataset.                 | Identified significant temporal gaps (23.2% > 15m) and the likely pre-filtering of zero-count rows. Recommending resampling/re-indexing for future pipeline steps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 2026-04-01 | main   | Implementation of 15-min robust preprocessing and static feature join.      | Smoke test passed; 15-min grid validated; 'Structural Zeros' logic verified (correctly ignored mid-day gaps); Spatial join with static Google Places metadata verified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2026-04-02 | main   | Full-Scale Processing of traffic and weather datasets.                      | Scaled processing using PyArrow chunking to safely process data into 15T grid. Output saved to master_dataset_15T.parquet. Final Row Count: 121,198,026. Remaining target value missingness: 63.55%. Post-action assertions verified full spatial coverage and temporal continuity.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2026-04-02 | main   | Implement ResilientIoTDataset in PyTorch.                                   | Dataset implemented with dynamic ~15% NaN masking for self-supervised imputation. Smoke tests passed: batch dictionary yielded correctly (static, dynamic, targets, mask), shapes and types strictly validated (torch.float32/torch.bool), and empirical masking rate confirmed at ~15%.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-04-09 | main   | Implement DynamicGraphLearner nn.Module.                                    | Module implemented with parameterized similarity and sparsity thresholding. Passed "The Burn Test" (E=1256/2500) and verified differentiability via gradient assertion.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2026-04-15 | main   | Implement MaskedSpatiotemporalEncoder nn.Module in src/encoder.py.          | Module implemented with GATv2Conv and TransformerEncoder. Passed offensive unit test: Generated dummy inputs (B=4, N=50, T=12, D=3) and edge_index. Verified exact output shape [4, 50, 12, 64]. Confirmed computation graph connectivity (grad != None) for both GAT and Transformer layers after simulated loss. Tested NaN tripwires.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-04-15 | main   | Implement DecoupledDecoders and compute_loss in src/decoders.py.            | Module implemented with multi-task heads for imputation and ZINB forecasting. Passed offensive unit test: verified joint loss calculation, NaN tripwires, and gradient flow to both decoder heads. ZINB parameters (mu, theta, pi) correctly constrained with softplus/sigmoid and eps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2026-04-15 | main   | Assemble the final architecture ResilientIoTPipeline in src/pipeline.py.    | Pipeline integrated DynamicGraphLearner, MaskedSpatiotemporalEncoder, and DecoupledDecoders. Handled NaN-to-zero conversion for dynamic features. Passed The Burn Test: completed 2 epochs without crashing, indicating a fully connected computation graph without NaN propagation, enforcing gradient clipping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2026-04-15 | main   | Build the evaluation and execution framework in src/train.py.               | Implemented argument parsing for hyperparameters and integrated offline wandb logging at the epoch level. Generated dummy data loader splits for training and validation loops. Enforced mandatory gradient clipping during training and NaN divergence checking during validation via custom DivergenceError. Test executed successfully for 2 epochs without divergence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-04-16 | main   | Build hyperparameter tuning orchestrator in src/tune.py.                    | Refactored src/train.py to expose run_training callable. Implemented Optuna objective function with log-uniform (lr) and uniform (w_forecast, w_impute) parameter spaces. Integrated optuna.integration.wandb.WeightsAndBiasesCallback for centralized sweep logging. Confirmed correct multi-trial execution and loss capture.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2026-04-16 | main   | Upgrade execution infrastructure and observability.                         | Deployed CPU and GPU environment Dockerfiles. Implemented robust crash-logging in src/logger.py overriding sys.excepthook to preserve tracebacks. Externalized Optuna search space definition to configs/sweep.yaml. Local execution successfully generated log artifacts and synchronized W&B configurations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2026-04-16 | main   | Transition to production dataloader and Pytest architecture.                | Cleaned up architecture by migrating inline Burn Tests to a structured Pytest framework in tests/ directory. Implemented RealIoTDataset in src/dataset.py with memory-friendly parquet time-filtering (pd.read_parquet) and proper sliding window groupings over real 15-minute sensor grid data. Updated src/train.py to dynamically initialize sequence lengths and accept explicit --start_date and --end_date arguments, validating stability on real data sub-frames.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-04-16 | main   | Implement Model Checkpointing and Statistical Engine for post-hoc analysis. | Created src/metrics.py with RMSE, MAE, Zero-Accuracy (pi > 0.5 for target=0), and Imputation MSE (masked nodes only). Updated src/pipeline.py and src/train.py to integrate these metrics and log them to W&B. Implemented best-model checkpointing to models/best_pipeline.pt based on val_loss. Verified via 2-epoch CPU test.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2026-04-16 | main   | Implement Bulletproof DataLoader to resolve duplicate index errors.         | Broadened ARCHITECTURE.md to support configurable traffic streams. Updated RealIoTDataset in src/dataset.py to filter by target_veh_class and aggregate over target_dir before setting the (dt, location) index. Exposed --veh_class and --dir in src/train.py and src/tune.py. Verified data loads and model runs successfully.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2026-04-16 | main   | Fix mathematical flaw in val_zero_acc batch aggregation.                    | Identified that averaging per-batch zero_acc percentages introduces sample-count bias (batches with fewer zeros skew the epoch metric). Refactored calculate_metrics in src/metrics.py to return zero_true_count (int) and zero_correct_count (int) instead of a float percentage; removed the fallback 1.0 for no-zero batches. Refactored src/train.py validation loop to accumulate raw integer counts across all batches and compute val_zero_acc = zero_correct_total / zero_true_total post-loop (0.0 when no zeros exist in the epoch). Added tests/test_metrics.py (9 unit tests covering all count branches, type assertions, and absence of legacy zero_acc key). Also fixed pre-existing test_pipeline.py unpack arity mismatch. All 13 pytest tests pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 2026-04-16 | main   | Stabilise training: StandardScaler for features + deeper decoder MLPs.      | Motivated by gradient starvation observed in the initial 25-epoch run. (1) Feature Scaling: Added sklearn StandardScaler to RealIoTDataset.**init** in src/dataset.py — dynamic_data [T, N, 3] flattened to 2D, fit_transform'd, reshaped back; static_features [N, 2] likewise scaled. Both scalers saved as self.scaler / self.static_scaler for future inverse transforms. (2) Decoder Deepening: Replaced single nn.Linear layers in both impute_layer and forecast_layer (src/decoders.py) with 2-layer MLPs: Linear(hidden_dim, hidden_dim*2) → GELU → Dropout(0.1) → Linear(hidden_dim*2, out_dim). Decoder param count increased from ~390 to 17,414. (3) tune.py refactored to use a make_objective factory with --use_mock_data CLI flag for local integration testing. Local 2-trial Optuna sweep (WANDB_MODE=offline, mock data) completed without errors; best trial val_loss=5.21. Updated test_decoders.py gradient assertion to index into nn.Sequential. All 13 tests pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-16 | main   | Fix ZINB domain contradiction from StandardScaler + add analysis hooks.     | Root cause: StandardScaler converted non-negative traffic counts to signed floats, making target*forecast always non-integer and rarely == 0, which crashed the ZINB NLL and suppressed zero_true_total to 0. (1) Dataset fix: saved self.unscaled_traffic = val_arr.copy() before stacking with weather features; **getitem** now pulls target_forecast from self.unscaled_traffic[idx+seq_len] with .clamp(min=0) guard. Dynamic encoder input still uses scaled self.dynamic_data. (2) Encoder analysis hook: MaskedSpatiotemporalEncoder.forward() accepts return_attention_weights=False; when True, GATv2Conv is called with return_attention_weights=True and (x_spatial, (*, alpha)) is unpacked; returns (x_out, alpha). (3) Pipeline analysis mode: ResilientIoTPipeline.forward() accepts return_analysis=False; when True, encoder is called with return_attention_weights=True and returns {'edge_index', 'edge_weight', 'attention_weights'} without computing loss. (4) train.py logging upgraded: ZeroAcc line now shows [zero_correct/zero_true] raw counts; val_zero_true_count and val_zero_correct_count added to W&B. Verification: 10-epoch run on real Oct 2023 data (53 nodes, 3 days, 23.5% zero-count targets) completed without NaN. zero_true_total=660 per epoch confirms targets are now correct non-negative integers. ZeroAcc=0/660=0.00 is mathematically correct — pi stabilises at ~0.46 because optimal pi for 23.5% structural-zero data is ~0.23, well below the 0.5 threshold; ZeroAcc>0 requires more epochs. All 13 pytest tests pass. |
+| 2026-04-17 | main   | Add README instructions for using the Optuna tune module.                   | Updated README with a dedicated Hyperparameter Tuning section covering CPU mock-data sweep, offline W&B mode, GPU real-data sweep, sweep search-space location (`configs/sweep.yaml`), expected log file location, and current defaults in `src/tune.py` (`n_trials`, epochs, batch size, and date range).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-04-17 | main   | Diagnose GPU sweep KeyError and harden tuning data selection.               | Root cause: `src/tune.py` hardcoded `veh_class="person"` and a fixed date window, which produced an empty post-filter dataset on the GPU server data. The loader then crashed late with `KeyError('value')` while indexing unstacked columns. Hardened `src/dataset.py` with fail-fast post-filter checks and explicit diagnostics (available `veh_class` and `dir` values), and updated `src/tune.py` to accept CLI controls for `--start_date`, `--end_date`, `--veh_class`, `--dir`, `--seq_len`, `--epochs`, `--batch_size`, and `--n_trials`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 2026-04-17 | main   | Refresh README tune docs for new CLI workflow and filter diagnostics.       | Updated `README.md` to replace source-edit guidance with CLI-first usage for `src/tune.py`, added an explicit GPU command template with `--start_date/--end_date/--veh_class/--dir`, documented `--help` for discoverability, and added troubleshooting notes for empty post-filter datasets.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
+
+
+================================================
+FILE: FRONTEND_ARCHITECTURE.md
+================================================
+# Objective
+
+Implement a Geospatial Digital Twin for the Resilient IoT network. This frontend must visualise complex spatiotemporal graph inferences, including Zero-Inflated Negative Binomial (ZINB) predictions, mathematical uncertainty bounds, and dynamic graph attention weights. It must be highly performant, capable of rendering thousands of animating nodes and edges at 60fps across a sliding time window.
+
+## 1. Core Tech Stack
+
+- Framework: Next.js (React) with TypeScript (Strict mode enabled).
+- Geospatial Engine: Deck.gl (by Uber) running over a MapLibre GL JS base map. Standard mapping libraries (Leaflet, Mapbox standard) are banned for data layers to prevent DOM overload. Deck.gl WebGL layers must be used for all data rendering.
+- State Management: Zustand. Required to decouple the rapid time-slider updates from the React render cycle, preventing the entire DOM from re-rendering when only WebGL properties need to change.
+- Database & Spatial Backend: Supabase (PostgreSQL + PostGIS) for road-network mapping and spatial interpolations.
+
+## 2. Architectural Components (The Visual Layers)
+
+The UI is built on independent, composable Deck.gl layers that consume the ui_payload.json (and eventually Supabase API endpoints).
+
+### A. The Node Layer (Predictions & Uncertainty)
+
+- Component: Deck.gl ScatterplotLayer.
+- Data Source: Sensor locations (real) and Simulated Nodes.
+- Visual Mapping:
+  - Fill Color (Prediction): Mapped to the ZINB $\mu$ parameter (mean predicted traffic). Use a sequential color scale (e.g., Green $\rightarrow$ Yellow $\rightarrow$ Red).
+  - Stroke/Halo Radius (Uncertainty): Mapped to the 95% Confidence Interval derived from the ZINB $\theta$ (dispersion) parameter. A wider, semi-transparent radius indicates high model uncertainty.
+  - Simulated Nodes: Visually distinct (e.g., using a dashed stroke or distinct shape) to indicate the prediction is a zero-shot topological inference, not a physical sensor.
+
+### B. The Topology Layer (Attention Weights)
+
+- Component: Deck.gl ArcLayer or LineLayer.
+- Data Source: The attention_sequence extracted from the GATv2Conv layers.
+- Visual Mapping:
+  - Source/Target: Sensor coordinates.
+  - Opacity/Width: Mapped to the attention weight ($\alpha$).
+  - Filtering Rule: To prevent visual clutter ("hairballs"), the frontend must aggressively filter this layer, only rendering the top N attention edges for the current timestep, or only rendering edges connected to a user-selected node.
+
+### C. The Road-Constrained Heatmap (Spatial Interpolation)
+
+- Component: Deck.gl PathLayer rendering GeoJSON LineStrings.
+- Data Source: OpenStreetMap street networks, processed via PostGIS.
+- Mechanism: Rather than rendering a blurry traditional heatmap, point predictions are snapped to the road network. PostGIS functions (ST_ClosestPoint, ST_Distance) interpolate the ZINB $\mu$ values between adjacent sensors to color-code continuous road segments representing traffic flow.
+
+## 3. State Management & Time Travel
+
+- The core UX revolves around temporal exploration. State is managed globally via a Zustand store (useTimeStore).
+- The Global Clock: A single integer state (`currentTimestep`) representing the index of the 15-minute window (e.g., 0 to 96 for a 24-hour forecast).
+- Interpolation Logic: Deck.gl layers must linearly interpolate positions, colors, and radii between timestep[t] and timestep[t+1] to provide smooth animation as the user drags the time slider.
+- Data Slicing: The React components do not filter the massive data payload. The Deck.gl layers receive the full data arrays and use DataFilterExtension (a WebGL shader extension) to efficiently hide/show data based on `currentTimestep` on the GPU.
+
+## 4. Phased Implementation Strategy
+
+### Phase 1: The Static Prototype (Memory-Bound)
+
+- Goal: Validate the visual paradigm without setting up databases.
+- Mechanism: The Next.js app loads ui_payload.json (generated by the PyTorch backend) directly into browser memory.
+- Deliverables: Node Layer (predictions + uncertainty halos) and Topology Layer (attention arcs) linked to a basic React slider.
+
+### Phase 2: PostGIS Migration (The Road Network)
+
+- Goal: Implement the Road-Constrained Heatmap.
+- Mechanism: Spin up Supabase. Ingest the city's road GeoJSON. Write the SQL views that dynamically join the ui_payload predictions to the road segments.
+- Deliverables: The PathLayer successfully renders continuous traffic flows.
+
+### Phase 3: Production API Integration
+
+- Goal: Live inference.
+- Mechanism: Replace the static JSON payload with authenticated API calls to a deployed version of the ResilientIoTPipeline serving live ZINB parameters.
 
 
 
@@ -537,6 +688,7 @@ You are an autonomous Machine Learning Agent operating within a containerized Li
 ## 8. THE DESK CHECK MANDATE
 
 When asked to review mathematical logic, metrics, or loss functions, you are forbidden from simply saying "the logic looks correct." You MUST run a simulated "Desk Check." You must create a dummy scenario with extreme, unbalanced numbers (e.g., a batch of 100 vs a batch of 1, or an input tensor of exactly 0.0), trace the exact mathematical execution of the code, and prove that the final output matches the theoretical target.
+
 
 
 
@@ -807,9 +959,17 @@ class RealIoTDataset(Dataset):
         
         if df.empty:
             raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
+
+        available_classes = sorted(df['veh_class'].dropna().astype(str).unique().tolist())
+        available_dirs = sorted(df['dir'].dropna().astype(str).unique().tolist())
             
         # 2. Filter target stream to ensure unique (dt, location) indices
         df = df[df['veh_class'] == target_veh_class]
+        if df.empty:
+            raise ValueError(
+                f"No rows after veh_class filter. Requested veh_class='{target_veh_class}' "
+                f"for range {start_date} to {end_date}. Available veh_class values: {available_classes}"
+            )
         
         if target_dir == 'all':
             # Group by dt and location, sum values, take first for weather/static features
@@ -823,6 +983,17 @@ class RealIoTDataset(Dataset):
             df = df.groupby(['dt', 'location'], as_index=False).agg(agg_funcs)
         else:
             df = df[df['dir'] == target_dir]
+            if df.empty:
+                raise ValueError(
+                    f"No rows after dir filter. Requested dir='{target_dir}' with veh_class='{target_veh_class}' "
+                    f"for range {start_date} to {end_date}. Available dir values before filtering: {available_dirs}"
+                )
+
+        if df.empty:
+            raise ValueError(
+                f"No rows available after filtering and aggregation for range {start_date} to {end_date}, "
+                f"veh_class='{target_veh_class}', dir='{target_dir}'."
+            )
             
         # 3. Extract dimensions
         self.locations = sorted(df['location'].unique())
@@ -2414,7 +2585,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs"
 with open(CONFIG_PATH, "r") as f:
     SWEEP_CONFIG = yaml.safe_load(f)
 
-def make_objective(use_mock_data: bool):
+def make_objective(cli_args: argparse.Namespace):
     """
     Factory that returns an Optuna objective bound to the requested data mode.
     Separating the factory from __main__ lets us inject --use_mock_data at the
@@ -2447,17 +2618,17 @@ def make_objective(use_mock_data: bool):
 
         # Map to configuration object for the training runner
         args = argparse.Namespace(
-            epochs=2,
-            batch_size=4,
+            epochs=cli_args.epochs,
+            batch_size=cli_args.batch_size,
             lr=params.get("lr", 1e-3),
             w_forecast=params.get("w_forecast", 1.0),
             w_impute=params.get("w_impute", 1.0),
-            use_mock_data=use_mock_data,
-            start_date="2023-03-02",
-            end_date="2023-04-02",
-            seq_len=12,
-            veh_class="person",
-            dir="all"
+            use_mock_data=cli_args.use_mock_data,
+            start_date=cli_args.start_date,
+            end_date=cli_args.end_date,
+            seq_len=cli_args.seq_len,
+            veh_class=cli_args.veh_class,
+            dir=cli_args.dir
         )
 
         # Execute training loop.
@@ -2475,6 +2646,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Optuna hyperparameter sweep")
     parser.add_argument("--use_mock_data", action="store_true",
                         help="Use synthetic mock data instead of real parquet data (for local CPU integration tests)")
+    parser.add_argument("--n_trials", type=int, default=2, help="Number of Optuna trials")
+    parser.add_argument("--epochs", type=int, default=2, help="Training epochs per trial")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size per trial")
+    parser.add_argument("--start_date", type=str, default="2023-03-02", help="Start date for real data (inclusive)")
+    parser.add_argument("--end_date", type=str, default="2023-04-02", help="End date for real data (exclusive)")
+    parser.add_argument("--seq_len", type=int, default=12, help="Sequence length")
+    parser.add_argument("--veh_class", type=str, default="person", help="Target vehicle class")
+    parser.add_argument("--dir", type=str, default="all", help="Target direction")
     cli_args = parser.parse_args()
 
     logger = setup_logger("optuna_sweep")
@@ -2493,7 +2672,7 @@ if __name__ == "__main__":
 
     # Execute study (The Online Local Test)
     # n_trials=2 to ensure the loop runs efficiently and validates the architecture
-    study.optimize(make_objective(cli_args.use_mock_data), n_trials=2, callbacks=[wandbc])
+    study.optimize(make_objective(cli_args), n_trials=cli_args.n_trials, callbacks=[wandbc])
 
     logger.info("Sweep complete. Best hyperparameters:")
     for key, value in study.best_params.items():
