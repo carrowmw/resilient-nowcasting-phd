@@ -1,0 +1,16 @@
+2026-04-21 14:39:24,634 - root - INFO - Logger initialized. Writing to /workspace/logs/train_pipeline_20260421_143924.log
+2026-04-21 14:39:24,637 - __main__ - INFO - Using device: cpu
+2026-04-21 14:39:25,034 - __main__ - INFO - Loading RealIoTDataset from 2024-04-02 to 2025-04-02
+2026-04-21 14:39:25,034 - dataset - INFO - Loading data from data/processed/master_dataset_15T.parquet between 2024-04-02 and 2025-04-02
+2026-04-21 14:39:28,877 - dataset - INFO - Loaded 35040 timesteps across 69 locations for class=person, dir=all.
+2026-04-21 14:39:29,195 - dataset - INFO - Dynamic features scaled: mean≈0, std≈1 over 2417760 samples.
+2026-04-21 14:39:29,241 - dataset - INFO - Static features scaled: mean≈0, std≈1 over 69 nodes.
+2026-04-21 14:39:29,241 - dataset - INFO - Feature dimensions established. Static: 2, Dynamic: 3
+2026-04-21 14:39:29,251 - pipeline - INFO - Initialized DynamicGraphLearner with static_feat_dim=2, embedding_dim=32, sparsity_threshold=0.5, total_params=96
+2026-04-21 14:39:29,283 - pipeline - INFO - Initialized MaskedSpatiotemporalEncoder with num_nodes=69, seq_len=12, time_series_dim=3, hidden_dim=64, total_params=100672
+2026-04-21 14:39:29,283 - pipeline - INFO - Initialized DecoupledDecoders with hidden_dim=64, time_series_dim=3, total_params=17414
+2026-04-21 14:39:29,284 - __main__ - INFO - Model initialised — num_nodes=69, static_feat_dim=2, time_series_dim=3, embedding_dim=32, hidden_dim=64
+2026-04-21 14:39:29,284 - __main__ - INFO - Starting training loop...
+2026-04-21 14:49:35,514 - __main__ - INFO - Epoch 1/1 - Train Loss: 2.7488 | Val Loss: 2.3057 (RMSE: 19.84, MAE: 6.96, ZeroAcc: 0.4879 [112607/230778], ImputeMSE: 0.1252)
+2026-04-21 14:49:35,523 - __main__ - INFO - New best model saved to models/best_pipeline.pt with val_loss: 2.3057
+2026-04-21 14:49:35,523 - __main__ - INFO - Training complete.

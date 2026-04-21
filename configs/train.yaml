@@ -1,0 +1,23 @@
+data:
+  start_date: "2024-04-02"
+  end_date: "2025-04-02"
+  seq_len: 12
+  target_veh_class: "person"
+  target_dir: "all"
+
+model:
+  num_nodes: 81
+  static_feat_dim: 2
+  time_series_dim: 3
+  embedding_dim: 32
+  hidden_dim: 64
+  sparsity_threshold: 0.5
+
+training:
+  epochs: 25
+  batch_size: 128
+  lr: 0.001
+
+loss:
+  w_forecast: 1.0
+  w_impute: 1.0
