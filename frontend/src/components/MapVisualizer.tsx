@@ -63,21 +63,28 @@ function buildLayers(
 
     getFillColor: (d) => {
       const entry = d.timeseries[timestep];
-      if (!entry)
-        return d.is_simulated ? [255, 200, 0, 180] : [220, 40, 40, 180];
-      return heatColor(entry.prediction / maxPrediction);
+      if (!entry) return [128, 128, 128, 180]; // Gray for missing data
+      // Normalizing uncertainty for the color scale.
+      // You may need to define a maxUncertainty based on your data distribution.
+      const maxUncertainty = 50;
+      const normalizedUncertainty = Math.min(
+        1,
+        entry.uncertainty / maxUncertainty,
+      );
+
+      // heatColor(0) is Green (Low Uncertainty), heatColor(1) is Red (High Uncertainty)
+      return heatColor(normalizedUncertainty);
     },
 
+    // Radius represents prediction (count)
     getRadius: (d) => {
       const entry = d.timeseries[timestep];
       const base = d.is_simulated ? 4 : 2;
       if (!entry) return base;
 
-      // Use natural log to dampen the growth of large uncertainty values.
+      // Use natural log to dampen the growth of large prediction values.
       // The multiplier (e.g., 10) now controls the 'steepness' of the curve.
-      const uncertaintyScale = Math.log1p(entry.uncertainty) * 10;
-
-      return base + uncertaintyScale;
+      return base + Math.log1p(entry.prediction) * 10;
     },
 
     // ★ Deck.gl updateTriggers — forces accessor re-evaluation on timestep change.
