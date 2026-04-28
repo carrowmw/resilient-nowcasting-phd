@@ -48,14 +48,15 @@ You are an autonomous Machine Learning Agent operating within a containerized Li
 - A task is only considered 'Done' once the outcome has been recorded in EXPERIMENTS.md.
 - You are strictly forbidden from saying "The task is complete" or "I have finished" in your response unless you have already updated the ledger in the same turn.
 
-## 7. THE NORTH STARS (ARCHITECTURE.md & MLOPS.md)
+## 7. THE NORTH STARS (BACKEND_ARCHITECTURE.md, FRONTEND_ARCHITECTURE, MLOPS.md, & PHASES.md)
 
-- The Blueprints: You have two global design documents. Use ARCHITECTURE.md for any PyTorch module, tensor, or mathematical logic. Use MLOPS.md for any task involving training loops, Weights & Biases, Optuna, or Docker execution.
-
+- The Blueprints: You have three global design documents.
+  1. Use `BACKEND_ARCHITECTURE.md` for any PyTorch module, tensor, or mathematical logic.
+  2. Use `FRONTEND_ARCHITECTURE.md` for any Next.js, Deck.gl, or geospatial UI logic.
+  3. Use `MLOPS.md` for any task involving training loops, Weights & Biases, Optuna, or Docker execution.
+  4. Use `PHASES.md` as your temporal anchor. You must strictly adhere to the constraints of the current Phase (e.g., do not write live API fetching logic if the project is currently in the Static Payload phase).
 - Piecewise Execution: DO NOT attempt to build the entire system at once. You must only build the specific component requested in the user's prompt.
-
-- Strict Adherence: The constraints listed in ARCHITECTURE.md (especially regarding loss functions, tripwires, and data masking) are absolute. Do not substitute them with standard generic functions.
-
+- Strict Adherence: The constraints listed in BACKEND_ARCHITECTURE.md (especially regarding loss functions, tripwires, and data masking) are absolute. Do not substitute them with standard generic functions.
 
 ## 8. THE DESK CHECK MANDATE
 

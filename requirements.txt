@@ -10,3 +10,6 @@ optuna
 optuna-integration
 pyyaml
 pytest
+pydantic
+fastapi
+uvicorn

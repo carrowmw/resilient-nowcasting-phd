@@ -1,0 +1,242 @@
+.
+├── BACKEND_ARCHITECTURE.md
+├── CLAUDE.md
+├── configs
+│   ├── sweep.yaml
+│   └── train.yaml
+├── data
+│   ├── external
+│   │   ├── google_places_template.csv
+│   │   └── places_cache_test.json
+│   ├── processed
+│   │   ├── master_dataset_15T.parquet
+│   │   └── ui_payload.json
+│   ├── traffic_20230108_20260108.parquet
+│   ├── traffic_sensors.json
+│   ├── weather_20230108_20260108.parquet
+│   └── weather_sensors.json
+├── digest.txt
+├── docker-compose.yml
+├── Dockerfile.agent
+├── Dockerfile.cpu
+├── Dockerfile.gpu
+├── docs
+│   └── summary.md
+├── eda_summary.md
+├── EXPERIMENTS.md
+├── frontend
+│   ├── AGENTS.md
+│   ├── CLAUDE.md
+│   ├── eslint.config.mjs
+│   ├── next-env.d.ts
+│   ├── next.config.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── data
+│   │   │   └── ui_payload.json
+│   │   ├── file.svg
+│   │   ├── globe.svg
+│   │   ├── next.svg
+│   │   ├── vercel.svg
+│   │   └── window.svg
+│   ├── README.md
+│   ├── src
+│   │   ├── app
+│   │   │   ├── favicon.ico
+│   │   │   ├── globals.css
+│   │   │   ├── layout.tsx
+│   │   │   └── page.tsx
+│   │   ├── components
+│   │   │   ├── MapScene.tsx
+│   │   │   ├── MapVisualizer.tsx
+│   │   │   └── TimeSlider.tsx
+│   │   ├── store
+│   │   │   └── useTimeStore.ts
+│   │   └── types
+│   │       └── payload.ts
+│   ├── tests
+│   │   ├── payload.test.ts
+│   │   ├── setup.ts
+│   │   ├── slider.test.tsx
+│   │   └── store.test.ts
+│   ├── tsconfig.json
+│   ├── tsconfig.tsbuildinfo
+│   └── vitest.config.mts
+├── FRONTEND_ARCHITECTURE.md
+├── GEMINI.md
+├── logs
+│   ├── optuna_sweep_20260416_082745.log
+│   ├── optuna_sweep_20260416_155531.log
+│   ├── train_pipeline_20260416_085108.log
+│   ├── train_pipeline_20260416_104457.log
+│   ├── train_pipeline_20260416_111832.log
+│   ├── train_pipeline_20260416_164526.log
+│   ├── train_pipeline_20260416_164601.log
+│   ├── train_pipeline_20260416_164919.log
+│   └── train_pipeline_20260421_143924.log
+├── MLOPS.md
+├── models
+│   └── best_pipeline.pt
+├── package-lock.json
+├── PHASES.md
+├── plan.md
+├── README.md
+├── requirements.txt
+├── src
+│   ├── __pycache__
+│   │   ├── dataset.cpython-311.pyc
+│   │   ├── decoders.cpython-311.pyc
+│   │   ├── encoder.cpython-311.pyc
+│   │   ├── features.cpython-311.pyc
+│   │   ├── graph_learner.cpython-311.pyc
+│   │   ├── logger.cpython-311.pyc
+│   │   ├── metrics.cpython-311.pyc
+│   │   ├── pipeline.cpython-311.pyc
+│   │   ├── preprocess.cpython-311.pyc
+│   │   ├── train.cpython-311.pyc
+│   │   └── tune.cpython-311.pyc
+│   ├── check_gaps.py
+│   ├── dataset.py
+│   ├── decoders.py
+│   ├── encoder.py
+│   ├── export_ui_payload.py
+│   ├── features.py
+│   ├── graph_learner.py
+│   ├── logger.py
+│   ├── metrics.py
+│   ├── pipeline.py
+│   ├── preprocess.py
+│   ├── process_all.py
+│   ├── smoke_test.py
+│   ├── train.py
+│   └── tune.py
+├── tea_debug.log
+├── test_dataset_dev.py
+├── tests
+│   ├── __pycache__
+│   │   ├── conftest.cpython-311-pytest-9.0.3.pyc
+│   │   ├── test_decoders.cpython-311-pytest-9.0.3.pyc
+│   │   ├── test_encoder.cpython-311-pytest-9.0.3.pyc
+│   │   ├── test_graph_learner.cpython-311-pytest-9.0.3.pyc
+│   │   ├── test_metrics.cpython-311-pytest-9.0.3.pyc
+│   │   └── test_pipeline.cpython-311-pytest-9.0.3.pyc
+│   ├── conftest.py
+│   ├── test_decoders.py
+│   ├── test_encoder.py
+│   ├── test_graph_learner.py
+│   ├── test_metrics.py
+│   └── test_pipeline.py
+├── tree.txt
+└── wandb
+    ├── debug-cli.root.log
+    ├── debug-internal.log -> offline-run-20260421_143924-1q3uy0qy/logs/debug-internal.log
+    ├── debug.log -> offline-run-20260421_143924-1q3uy0qy/logs/debug.log
+    ├── latest-run -> offline-run-20260421_143924-1q3uy0qy
+    ├── offline-run-20260415_144305-6nk1esqf
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260415_144305.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-6nk1esqf.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260415_144412-myuxamwy
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260415_144412.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-myuxamwy.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260416_081122-dlsgjpnc
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_081122.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-dlsgjpnc.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260416_082745-fr5ai7wd
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_082745.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-fr5ai7wd.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260416_155531-utknpqvw
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_155531.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-utknpqvw.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260416_164526-etgxcwt0
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_164526.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-etgxcwt0.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260416_164601-1b6sjhgc
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_164601.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-1b6sjhgc.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260416_164919-jt76be0m
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_164919.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-jt76be0m.wandb
+    │   └── tmp
+    │       └── code
+    ├── offline-run-20260421_143924-1q3uy0qy
+    │   ├── files
+    │   │   └── requirements.txt
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260421_143924.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-1q3uy0qy.wandb
+    │   └── tmp
+    │       └── code
+    └── run-20260416_085108-sywmlisp
+        ├── files
+        │   ├── config.yaml
+        │   ├── output.log
+        │   ├── requirements.txt
+        │   ├── wandb-metadata.json
+        │   └── wandb-summary.json
+        ├── logs
+        │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_085108.log
+        │   ├── debug-internal.log
+        │   └── debug.log
+        ├── run-sywmlisp.wandb
+        └── tmp
+            └── code
+
+73 directories, 167 files

@@ -82,9 +82,7 @@ function buildLayers(
       const base = d.is_simulated ? 4 : 2;
       if (!entry) return base;
 
-      // Use natural log to dampen the growth of large prediction values.
-      // The multiplier (e.g., 10) now controls the 'steepness' of the curve.
-      return base + Math.log1p(entry.prediction) * 10;
+      return base + entry.prediction;
     },
 
     // ★ Deck.gl updateTriggers — forces accessor re-evaluation on timestep change.

@@ -11,18 +11,30 @@ We maintain a strict separation between development and execution using two sepa
 
 ## 2. File Architecture
 
+We utilize a Centralized Configuration pattern. **No hyperparameters should be hardcoded in Python execution scripts.**
+
+- `configs/train.yaml`: The single source of truth for all runs, containing nested dictionaries for `data`, `model`, `training`, and `loss`.
+- `configs/sweep.yaml`: The W&B Optuna search space definitions.
 - `src/train.py`: The orchestrator for a single training run. Responsible for model instantiation, W&B initialization, training loops, and validation logic.
-- `src/tune.py`: The Optuna orchestrator. Responsible for defining the hyperparameter search space and executing `train.py` across multiple trials using the W&B Optuna integration.
-- `configs/`: Directory containing YAML files defining hyperparameter grids.
+- `src/train.py`: Accepts `--config configs/train.yaml`. Loads the dictionary, initializes the W&B run, and executes the pipeline.
+- `src/tune.py`: Loads the base `train.yaml`, overwrites the specific parameters Optuna is currently testing, and executes `train.py`.
+-
 
 ## 3. Weights & Biases (W&B) Logging Standards
 
-- `train.py` must initialize `wandb.init(project="resilient-iot", config=...)`.
-- The training loop must log at the epoch level, not the batch level, to avoid API rate limiting.
-- Required tracked metrics: `train_loss_total`, `train_loss_forecast`, `train_loss_impute`, and `val_loss_total`.
+- `train.py` must initialize `wandb.init(project="resilient-iot", config=config_dict)` using the full nested YAML dictionary.
+- Required tracked metrics: `train_loss_total`, `train_loss_forecast`, `train_loss_impute`, `val_loss_total`, and human-readable metrics (`val_rmse`, `val_mae`, `val_zero_acc`).
+- `val_zero_acc` must be aggregated by keeping a running tally of true zero counts vs. predicted zero counts across the entire epoch to avoid batch-averaging skew.
 
 ## 4. Evaluation Branching Strategy
 
 - The evaluation framework (`train.py`, `tune.py`, metrics calculations) must be locked to the `main` branch.
-- Experimental model architectures live on their own branches (e.g., `exp/graphsage`).
-- Experimental branches will `git rebase main` to inherit any updates to the universal evaluation framework.
+- Experimental model architectures live on their own branches (e.g., `exp/pure-transformer`).
+- Experimental branches will `git rebase main` to inherit updates to the universal evaluation framework.
+
+## 5. The Static Data Bridge & Evaluation Constraints
+
+The bridge between the PyTorch Backend and Next.js Frontend is the `export_ui_payload.py` script, which generates `ui_payload.json`.
+
+- **The Visual Holdout Set (No Data Leakage):** The data used to generate the UI payload must be strictly quarantined from the training and validation loops. Visualizing training data in the frontend displays memorization, not predictive inference.
+- **Artifact Twinning:** Every generated `ui_payload.json` must be injected with metadata identifying exactly how it was created. This includes the `wandb_run_id`, `git_commit_hash`, and a copy of the `train.yaml` hyperparameters. This ensures a 1-to-1 traceability between a visual frontend artifact and the backend model that generated it.
