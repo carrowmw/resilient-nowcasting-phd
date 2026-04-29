@@ -1,0 +1,53 @@
+# Dockerfile.frontend
+#
+# Isolated Node.js environment for the Phase 1 Static Prototype frontend.
+# Aligned with NSTAR_MLOPS.md §1 ("Strict Container Isolation & Anonymous Volumes")
+# and NSTAR_FRONTEND_ARCHITECTURE.md §1 (Core Tech Stack).
+#
+# Container Isolation Contract ("Zero Host Download"):
+#   - All npm packages are baked into the image at build time via `npm ci`.
+#   - At runtime, docker-compose mounts /workspace/frontend/node_modules and
+#     /workspace/frontend/.next as anonymous volumes; this preserves the
+#     in-image installs while the rest of /workspace/frontend is overlaid by
+#     the host bind mount (enabling cross-container hot-reload from the
+#     agent-workspace container into frontend-dev).
+#   - This image is strictly decoupled from the PyTorch backend
+#     (Dockerfile.cpu / Dockerfile.gpu): no Python, no CUDA, no torch.
+#
+# Tech stack pinned by frontend/package.json:
+#   Next.js 16.2.4, React 19.2.4, TypeScript (strict),
+#   Deck.gl 9.3.1, MapLibre GL 5.23.0, Zustand 5.0.12.
+
+FROM node:20-bookworm-slim
+
+# Development image: Next.js dev server with HMR. Telemetry disabled to
+# keep the container hermetic and the build logs clean.
+ENV NODE_ENV=development \
+    NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /workspace/frontend
+
+# 1. Copy manifest + lockfile FIRST so the dependency layer is cached
+#    independently of source-code churn.
+COPY frontend/package.json frontend/package-lock.json ./
+
+# 2. Reproducible install. `npm ci` honours the lockfile exactly, refuses
+#    to mutate it, and writes only into /workspace/frontend/node_modules
+#    (which becomes the seed of the runtime anonymous volume).
+RUN npm ci
+
+# 3. Copy the rest of the frontend source tree. At runtime the host bind
+#    mount overlays /workspace/frontend with the developer's working tree;
+#    this COPY ensures the image is independently buildable and runnable
+#    (e.g. CI smoke tests, or any environment where the bind mount is absent).
+COPY frontend/ ./
+
+# 4. Expose the Next.js dev server port (matched by the docker-compose
+#    `frontend-dev` service port mapping 3000:3000).
+EXPOSE 3000
+
+# 5. Launch the Next.js dev server bound to 0.0.0.0 so the Mac host
+#    browser can reach the container via http://localhost:3000.
+#    Default localhost binding inside the container is unreachable
+#    from the host network namespace.
+CMD ["npm", "run", "dev", "--", "-H", "0.0.0.0", "-p", "3000"]
