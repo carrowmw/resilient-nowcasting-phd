@@ -1,8 +1,25 @@
 data/
 wandb/
 models/
-.env
 digest.txt
+node_modules/
+dist/
+build/
+logs/
+.next/
+.pytest_cache/
+
+__pycache__/
+.DS_Store
+.vscode/
+
+venv/
+.venv/
+
+.env
+*.parquet
+*.pt
+
 # Allow the browser-served static payload inside the Next.js public dir
 !frontend/public/data/
 !frontend/public/data/**

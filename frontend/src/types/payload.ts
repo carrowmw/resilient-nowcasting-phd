@@ -13,6 +13,12 @@ export interface NodeEntry {
   lon: number;
   is_simulated: boolean;
   timeseries: TimestepEntry[];
+  // Length === metadata.timesteps. ground_truth is null for simulated nodes
+  // (no physical sensor); mask is true wherever the input was hidden from
+  // the model and reconstructed by the imputation decoder.
+  ground_truth_series: (number | null)[];
+  imputed_series: number[];
+  mask_series: boolean[];
 }
 
 export interface EdgeEntry {

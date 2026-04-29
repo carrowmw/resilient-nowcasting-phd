@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
@@ -21,8 +21,9 @@ const INITIAL_VIEW = {
 const MAP_STYLE =
   "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
-// Top-N attention edges to render per timestep (avoids "hairball" clutter)
-const TOP_N_EDGES = 60;
+// Defensive cap on the global edge set when no node is selected. With ego-graph
+// isolation active, ALL edges touching the selected node are shown regardless.
+const GLOBAL_EDGE_CAP = 80;
 
 /**
  * Maps a normalised value t∈[0,1] to a Green→Yellow→Red RGBA tuple.
@@ -38,87 +39,104 @@ function heatColor(t: number): [number, number, number, number] {
   return [255, Math.round(200 * (1 - s)), 0, 220];
 }
 
+function nodeFillColor(d: NodeEntry, timestep: number): [number, number, number, number] {
+  const entry = d.timeseries[timestep];
+  if (!entry) return [128, 128, 128, 180];
+  const maxUncertainty = 50;
+  const normalized = Math.min(1, entry.uncertainty / maxUncertainty);
+  return heatColor(normalized);
+}
+
+function nodeRadius(d: NodeEntry, timestep: number): number {
+  const entry = d.timeseries[timestep];
+  const base = d.is_simulated ? 4 : 2;
+  if (!entry) return base;
+  return base + entry.prediction;
+}
+
+interface FilterState {
+  selectedNodeId: number | null;
+  attentionThreshold: number;
+}
+
 /**
- * Construct a ScatterplotLayer + ArcLayer for the given payload snapshot at
- * `timestep`.  Called both on initial load and on every timestep change.
+ * Construct ScatterplotLayers (real + simulated) and an ArcLayer for the given
+ * payload snapshot. Ego-graph isolation: when selectedNodeId is set, only edges
+ * incident to that node are kept.
  */
 function buildLayers(
   payload: UIPayload,
   nodeMap: Map<number, NodeEntry>,
   timestep: number,
+  filters: FilterState,
+  onSelectNode: (id: number | null) => void,
 ) {
-  // Compute per-timestep max prediction for colour normalisation.
-  let maxPrediction = 1;
-  for (const node of payload.nodes) {
-    const entry = node.timeseries[timestep];
-    if (entry && entry.prediction > maxPrediction)
-      maxPrediction = entry.prediction;
-  }
+  const { selectedNodeId, attentionThreshold } = filters;
 
-  // ── Node Layer ─────────────────────────────────────────────────────────────
-  const nodeLayer = new ScatterplotLayer<NodeEntry>({
-    id: "nodes-layer",
-    data: payload.nodes,
+  // ── Real-node layer (solid filled disc) ────────────────────────────────────
+  const realNodes = payload.nodes.filter((n) => !n.is_simulated);
+  const realLayer = new ScatterplotLayer<NodeEntry>({
+    id: "nodes-real",
+    data: realNodes,
     getPosition: (d) => [d.lon, d.lat],
-
-    getFillColor: (d) => {
-      const entry = d.timeseries[timestep];
-      if (!entry) return [128, 128, 128, 180]; // Gray for missing data
-      // Normalizing uncertainty for the color scale.
-      // You may need to define a maxUncertainty based on your data distribution.
-      const maxUncertainty = 50;
-      const normalizedUncertainty = Math.min(
-        1,
-        entry.uncertainty / maxUncertainty,
-      );
-
-      // heatColor(0) is Green (Low Uncertainty), heatColor(1) is Red (High Uncertainty)
-      return heatColor(normalizedUncertainty);
-    },
-
-    // Radius represents prediction (count)
-    getRadius: (d) => {
-      const entry = d.timeseries[timestep];
-      const base = d.is_simulated ? 4 : 2;
-      if (!entry) return base;
-
-      return base + entry.prediction;
-    },
-
-    // ★ Deck.gl updateTriggers — forces accessor re-evaluation on timestep change.
+    getFillColor: (d) => nodeFillColor(d, timestep),
+    getRadius: (d) => nodeRadius(d, timestep),
+    radiusUnits: "meters",
+    stroked: false,
+    filled: true,
+    pickable: true,
+    onClick: ({ object }) => onSelectNode(object ? object.id : null),
     updateTriggers: {
       getFillColor: [timestep],
       getRadius: [timestep],
     },
+  });
 
+  // ── Simulated-node layer (hollow ring) ─────────────────────────────────────
+  // FRONTEND_ARCHITECTURE.md §A: simulated nodes must be visually distinct.
+  // Deck.gl's stroked/filled flags are layer-wide, so we split into two layers.
+  const simNodes = payload.nodes.filter((n) => n.is_simulated);
+  const simLayer = new ScatterplotLayer<NodeEntry>({
+    id: "nodes-simulated",
+    data: simNodes,
+    getPosition: (d) => [d.lon, d.lat],
+    // Ring inherits the same uncertainty heat colour for visual coherence.
+    getLineColor: (d) => nodeFillColor(d, timestep),
+    getRadius: (d) => nodeRadius(d, timestep),
     radiusUnits: "meters",
+    stroked: true,
+    filled: false,
+    lineWidthMinPixels: 3,
     pickable: true,
-    onHover: ({ object }) => {
-      if (object) {
-        const entry = object.timeseries[timestep];
-        console.log(
-          `[Hover] ${object.location_name}` +
-            ` | simulated=${object.is_simulated}` +
-            ` | t=${timestep}` +
-            ` | prediction=${entry?.prediction ?? "N/A"}` +
-            ` | uncertainty=${entry?.uncertainty ?? "N/A"}`,
-        );
-      }
+    onClick: ({ object }) => onSelectNode(object ? object.id : null),
+    updateTriggers: {
+      getLineColor: [timestep],
+      getRadius: [timestep],
     },
   });
 
   // ── Topology Layer (attention arcs) ────────────────────────────────────────
-  // Select top-N edges by attention weight at this timestep to avoid clutter.
   type WeightedEdge = { edge: EdgeEntry; weight: number };
-  const topEdges: WeightedEdge[] = payload.edges
+  let weighted: WeightedEdge[] = payload.edges
     .map((e) => ({ edge: e, weight: e.attention_sequence[timestep] ?? 0 }))
-    .sort((a, b) => b.weight - a.weight)
-    .slice(0, TOP_N_EDGES);
+    .filter((x) => x.weight >= attentionThreshold);
+
+  if (selectedNodeId !== null) {
+    // Ego-graph: keep only edges touching the selected node.
+    weighted = weighted.filter(
+      (x) =>
+        x.edge.source === selectedNodeId || x.edge.target === selectedNodeId,
+    );
+  } else {
+    // Defensive cap to prevent visual hairball when nothing is selected.
+    weighted = weighted
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, GLOBAL_EDGE_CAP);
+  }
 
   const arcLayer = new ArcLayer<WeightedEdge>({
     id: "topology-layer",
-    data: topEdges,
-
+    data: weighted,
     getSourcePosition: (d) => {
       const src = nodeMap.get(d.edge.source);
       return src ? [src.lon, src.lat] : [0, 0];
@@ -127,22 +145,18 @@ function buildLayers(
       const tgt = nodeMap.get(d.edge.target);
       return tgt ? [tgt.lon, tgt.lat] : [0, 0];
     },
-
     getSourceColor: (d) => [255, 165, 0, Math.round(d.weight * 255)],
     getTargetColor: (d) => [255, 69, 0, Math.round(d.weight * 255)],
     getWidth: (d) => Math.max(1, d.weight * 80),
-
-    // ★ Deck.gl updateTriggers — forces accessor re-evaluation on timestep change.
     updateTriggers: {
       getSourceColor: [timestep],
       getTargetColor: [timestep],
       getWidth: [timestep],
-      // data itself changes (top-N re-sorted), but adding this is defensive.
-      data: [timestep],
+      data: [timestep, selectedNodeId, attentionThreshold],
     },
   });
 
-  return [nodeLayer, arcLayer];
+  return [realLayer, simLayer, arcLayer];
 }
 
 export default function MapVisualizer() {
@@ -150,14 +164,14 @@ export default function MapVisualizer() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
 
-  // Payload and derived node-lookup map kept in refs so the timestep effect
-  // can read them without being listed as dependencies (they never change after
-  // the initial fetch).
   const payloadRef = useRef<UIPayload | null>(null);
   const nodeMapRef = useRef<Map<number, NodeEntry>>(new Map());
 
   const setMaxTimesteps = useTimeStore((s) => s.setMaxTimesteps);
+  const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
+  const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
+  const attentionThreshold = useTimeStore((s) => s.attentionThreshold);
 
   // ─── Initialise MapLibre + deck.gl overlay once ────────────────────────────
   useEffect(() => {
@@ -180,7 +194,14 @@ export default function MapVisualizer() {
     mapRef.current = map;
     overlayRef.current = overlay;
 
-    // Fetch payload, wire up initial layers, set clock upper-bound.
+    // Click on empty map area → deselect node (Deck.gl onClick fires first when
+    // a pickable object is hit, so this only runs on background clicks).
+    map.on("click", () => {
+      if (useTimeStore.getState().selectedNodeId !== null) {
+        useTimeStore.getState().setSelectedNodeId(null);
+      }
+    });
+
     map.on("load", async () => {
       try {
         const res = await fetch("/data/ui_payload.json");
@@ -189,7 +210,6 @@ export default function MapVisualizer() {
 
         setMaxTimesteps(payload.metadata.timesteps - 1);
 
-        // Build O(1) node-lookup map for ArcLayer position accessors.
         const nodeMap = new Map<number, NodeEntry>();
         for (const node of payload.nodes) nodeMap.set(node.id, node);
 
@@ -203,9 +223,19 @@ export default function MapVisualizer() {
             ` ${payload.edges.length} edges, ${payload.metadata.timesteps} timesteps.`,
         );
 
-        // Render initial layers at whatever timestep the store currently holds.
-        const t0 = useTimeStore.getState().currentTimestep;
-        overlay.setProps({ layers: buildLayers(payload, nodeMap, t0) });
+        const state = useTimeStore.getState();
+        overlay.setProps({
+          layers: buildLayers(
+            payload,
+            nodeMap,
+            state.currentTimestep,
+            {
+              selectedNodeId: state.selectedNodeId,
+              attentionThreshold: state.attentionThreshold,
+            },
+            setSelectedNodeId,
+          ),
+        });
       } catch (err) {
         console.warn("[MapVisualizer] Failed to load ui_payload.json", err);
       }
@@ -220,17 +250,21 @@ export default function MapVisualizer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Rebuild layers on every timestep change ──────────────────────────────
-  // Deck.gl uses shallow reference equality to detect changes; we must pass
-  // new layer instances (with correct updateTriggers) on each tick.
+  // Rebuild layers whenever the timestep, selection, or threshold changes.
   useEffect(() => {
     const payload = payloadRef.current;
     const overlay = overlayRef.current;
     if (!payload || !overlay) return;
     overlay.setProps({
-      layers: buildLayers(payload, nodeMapRef.current, currentTimestep),
+      layers: buildLayers(
+        payload,
+        nodeMapRef.current,
+        currentTimestep,
+        { selectedNodeId, attentionThreshold },
+        setSelectedNodeId,
+      ),
     });
-  }, [currentTimestep]);
+  }, [currentTimestep, selectedNodeId, attentionThreshold, setSelectedNodeId]);
 
   return (
     <div

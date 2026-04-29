@@ -25,6 +25,16 @@ function makeNode(id: number, isSimulated: boolean, timesteps: number): NodeEntr
       prediction: Math.random() * 500,
       uncertainty: Math.random() * 0.5,
     })),
+    // Phase 1 Analytics Upgrade: imputation series live alongside the forecast.
+    // Simulated nodes have no physical sensor → ground_truth is null and the
+    // mask is true at every timestep (every input was NaN by construction).
+    ground_truth_series: Array.from({ length: timesteps }, () =>
+      isSimulated ? null : Math.random() * 100,
+    ),
+    imputed_series: Array.from({ length: timesteps }, () => Math.random() * 100),
+    mask_series: Array.from({ length: timesteps }, () =>
+      isSimulated ? true : Math.random() < 0.15,
+    ),
   };
 }
 
@@ -142,6 +152,32 @@ describe('UIPayload schema', () => {
       for (const w of edge.attention_sequence) {
         expect(w).toBeGreaterThanOrEqual(0);
         expect(w).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('every node has imputed/ground-truth/mask arrays of length timesteps', () => {
+    const p = makeMockPayload(4, 2, 12);
+    for (const node of p.nodes) {
+      expect(node.imputed_series.length).toBe(p.metadata.timesteps);
+      expect(node.ground_truth_series.length).toBe(p.metadata.timesteps);
+      expect(node.mask_series.length).toBe(p.metadata.timesteps);
+    }
+  });
+
+  it('simulated nodes carry null ground truth and all-true mask', () => {
+    const p = makeMockPayload(3, 4, 16);
+    for (const node of p.nodes.filter((n) => n.is_simulated)) {
+      expect(node.ground_truth_series.every((v) => v === null)).toBe(true);
+      expect(node.mask_series.every((m) => m === true)).toBe(true);
+    }
+  });
+
+  it('real-node ground truths are numeric (not null)', () => {
+    const p = makeMockPayload(5, 0, 12);
+    for (const node of p.nodes) {
+      for (const v of node.ground_truth_series) {
+        expect(typeof v).toBe('number');
       }
     }
   });

@@ -1,5 +1,4 @@
 .
-├── BACKEND_ARCHITECTURE.md
 ├── CLAUDE.md
 ├── configs
 │   ├── sweep.yaml
@@ -19,6 +18,7 @@
 ├── docker-compose.yml
 ├── Dockerfile.agent
 ├── Dockerfile.cpu
+├── Dockerfile.frontend
 ├── Dockerfile.gpu
 ├── docs
 │   └── summary.md
@@ -51,6 +51,7 @@
 │   │   ├── components
 │   │   │   ├── MapScene.tsx
 │   │   │   ├── MapVisualizer.tsx
+│   │   │   ├── NodeInspector.tsx
 │   │   │   └── TimeSlider.tsx
 │   │   ├── store
 │   │   │   └── useTimeStore.ts
@@ -64,7 +65,6 @@
 │   ├── tsconfig.json
 │   ├── tsconfig.tsbuildinfo
 │   └── vitest.config.mts
-├── FRONTEND_ARCHITECTURE.md
 ├── GEMINI.md
 ├── logs
 │   ├── optuna_sweep_20260416_082745.log
@@ -76,11 +76,13 @@
 │   ├── train_pipeline_20260416_164601.log
 │   ├── train_pipeline_20260416_164919.log
 │   └── train_pipeline_20260421_143924.log
-├── MLOPS.md
 ├── models
 │   └── best_pipeline.pt
+├── NSTAR_BACKEND_ARCHITECTURE.md
+├── NSTAR_FRONTEND_ARCHITECTURE.md
+├── NSTAR_MLOPS.md
+├── NSTAR_PHASES.md
 ├── package-lock.json
-├── PHASES.md
 ├── plan.md
 ├── README.md
 ├── requirements.txt
@@ -239,4 +241,4 @@
         └── tmp
             └── code
 
-73 directories, 167 files
+73 directories, 169 files

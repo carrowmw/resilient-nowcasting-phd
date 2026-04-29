@@ -18,10 +18,15 @@ const TimeSlider = dynamic(() => import('./TimeSlider'), {
   ssr: false,
 });
 
+const NodeInspector = dynamic(() => import('./NodeInspector'), {
+  ssr: false,
+});
+
 export default function MapScene() {
   return (
     <main className="relative h-screen w-screen overflow-hidden">
       <MapVisualizer />
+      <NodeInspector />
       <TimeSlider />
     </main>
   );

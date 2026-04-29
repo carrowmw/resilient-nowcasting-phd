@@ -70,7 +70,8 @@ class ResilientIoTPipeline(nn.Module):
                 post-hoc interpretability and UI payload generation.
         Returns:
             Normal mode: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)
-            Analysis mode: {'edge_index', 'edge_weight', 'attention_weights', 'mu', 'theta', 'pi'}
+            Analysis mode: {'edge_index', 'edge_weight', 'attention_weights',
+                            'imputed_features', 'mu', 'theta', 'pi'}
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
@@ -90,12 +91,13 @@ class ResilientIoTPipeline(nn.Module):
             )
 
             # 3. Decoders (complete the full pass to get ZINB parameters)
-            _, mu, theta, pi = self.decoders(latent_embeddings)
+            imputed_features, mu, theta, pi = self.decoders(latent_embeddings)
 
             return {
                 'edge_index': edge_index,
                 'edge_weight': edge_weight,
                 'attention_weights': alpha,
+                'imputed_features': imputed_features,
                 'mu': mu,
                 'theta': theta,
                 'pi': pi,

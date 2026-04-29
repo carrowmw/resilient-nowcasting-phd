@@ -208,14 +208,31 @@ def main() -> None:
     #    where T_day1 ≈ 96 for a full day.
     # ------------------------------------------------------------------
     logger.info(f"Loading dataset: {args.start_date} → {args.end_date}")
+    # mask_prob=0.15 (training default) so node_mask + target_impute carry meaningful
+    # signal: the model's imputation reconstructs the masked timesteps and the UI
+    # can visualise the "self-healing" behaviour at the masked positions.
     dataset = RealIoTDataset(
         parquet_path=PARQUET_PATH,
         start_date=args.start_date,
         end_date=args.end_date,
         seq_len=args.seq_len,
-        mask_prob=0.0,          # no masking during inference
+        mask_prob=0.15,
         target_veh_class=args.veh_class,
         target_dir=args.dir,
+    )
+
+    # Inverse-transform parameters for channel 0 (traffic count). StandardScaler
+    # stores mean_ and scale_ as length-time_series_dim vectors.
+    # x_raw = x_scaled * scale_[0] + mean_[0]
+    traffic_mean: float = float(dataset.scaler.mean_[0])
+    traffic_scale: float = float(dataset.scaler.scale_[0])
+    assert traffic_scale > 0, (
+        f"TRIPWIRE: dataset.scaler.scale_[0]={traffic_scale} must be > 0 "
+        f"to inverse-transform without divergence."
+    )
+    logger.info(
+        f"Traffic-channel inverse-transform: mean={traffic_mean:.4f} "
+        f"scale={traffic_scale:.4f}"
     )
 
     num_nodes_real: int = dataset.num_nodes
@@ -326,6 +343,11 @@ def main() -> None:
     # Accumulators — pre-allocate for efficiency
     # timeseries_data[node_id] = list of {t, prediction, uncertainty}
     timeseries_data: List[List[Dict]] = [[] for _ in range(num_nodes_total)]
+    # Imputation analytics: three parallel arrays per node, each length=num_timesteps.
+    # ground_truth_series uses (number | null) — None for simulated nodes (no physical sensor).
+    ground_truth_series: List[List] = [[] for _ in range(num_nodes_total)]
+    imputed_series: List[List[float]] = [[] for _ in range(num_nodes_total)]
+    mask_series: List[List[bool]] = [[] for _ in range(num_nodes_total)]
     # edge_attention_data: filled once edge topology is known
     edge_attention_data: Dict[Tuple[int, int], List[float]] = {}
     edge_index_cached: torch.Tensor | None = None
@@ -340,6 +362,13 @@ def main() -> None:
             real_dynamic: torch.Tensor = raw_item["dynamic_features"].to(device)
             assert real_dynamic.shape == (num_nodes_real, args.seq_len, time_series_dim), \
                 f"t={t}: unexpected real_dynamic shape {real_dynamic.shape}"
+
+            # Real node boolean mask: [num_nodes_real, seq_len, time_series_dim]
+            real_node_mask: torch.Tensor = raw_item["node_mask"].to(device)
+            assert real_node_mask.shape == real_dynamic.shape, (
+                f"t={t}: node_mask shape {real_node_mask.shape} != "
+                f"dynamic shape {real_dynamic.shape}"
+            )
 
             # Simulated node dynamic features: all NaN → zeros via nan_to_num in pipeline
             sim_dynamic: torch.Tensor = torch.full(
@@ -359,7 +388,7 @@ def main() -> None:
                 "dynamic_features": combined_dynamic,
             }
 
-            # Forward pass (analysis mode: returns graph + ZINB params, no loss)
+            # Forward pass (analysis mode: returns graph + ZINB params + imputation, no loss)
             result = model(batch, return_analysis=True)
 
             # -------- ZINB parameters --------
@@ -381,6 +410,57 @@ def main() -> None:
                     "prediction": round(float(mu[node_id]), 4),
                     "uncertainty": round(float(std_dev[node_id]), 4),
                 })
+
+            # -------- Imputation analytics (length-96 arrays per node) --------
+            # imputed_features: [1, num_nodes_total, seq_len, time_series_dim]
+            imputed_features: torch.Tensor = result["imputed_features"]
+            assert imputed_features.shape == (
+                1, num_nodes_total, args.seq_len, time_series_dim
+            ), (
+                f"t={t}: unexpected imputed_features shape "
+                f"{tuple(imputed_features.shape)} (expected "
+                f"(1, {num_nodes_total}, {args.seq_len}, {time_series_dim}))"
+            )
+            assert not torch.isnan(imputed_features).any(), \
+                f"t={t}: NaN in imputed_features"
+
+            # Take the LAST step of the reconstructed window, traffic channel (0).
+            # Inverse-transform from scaled space → raw counts:
+            #   x_raw = x_scaled * scale_[0] + mean_[0]
+            imputed_last_scaled = imputed_features[0, :, -1, 0]  # [num_nodes_total]
+            imputed_last_raw = imputed_last_scaled * traffic_scale + traffic_mean
+
+            # Mask at the last step, traffic channel — boolean per node
+            real_mask_last = real_node_mask[:, -1, 0]  # [num_nodes_real]
+
+            # Ground truth at the absolute timestamp = window_idx + seq_len - 1
+            # (last step inside the input window). Pull directly from
+            # dataset.unscaled_traffic which is already in raw-count space.
+            gt_index = window_idx + args.seq_len - 1
+            assert 0 <= gt_index < dataset.unscaled_traffic.shape[0], \
+                f"t={t}: gt_index={gt_index} out of bounds"
+            real_gt = dataset.unscaled_traffic[gt_index]  # numpy [num_nodes_real]
+
+            for node_id in range(num_nodes_real):
+                imputed_series[node_id].append(
+                    round(float(imputed_last_raw[node_id]), 4)
+                )
+                # clamp(min=0) on display-only ground truth (matches the dataset's
+                # target_forecast clamp; raw counts cannot be negative).
+                ground_truth_series[node_id].append(
+                    round(max(0.0, float(real_gt[node_id])), 4)
+                )
+                mask_series[node_id].append(bool(real_mask_last[node_id]))
+
+            # Simulated nodes: every input was NaN → fully imputed by definition.
+            # No physical sensor → no ground truth (encode as None / null in JSON).
+            for j in range(num_simulated):
+                node_id = num_nodes_real + j
+                imputed_series[node_id].append(
+                    round(float(imputed_last_raw[node_id]), 4)
+                )
+                ground_truth_series[node_id].append(None)
+                mask_series[node_id].append(True)
 
             # -------- Attention weights --------
             alpha: torch.Tensor = result["attention_weights"]  # [batch*seq_len*E, heads]
@@ -426,6 +506,9 @@ def main() -> None:
             "lon": meta["lon"],
             "is_simulated": meta["is_simulated"],
             "timeseries": timeseries_data[node_id],
+            "ground_truth_series": ground_truth_series[node_id],
+            "imputed_series": imputed_series[node_id],
+            "mask_series": mask_series[node_id],
         })
 
     edges_payload: List[Dict] = []
@@ -464,6 +547,20 @@ def main() -> None:
     for node in payload["nodes"]:
         assert len(node["timeseries"]) == num_timesteps, \
             f"Node {node['id']} has {len(node['timeseries'])} timesteps, expected {num_timesteps}"
+        assert len(node["ground_truth_series"]) == num_timesteps, \
+            f"Node {node['id']} ground_truth_series len={len(node['ground_truth_series'])} != {num_timesteps}"
+        assert len(node["imputed_series"]) == num_timesteps, \
+            f"Node {node['id']} imputed_series len={len(node['imputed_series'])} != {num_timesteps}"
+        assert len(node["mask_series"]) == num_timesteps, \
+            f"Node {node['id']} mask_series len={len(node['mask_series'])} != {num_timesteps}"
+        if node["is_simulated"]:
+            assert all(g is None for g in node["ground_truth_series"]), \
+                f"Simulated node {node['id']} must have null ground_truth_series"
+            assert all(m is True for m in node["mask_series"]), \
+                f"Simulated node {node['id']} must have all-true mask_series"
+        else:
+            assert all(isinstance(g, (int, float)) for g in node["ground_truth_series"]), \
+                f"Real node {node['id']} ground_truth_series must be numeric"
     # Verify edge attention sequence length
     for edge in payload["edges"]:
         assert len(edge["attention_sequence"]) == num_timesteps, \

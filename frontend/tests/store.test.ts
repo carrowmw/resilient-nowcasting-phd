@@ -16,6 +16,8 @@ beforeEach(() => {
     currentTimestep: 0,
     maxTimesteps: 95,
     isPlaying: false,
+    selectedNodeId: null,
+    attentionThreshold: 0.05,
   });
 });
 
@@ -112,5 +114,47 @@ describe('incrementTimestep', () => {
     useTimeStore.getState().setTimestep(3);
     useTimeStore.getState().incrementTimestep();
     expect(useTimeStore.getState().currentTimestep).toBe(0);
+  });
+});
+
+// ── setSelectedNodeId ────────────────────────────────────────────────────────
+
+describe('setSelectedNodeId', () => {
+  it('starts as null', () => {
+    expect(useTimeStore.getState().selectedNodeId).toBeNull();
+  });
+
+  it('sets a numeric id', () => {
+    useTimeStore.getState().setSelectedNodeId(42);
+    expect(useTimeStore.getState().selectedNodeId).toBe(42);
+  });
+
+  it('clears back to null', () => {
+    useTimeStore.getState().setSelectedNodeId(7);
+    useTimeStore.getState().setSelectedNodeId(null);
+    expect(useTimeStore.getState().selectedNodeId).toBeNull();
+  });
+});
+
+// ── setAttentionThreshold ────────────────────────────────────────────────────
+
+describe('setAttentionThreshold', () => {
+  it('defaults to 0.05', () => {
+    expect(useTimeStore.getState().attentionThreshold).toBeCloseTo(0.05);
+  });
+
+  it('accepts an in-range value', () => {
+    useTimeStore.getState().setAttentionThreshold(0.4);
+    expect(useTimeStore.getState().attentionThreshold).toBeCloseTo(0.4);
+  });
+
+  it('clamps below 0', () => {
+    useTimeStore.getState().setAttentionThreshold(-0.5);
+    expect(useTimeStore.getState().attentionThreshold).toBe(0);
+  });
+
+  it('clamps above 1', () => {
+    useTimeStore.getState().setAttentionThreshold(2);
+    expect(useTimeStore.getState().attentionThreshold).toBe(1);
   });
 });

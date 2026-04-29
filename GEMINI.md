@@ -48,16 +48,32 @@ You are an autonomous Machine Learning Agent operating within a containerized Li
 - A task is only considered 'Done' once the outcome has been recorded in EXPERIMENTS.md.
 - You are strictly forbidden from saying "The task is complete" or "I have finished" in your response unless you have already updated the ledger in the same turn.
 
-## 7. THE NORTH STARS (BACKEND_ARCHITECTURE.md, FRONTEND_ARCHITECTURE, MLOPS.md, & PHASES.md)
+## 7. THE NORTH STARS (NSTAR_BACKEND_ARCHITECTURE.md, NSTAR_FRONTEND_ARCHITECTURE, NSTAR_MLOPS.md, & NSTAR_PHASES.md)
 
 - The Blueprints: You have three global design documents.
-  1. Use `BACKEND_ARCHITECTURE.md` for any PyTorch module, tensor, or mathematical logic.
-  2. Use `FRONTEND_ARCHITECTURE.md` for any Next.js, Deck.gl, or geospatial UI logic.
-  3. Use `MLOPS.md` for any task involving training loops, Weights & Biases, Optuna, or Docker execution.
-  4. Use `PHASES.md` as your temporal anchor. You must strictly adhere to the constraints of the current Phase (e.g., do not write live API fetching logic if the project is currently in the Static Payload phase).
+  1. Use `NSTAR_BACKEND_ARCHITECTURE.md` for any PyTorch module, tensor, or mathematical logic.
+  2. Use `NSTAR_FRONTEND_ARCHITECTURE.md` for any Next.js, Deck.gl, or geospatial UI logic.
+  3. Use `NSTAR_MLOPS.md` for any task involving training loops, Weights & Biases, Optuna, or Docker execution.
+  4. Use `NSTAR_PHASES.md` as your temporal anchor. You must strictly adhere to the constraints of the current Phase (e.g., do not write live API fetching logic if the project is currently in the Static Payload phase).
 - Piecewise Execution: DO NOT attempt to build the entire system at once. You must only build the specific component requested in the user's prompt.
-- Strict Adherence: The constraints listed in BACKEND_ARCHITECTURE.md (especially regarding loss functions, tripwires, and data masking) are absolute. Do not substitute them with standard generic functions.
+- Strict Adherence: The constraints listed in NSTAR_BACKEND_ARCHITECTURE.md (especially regarding loss functions, tripwires, and data masking) are absolute. Do not substitute them with standard generic functions.
 
 ## 8. THE DESK CHECK MANDATE
 
 When asked to review mathematical logic, metrics, or loss functions, you are forbidden from simply saying "the logic looks correct." You MUST run a simulated "Desk Check." You must create a dummy scenario with extreme, unbalanced numbers (e.g., a batch of 100 vs a batch of 1, or an input tensor of exactly 0.0), trace the exact mathematical execution of the code, and prove that the final output matches the theoretical target.
+
+## 9. FILE ACCESS PROTOCOL (STRICT CONTEXT LIMITS)
+
+You are strictly forbidden from reading, listing (ls), or attempting to parse the contents of the following directories and file types: `wandb/`, `logs/`, `models/`, `.next/`, `.pytest_cache/`, `**pycache**/`, `_.parquet`, and `_.pt`.
+
+CRITICAL DATA BAN: The entire `data/` directory and frontend/public/data/ directory are absolutely off-limits. You must NEVER read ui_payload.json. It is a massive file that will instantly max out your context window. If you need to know the structure of the data, refer ONLY to the TypeScript interfaces in `frontend/src/types/payload.ts` or write a Python script to print df.head(). Do not pipe raw data into this chat.
+
+## 10. STRICT CONTAINER ISOLATION PARADIGM
+
+This project operates under a strict "Zero Host Download" rule. Your workspace directory on the host machine must remain clean.
+
+No Local Installs: You must NEVER run npm install or pip install directly on the host machine. All dependencies must be installed inside their respective Docker containers.
+
+Node Modules Quarantine: Frontend dependencies are managed via Docker anonymous volumes. If you need to install a new frontend package (e.g., `npm install d3`), you must execute it inside the running frontend container using `docker compose exec [service_name] npm install d3`.
+
+Verification: Do not attempt to verify installations by looking for a node_modules folder in the host's `frontend/` directory. It should not exist there. Verify by running commands inside the container.
