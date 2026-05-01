@@ -20,6 +20,6 @@ venv/
 *.parquet
 *.pt
 
-# Allow the browser-served static payload inside the Next.js public dir
-!frontend/public/data/
-!frontend/public/data/**
+# Allow the browser-served static payload inside the Next.js public dir REMOVED TEMPORARILY
+# !frontend/public/data/
+# !frontend/public/data/**

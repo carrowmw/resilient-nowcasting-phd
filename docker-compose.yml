@@ -7,13 +7,27 @@ services:
     container_name: my-ml-agent
     volumes:
       - .:/workspace
-    # Port mapping to allow the browser to access the app inside the container.
-    ports:
-      - "3000:3000"
     # Notice we don't even need the 'environment:' block anymore!
     # Compose passes the .env file automatically.
     stdin_open: true
     tty: true
+
+  # Isolated Frontend Environment
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: nextjs-frontend
+    volumes:
+      - ./frontend:/workspace/frontend
+      # ANONYMOUS VOLUME: Prevents node_modules from syncing back to the host
+      - /workspace/frontend/node_modules
+      - /workspace/frontend/.next
+    ports:
+      - "3000:3000"
+    working_dir: /workspace/frontend
+    # Command can be overridden here, but usually baked into Dockerfile.frontend
+    command: npm run dev
 
   # Run on GPU server for training.
   gpu-runner:

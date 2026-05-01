@@ -93,7 +93,7 @@ function buildLayers(
   });
 
   // ── Simulated-node layer (hollow ring) ─────────────────────────────────────
-  // FRONTEND_ARCHITECTURE.md §A: simulated nodes must be visually distinct.
+  // NSTAR_FRONTEND_ARCHITECTURE.md §A: simulated nodes must be visually distinct.
   // Deck.gl's stroked/filled flags are layer-wide, so we split into two layers.
   const simNodes = payload.nodes.filter((n) => n.is_simulated);
   const simLayer = new ScatterplotLayer<NodeEntry>({

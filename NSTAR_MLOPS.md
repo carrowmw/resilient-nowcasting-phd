@@ -22,6 +22,10 @@ This project adheres to a "Zero Host Download" rule. To prevent `npm` dependenci
 
 The agent writes sources code (.ts, .py, etc.) inside `agent-workspace`. Because both the agent and frontend containers share the ./frontend bind mount, code changes made by the agent are instantly synced to `frontend-dev`, triggering Next.js hot-reloads. The agent must NEVER run frontend execution commands (npm run dev) inside its own workspace.
 
+### The Sync or Sink Dependency Rule
+
+While Python's global pip install inside the agent-workspace does not pollute the host filesystem, it creates fatal ephemeral container drift. If a new Python package is required for the PyTorch pipeline, it must be installed using docker compose exec agent-workspace pip install <package>. Crucially, any dynamically installed package MUST be immediately appended to ./requirements.txt. Failure to sync dependencies will cause the headless GPU execution environment (Dockerfile.gpu) to fail fast with a ModuleNotFoundError during automated Optuna sweeps.
+
 ## 2. File Architecture
 
 We utilize a Centralized Configuration pattern. **No hyperparameters should be hardcoded in Python execution scripts.**

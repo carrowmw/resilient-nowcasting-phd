@@ -60,7 +60,7 @@ class DecoupledDecoders(nn.Module):
         theta_logits = forecast_logits[:, :, 1]
         pi_logits = forecast_logits[:, :, 2]
 
-        # Apply ZINB constraints (Tripwires from BACKEND_ARCHITECTURE.md)
+        # Apply ZINB constraints (Tripwires from NSTAR_BACKEND_ARCHITECTURE.md)
         eps = 1e-6
         pi = torch.sigmoid(pi_logits)
         mu = F.softplus(mu_logits) + eps
@@ -124,7 +124,7 @@ def compute_loss(imputed_features: torch.Tensor,
     Joint Loss: MSE for Imputation + ZINB NLL for Forecasting.
     """
     # 1. Imputation Loss (MSE)
-    # BACKEND_ARCHITECTURE.md: "strictly on the artificially masked nodes"
+    # NSTAR_BACKEND_ARCHITECTURE.md: "strictly on the artificially masked nodes"
     # Note: In a real scenario, we'd use a mask here.
     loss_impute = F.mse_loss(imputed_features, target_impute)
 
@@ -134,7 +134,7 @@ def compute_loss(imputed_features: torch.Tensor,
     # 3. Total Weighted Loss
     total_loss = (w_impute * loss_impute) + (w_forecast * loss_forecast)
 
-    # --- Tripwires (Rule 5 & BACKEND_ARCHITECTURE.md) ---
+    # --- Tripwires (Rule 5 & NSTAR_BACKEND_ARCHITECTURE.md) ---
     if torch.isnan(total_loss).any():
         # Print stats for debugging before crashing
         print(f"DEBUG: mu min={mu.min()}, max={mu.max()}")

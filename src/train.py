@@ -229,7 +229,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             loss, loss_impute, loss_forecast, _, _, _, _ = model(batch)
             loss.backward()
 
-            # CRITICAL SAFEGUARD: Gradient Clipping (from BACKEND_ARCHITECTURE.md)
+            # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step()
