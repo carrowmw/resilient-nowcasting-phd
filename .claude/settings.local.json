@@ -29,7 +29,8 @@
       "Bash(netstat -tlnp)",
       "Bash(awk '{print $2}')",
       "Bash(xargs -I{} readlink {})",
-      "Bash(curl -s http://localhost:3000/data/ui_payload.json)"
+      "Bash(curl -s http://localhost:3000/data/ui_payload.json)",
+      "Bash(docker compose *)"
     ]
   }
 }

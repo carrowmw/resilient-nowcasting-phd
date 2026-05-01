@@ -1,11 +1,9 @@
-# Plan: Phase 1 Analytics Route — Master-Detail Data Selection
+# Plan: Analytics Dashboard & Human-in-the-Loop Telemetry (Phase 1)
 
 **Phase Anchor:** `NSTAR_PHASES.md` → Phase 1 (Static Data Bridge ONLY). No live API.
-
-**North Stars consulted:** `NSTAR_BACKEND_ARCHITECTURE.md` (ZINB tripwires, softplus+eps),
-`NSTAR_FRONTEND_ARCHITECTURE.md` (defensive rendering, MUI stack),
-`NSTAR_MLOPS.md` (container isolation, anonymous volume),
-`NSTAR_PHASES.md` (Phase 1 constraints).
+**North Stars consulted:** `NSTAR_FRONTEND_ARCHITECTURE.md`, `NSTAR_BACKEND_ARCHITECTURE.md`, `NSTAR_PHASES.md`
+**Date:** 2026-05-01
+**Branch:** `main` (auto-commit rollback point already created: `a207d08`)
 
 ---
 
@@ -13,197 +11,339 @@
 
 | Component | Location | Status |
 |:---|:---|:---|
-| Monolithic payload | `frontend/public/data/ui_payload.json` | Exists, served at `/data/ui_payload.json` |
-| `export_ui_payload.py` | `src/export_ui_payload.py` | Writes `data/processed/` (stale path), needs update |
-| `MapVisualizer.tsx` | Fetches `/data/ui_payload.json` | Must migrate to `master_index.json` |
-| `NodeInspector.tsx` | Loads monolithic payload | Must migrate to per-node lazy fetch |
-| `payload.ts` | Has `ground_truth_series` on `NodeEntry` | Must restructure types |
-| Analytics route | Does not exist | New file |
+| Monolithic fetch | `MapVisualizer.tsx` line 207 | Fetches `/data/ui_payload.json` → must migrate to `/data/master_index.json` |
+| Monolithic fetch | `NodeInspector.tsx` line 193 | Fetches `/data/ui_payload.json` → must migrate to per-node lazy fetch |
+| Sharded data files | `frontend/public/data/` | `master_index.json` + `nodes/node_*.json` already exist (pre-generated) |
+| `export_ui_payload.py` | `src/` | Still writes to `data/processed/ui_payload.json`; must be refactored to write sharded output formally |
+| `payload.ts` types | `frontend/src/types/` | Has `ground_truth_series` / `imputed_series` on `NodeEntry` → must restructure |
+| Analytics route | — | Does not exist |
+| Telemetry API | — | Does not exist |
+| Floating nav button | `MapScene.tsx` | Does not exist |
 
 ---
 
-## Pre-flight (CLAUDE.md §1 — Safety First)
+## Step 1 — Telemetry Pipe (Error Catching)
 
-1. **Branch confirmation:** This task creates significant new files across both frontend and backend. Confirm whether to stay on `main` or cut a branch (Rule 6 Branching Protocol).
-2. **Auto-commit rollback point** before any multi-file changes:
-   `git add . && git commit -m "Auto-commit before Analytics Route (Phase 1)"`
+### 1a. API Route: `frontend/src/app/api/log/route.ts`
+
+A lightweight Next.js App Router `POST` handler. Accepts a JSON body, prepends a UTC timestamp,
+and **appends** (never overwrites) to `/workspace/frontend_runtime_errors.log` using Node's `fs.appendFileSync`.
+
+```typescript
+// POST /api/log
+// Body: { type: string, message: string, source?: string, stack?: string }
+// Writes one JSON line per call to /workspace/frontend_runtime_errors.log
+```
+
+**Tripwire:** The route must return `405 Method Not Allowed` on non-POST requests (no GET handler,
+preventing log-flooding via browser prefetch).
+
+### 1b. Global Error Listener in `layout.tsx`
+
+Since `layout.tsx` is a **Server Component**, the listeners must be injected via a new small
+**Client Component** (`GlobalErrorReporter`) declared in the same file or a nearby file:
+
+```typescript
+"use client";
+export function GlobalErrorReporter() {
+  useEffect(() => {
+    const post = (payload: object) =>
+      fetch("/api/log", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload) }).catch(() => {/* silent — the logger must not itself throw */});
+
+    const onError = (event: ErrorEvent) =>
+      post({ type: "onerror", message: event.message, source: event.filename, stack: event.error?.stack });
+
+    const onUnhandled = (event: PromiseRejectionEvent) =>
+      post({ type: "unhandledrejection", message: String(event.reason), stack: event.reason?.stack });
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onUnhandled);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandled);
+    };
+  }, []);
+  return null;
+}
+```
+
+`layout.tsx` renders `<GlobalErrorReporter />` inside `<body>` above `{children}`.
 
 ---
 
-## Step 1 — Backend Data Sharding (`src/export_ui_payload.py`)
+## Step 2 — Backend Data Sharding (`src/export_ui_payload.py`)
 
-### 1a. New Output Schema Design
+The sharded files already exist on disk (generated in a prior session). This step formally
+refactors the script to make it the authoritative source.
 
-**`frontend/public/data/master_index.json`** — lightweight; used by the map and analytics sidebar navigation:
+### 2a. New Output Constants
+
+Remove `OUTPUT_PATH`. Add:
+
+```python
+MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
+NODES_DIR         = "frontend/public/data/nodes"
+```
+
+### 2b. Capture `theta` per timestep
+
+Add a new accumulator alongside `timeseries_data`:
+
+```python
+theta_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
+```
+
+In the inference loop, after `theta: torch.Tensor = result["theta"][0]`:
+
+```python
+# ZINB non-negative tripwires (Offensive Programming)
+assert (mu    > 0).all(), f"t={t}: ZINB tripwire — mu has non-positive values: {mu.min()}"
+assert (theta > 0).all(), f"t={t}: ZINB tripwire — theta has non-positive values: {theta.min()}"
+for node_id in range(num_nodes_total):
+    theta_data[node_id].append(round(float(theta[node_id]), 4))
+```
+
+### 2c. Build 1-hop edge lookup (post-loop)
+
+After the inference loop, construct `node_edges` dict mapping:
+`node_id → list[{"neighbor_id", "direction", "attention_sequence"}]`
+
+Direction is `"outgoing"` if `edge[0] == node_id`, else `"incoming"`.
+
+### 2d. Per-node JSON schema (`nodes/node_{id}.json`)
+
 ```jsonc
 {
-  "metadata": { /* same 9-field block as before */ },
-  "nodes": [
-    {
-      "id": 0, "location_name": "...", "lat": ..., "lon": ..., "is_simulated": false,
-      "timeseries": [{ "t": 0, "prediction": 12.3, "uncertainty": 4.1 }, ...]
-      // NO ground_truth_series / imputed_series / mask_series — those are in per-node files
-    }
-  ],
+  "id": 0, "location_name": "...", "lat": ..., "lon": ..., "is_simulated": false,
+  "zinb_series": [{ "t": 0, "mu": 12.3, "theta": 5.1, "std_dev": 4.1 }],
+  "ground_truth_series": [12.0, 14.5, ..., null],
+  "imputed_series": [11.8, 14.2, ...],
+  "mask_series": [false, true, ...],
+  "edges_1hop": [{ "neighbor_id": 3, "direction": "outgoing", "attention_sequence": [...] }]
+}
+```
+
+### 2e. Master index JSON schema (`master_index.json`)
+
+```jsonc
+{
+  "metadata": { /* same 9-field block */ },
+  "nodes": [{ "id": 0, "location_name": "...", "lat": ..., "lon": ..., "is_simulated": false,
+               "timeseries": [{ "t": 0, "prediction": 12.3, "uncertainty": 4.1 }] }],
   "edges": [{ "source": 0, "target": 1, "attention_sequence": [...] }]
 }
 ```
 
-**`frontend/public/data/nodes/node_{id}.json`** — deep per-node analytics data:
-```jsonc
-{
-  "id": 0, "location_name": "...", "lat": ..., "lon": ..., "is_simulated": false,
-  "zinb_series": [
-    { "t": 0, "mu": 12.3, "theta": 5.1, "std_dev": 4.1 }  // theta is NEW
-  ],
-  "ground_truth_series": [12.0, 14.5, ..., null],   // null for simulated nodes
-  "imputed_series": [11.8, 14.2, ...],
-  "mask_series": [false, true, ...],
-  "edges_1hop": [
-    {
-      "neighbor_id": 3,
-      "direction": "outgoing",       // this node is the source
-      "attention_sequence": [0.12, 0.15, ...]
-    }
-  ]
-}
+### 2f. NaN assertions before each write
+
+```python
+for entry in node_data["zinb_series"]:
+    assert not math.isnan(entry["mu"]),     f"NaN in node {node_id} zinb mu at t={entry['t']}"
+    assert not math.isnan(entry["theta"]),  f"NaN in node {node_id} zinb theta at t={entry['t']}"
+    assert not math.isnan(entry["std_dev"]),f"NaN in node {node_id} zinb std_dev at t={entry['t']}"
+for v in node_data["imputed_series"]:
+    assert not math.isnan(v), f"NaN in node {node_id} imputed_series"
 ```
 
-### 1b. Changes to `export_ui_payload.py`
+### 2g. Desk Check — ZINB Tripwire (CLAUDE.md §8)
 
-1. **Fix output path**: Change `OUTPUT_PATH` constant → write sharded outputs to
-   `frontend/public/data/master_index.json` and `frontend/public/data/nodes/node_{id}.json`.
-   Remove `OUTPUT_PATH` global; use two new constants:
-   - `MASTER_INDEX_PATH = "frontend/public/data/master_index.json"`
-   - `NODES_DIR = "frontend/public/data/nodes"`
+| Scenario | mu value | Tripwire fires? |
+|:---|:---|:---|
+| softplus(3.0) + eps | 3.049 > 0 ✓ | No |
+| softplus(0.0) + eps | 0.693 + ε > 0 ✓ | No |
+| Unclamped 0.0 | 0.0 NOT > 0 | **Yes — crashes immediately** |
+| NaN from degenerate grad | NaN NOT > 0 | **Yes — caught by existing `assert not torch.isnan(mu)`** |
 
-2. **Capture `theta` per node per timestep**: Add a new accumulator alongside `timeseries_data`:
-   ```python
-   theta_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
-   ```
-   In the inference loop, after `theta: torch.Tensor = result["theta"][0]`, append to `theta_data`.
-
-3. **ZINB non-negative tripwires (Offensive Programming, per task spec)**:
-   In the inference loop, immediately after computing `mu` and `theta`:
-   ```python
-   assert (mu > 0).all(), f"t={t}: ZINB tripwire — mu has non-positive values: {mu.min()}"
-   assert (theta > 0).all(), f"t={t}: ZINB tripwire — theta has non-positive values: {theta.min()}"
-   ```
-   These are guaranteed by the model's `F.softplus + eps` but we assert explicitly before export.
-
-4. **Build 1-hop edge lookup**: After the inference loop, construct a dict mapping each
-   `node_id → list of {"neighbor_id", "direction", "attention_sequence"}` using
-   `edge_index_cached` and `edge_attention_data`. Direction is `"outgoing"` if
-   `edge[0] == node_id`, else `"incoming"`.
-
-5. **NaN assertion on final output values**: Before writing each `node_{id}.json`, assert:
-   ```python
-   for entry in node_data["zinb_series"]:
-       assert not math.isnan(entry["mu"]),    f"NaN in node {node_id} zinb_series mu at t={entry['t']}"
-       assert not math.isnan(entry["theta"]), f"NaN in node {node_id} zinb_series theta at t={entry['t']}"
-       assert not math.isnan(entry["std_dev"]),f"NaN in node {node_id} zinb_series std_dev at t={entry['t']}"
-   for v in node_data["imputed_series"]:
-       assert not math.isnan(v), f"NaN in node {node_id} imputed_series"
-   ```
-
-6. **Write `master_index.json`** (single file).
-
-7. **Write `node_{id}.json`** in a loop (one file per node).
-   `os.makedirs(NODES_DIR, exist_ok=True)` before the loop.
-
-8. **Existing `ui_payload.json`** generation is removed (task spec: "stop generating a single
-   monolithic JSON"). The `frontend/public/data/ui_payload.json` file will become stale —
-   it remains on disk but is no longer referenced by the updated frontend code.
-
-### 1c. Desk Check — ZINB Tripwire (per CLAUDE.md §8)
-
-| Scenario | Input | Expected | Tripwire fires? |
-|:---|:---|:---|:---|
-| Model output softplus(x=3.0)+eps | mu = softplus(3.0)+1e-6 = 3.049 | > 0 ✓ | No |
-| Model output softplus(x=0)+eps | mu = softplus(0)+1e-6 = 0.693+1e-6 > 0 ✓ | > 0 ✓ | No |
-| Hypothetical unclamped 0.0 | mu = 0.0 | FAIL | Yes → crash immediately |
-| NaN from degenerate gradient | mu = NaN | FAIL | Yes → existing `assert not torch.isnan(mu).any()` catches first |
-
-Conclusion: the tripwire correctly passes all valid model outputs and crashes on pathological values.
+All valid model outputs pass. Pathological values crash immediately. ✓
 
 ---
 
-## Step 2 — Frontend Types (`frontend/src/types/payload.ts`)
+## Step 3 — Cross-View Navigation (Floating Button)
 
-Restructure into two distinct schemas:
+Add a Material UI `Fab` (Floating Action Button) to `MapScene.tsx` linking to `/analytics`.
+
+```tsx
+// Bottom-right corner, above the TimeSlider
+import Fab from '@mui/material/Fab';
+import BarChartIcon from '@mui/icons-material/BarChart';
+import Link from 'next/link';
+
+<Link href="/analytics" style={{ position: 'absolute', bottom: 96, right: 24, zIndex: 20 }}>
+  <Fab size="medium" aria-label="Open analytics" sx={{ bgcolor: 'rgba(30,30,30,0.9)', color: '#60a5fa' }}>
+    <BarChartIcon />
+  </Fab>
+</Link>
+```
+
+`MapScene.tsx` is already a Client Component (`"use client"`), so no wrapper change needed.
+
+---
+
+## Step 4 — Master-Detail Analytics Layout
+
+### 4a. New file: `frontend/src/app/analytics/page.tsx`
+
+Client Component (`"use client"`). Fetches `master_index.json` once on mount.
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────┐
+│  AppBar: "NSTAR Analytics"          [← Back to Map]   │
+├──────────────────────────────────────────────────────┤
+│  [Omnibar — filter by location name or node ID]       │
+├──────────────────────────────────────────────────────┤
+│  MUI DataGrid (virtualized, ~40vh, multi-select)      │
+│  Columns: id | location_name | is_simulated |         │
+│           avg_μ | max_μ | avg_σ                       │
+├──────────────────────────────────────────────────────┤
+│  MUI Tabs                                             │
+│  [ Tab 1: Forecast Variance ] [ Tab 2: — ] [Tab 3:—]  │
+├──────────────────────────────────────────────────────┤
+│  Tab panel content (fills remaining height)           │
+└──────────────────────────────────────────────────────┘
+```
+
+### 4b. Omnibar
+
+A controlled MUI `TextField` with `variant="outlined"`, `placeholder="Filter nodes…"`.
+Filters the DataGrid rows client-side on each keystroke by matching `location_name` (case-insensitive
+`includes`) or exact `id` match. Zero external deps.
+
+### 4c. DataGrid columns (computed from `master_index.json`)
+
+| field | headerName | type |
+|:---|:---|:---|
+| `id` | ID | number |
+| `location_name` | Location | string |
+| `is_simulated` | Simulated | boolean (checkmark render) |
+| `avg_mu` | Avg μ | number (4dp), computed from `node.timeseries` |
+| `max_mu` | Peak μ | number (4dp) |
+| `avg_sigma` | Avg σ | number (4dp) |
+
+Default sort: `avg_mu` descending.
+Multi-select via checkbox column (`checkboxSelection={true}`).
+Selected row IDs → `selectedNodeIds: number[]` state drives all tab panels.
+
+### 4d. Tabs scaffold
+
+```tsx
+<Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
+  <Tab label="Forecast Variance" value={0} />
+  <Tab label="Network Influence"  value={1} disabled />
+  <Tab label="Self-Healing Log"   value={2} disabled />
+</Tabs>
+```
+
+Tabs 2 and 3 are disabled (not yet implemented). They will be enabled in future steps.
+
+---
+
+## Step 5 — Tab 1: Forecast Variance
+
+### 5a. Data contract
+
+Tab 1 only uses `master_index.json` data (already loaded). No per-node file fetch needed.
+
+For each selected node, the `timeseries` array provides:
+- `t`: timestep index
+- `prediction`: μ (ZINB mean)
+- `uncertainty`: σ = std_dev (already computed as √(μ + μ²/θ) in the exporter)
+
+**CI derivation:**
+```
+ci_lower = max(0, prediction - 1.96 × uncertainty)
+ci_upper = prediction + 1.96 × uncertainty
+```
+
+### 5b. Chart implementation (Recharts `ComposedChart`)
+
+```tsx
+<ComposedChart data={chartData}>
+  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+  <XAxis dataKey="t" />
+  <YAxis />
+  <Tooltip />
+  <Legend />
+  {/* CI band */}
+  <Area type="monotone" dataKey="ci_upper" fill="#3b82f680" stroke="none" />
+  <Area type="monotone" dataKey="ci_lower" fill="#0f172a"   stroke="none" />
+  {/* μ line */}
+  <Line type="monotone" dataKey="prediction" stroke="#60a5fa" dot={false} strokeWidth={2} />
+</ComposedChart>
+```
+
+When multiple nodes are selected: each node gets its own `<Line>` keyed by `node_id`.
+CI bands are shown for all selected nodes (each with a distinct hue offset).
+
+**Defensive:** If `selectedNodeIds.length === 0`, render `<Alert severity="info">Select one or more nodes from the table above to plot their forecast variance.</Alert>`.
+
+### 5c. Recharts CI band technique
+
+Recharts `Area` requires a single numeric range. The standard pattern for a CI band is:
+1. Build `chartData` with both `ci_lower` and `ci_upper` fields.
+2. First `Area` plots `ci_upper` with fill color, stroke none.
+3. Second `Area` plots `ci_lower` with the **background color** as fill (effectively clips the bottom).
+
+This is a known Recharts idiom — no custom shape renderers needed.
+
+---
+
+## Step 6 — TypeScript Types (`frontend/src/types/payload.ts`)
+
+Add new interfaces without breaking existing code:
 
 ```typescript
-// --- MAP SCHEMA (master_index.json) ---
-
-export interface TimestepEntry {       // unchanged
-  t: number;
-  prediction: number;   // μ
-  uncertainty: number;  // std_dev
-}
-
-export interface NodeEntry {           // simplified — NO imputation fields
-  id: number;
-  location_name: string;
-  lat: number;
-  lon: number;
-  is_simulated: boolean;
-  timeseries: TimestepEntry[];
-}
-
-export interface EdgeEntry { /* unchanged */ }
-
-export interface MasterIndex {        // replaces UIPayload
-  metadata: PayloadMetadata;
-  nodes: NodeEntry[];
-  edges: EdgeEntry[];
-}
-
-// Keep UIPayload as alias for backward compat in tests
-export type UIPayload = MasterIndex;
-
-// --- PER-NODE ANALYTICS SCHEMA (nodes/node_{id}.json) ---
-
-export interface ZINBEntry {           // NEW — has theta
-  t: number;
-  mu: number;
-  theta: number;
-  std_dev: number;
-}
-
-export interface HopEdge {             // NEW — 1-hop edge record
-  neighbor_id: number;
-  direction: "outgoing" | "incoming";
-  attention_sequence: number[];
-}
-
-export interface NodeDetailPayload {   // NEW — deep per-node data
-  id: number;
-  location_name: string;
-  lat: number;
-  lon: number;
-  is_simulated: boolean;
+// NEW: per-node analytics file
+export interface ZINBEntry   { t: number; mu: number; theta: number; std_dev: number; }
+export interface HopEdge     { neighbor_id: number; direction: "outgoing" | "incoming"; attention_sequence: number[]; }
+export interface NodeDetailPayload {
+  id: number; location_name: string; lat: number; lon: number; is_simulated: boolean;
   zinb_series: ZINBEntry[];
   ground_truth_series: (number | null)[];
   imputed_series: number[];
   mask_series: boolean[];
   edges_1hop: HopEdge[];
 }
+
+// UPDATED: NodeEntry no longer carries imputed/GT/mask (those are in NodeDetailPayload)
+export interface NodeEntry {
+  id: number; location_name: string; lat: number; lon: number; is_simulated: boolean;
+  timeseries: TimestepEntry[];
+}
+
+// ADDED: top-level alias for master_index.json
+export interface MasterIndex { metadata: PayloadMetadata; nodes: NodeEntry[]; edges: EdgeEntry[]; }
+
+// KEPT for backward compatibility (NodeInspector currently references UIPayload)
+export type UIPayload = MasterIndex;
 ```
+
+`NodeInspector.tsx` will be updated in Step 7 to use `NodeDetailPayload` via a lazy fetch.
 
 ---
 
-## Step 3 — Update Existing Frontend Components
+## Step 7 — Migrate Existing Components to Sharded Data
 
-### 3a. `MapVisualizer.tsx`
-Single-line change: `fetch("/data/ui_payload.json")` → `fetch("/data/master_index.json")`.
-The `UIPayload` type alias (= `MasterIndex`) means no other code changes needed here.
+### 7a. `MapVisualizer.tsx`
 
-### 3b. `NodeInspector.tsx`
-Replace the monolithic-payload fetch with a lazy per-node fetch:
+One-line change (line 207):
+```typescript
+// BEFORE:
+const res = await fetch("/data/ui_payload.json");
+// AFTER:
+const res = await fetch("/data/master_index.json");
+```
+
+`UIPayload = MasterIndex`, so no other types need to change.
+
+### 7b. `NodeInspector.tsx`
+
+Replace the monolithic `ui_payload.json` fetch with a lazy per-node fetch:
 
 ```typescript
-// OLD: fetches the full ui_payload.json once on mount, then finds the node
-// NEW: fetches /data/nodes/node_{id}.json whenever selectedNodeId changes
 const [nodeDetail, setNodeDetail] = useState<NodeDetailPayload | null>(null);
 useEffect(() => {
   if (selectedNodeId === null) { setNodeDetail(null); return; }
@@ -214,187 +354,72 @@ useEffect(() => {
 }, [selectedNodeId]);
 ```
 
-Update `NodeChart` to use `nodeDetail.zinb_series[t].mu` as `prediction` and
-`nodeDetail.zinb_series[t].std_dev` as `uncertainty` for the stats display row.
-The chart itself (`ground_truth_series`, `imputed_series`, `mask_series`) is unchanged.
+Update display fields: `nodeDetail.zinb_series[currentTimestep].mu` and `.std_dev`.
+The existing `NodeChart` displays `ground_truth_series`, `imputed_series`, `mask_series` from `nodeDetail`
+— same field names, so the SVG rendering code is unchanged.
+
+Remove the large `UIPayload` state and the `fetched` ref guard (no longer needed).
 
 ---
 
-## Step 4 — Package Installation (Manual User Action Required)
+## Step 8 — Package Installation (Manual User Action Required)
 
-**The agent container does not have `docker` available.** The user must run these commands
-on the host machine (where `docker compose` is accessible) **before** the frontend TypeScript
-compilation step. Service name is `frontend-dev`.
+**The agent cannot run `docker` commands.** The user must run these on the host:
 
 ```bash
-docker compose exec frontend-dev npm install @mui/material @emotion/react @emotion/styled @mui/icons-material
-docker compose exec frontend-dev npm install @mui/x-data-grid
-docker compose exec frontend-dev npm install recharts
-docker compose exec frontend-dev npm install react-force-graph-2d
+docker compose exec frontend-dev npm install recharts @mui/x-data-grid
+docker compose exec frontend-dev npm install @mui/icons-material
 ```
 
-Verify inside the container (NOT by checking host `node_modules`):
+MUI core + emotion are already installed (MapVisualizer uses them).
+
+**Verify (inside container, not via host node_modules):**
 ```bash
-docker compose exec frontend-dev node -e "require('@mui/x-data-grid'); console.log('OK')"
+docker compose exec frontend-dev node -e "require('recharts'); require('@mui/x-data-grid'); console.log('OK')"
 ```
-
-The agent will write `package.json` references for these deps alongside code changes,
-to document intent even if the anonymous volume prevents host verification.
 
 ---
 
-## Step 5 — New Analytics Route (`frontend/src/app/analytics/nodes/[id]/page.tsx`)
+## Step 9 — Validation Checkpoints
 
-### 5a. File structure
-```
-frontend/src/app/analytics/
-  nodes/
-    [id]/
-      page.tsx          ← Single new file; all tab content co-located here
-```
-
-### 5b. Layout design
-Client Component (`"use client"`). Uses `useParams()` from `next/navigation` to read `id`.
-On mount: fetches `master_index.json` (for sidebar node list) + `node_{id}.json` (for tabs).
-
-MUI layout:
-```
-┌─────────────────────────────────────────────────────────┐
-│  AppBar: "Analytics — {location_name}"   [☰] [←Back]    │
-├──────────────────┬──────────────────────────────────────┤
-│  Drawer sidebar  │  Main content                         │
-│  (collapsible    │  ┌────────────────────────────────┐  │
-│  IconButton)     │  │ Tab 1 │ Tab 2 │ Tab 3          │  │
-│                  │  ├────────────────────────────────┤  │
-│  - Node list     │  │ DataGrid (top 50%)              │  │
-│    from          │  ├────────────────────────────────┤  │
-│    master_index  │  │ Chart / Graph (bottom 50%)      │  │
-│  - Each item     │  └────────────────────────────────┘  │
-│    links to      │                                       │
-│    /analytics/   │                                       │
-│    nodes/{id}    │                                       │
-└──────────────────┴──────────────────────────────────────┘
-```
-
-AppBar contains a `←` back link to `/` (the map view) and a hamburger icon to toggle the drawer.
-Drawer uses MUI `Drawer` with `variant="permanent"` on >= md breakpoints, `"temporary"` on mobile.
-
-### 5c. Tab 1 — Forecast Variance
-
-**DataGrid columns:** `t` (timestep, filterable), `mu` (4dp), `theta` (4dp), `std_dev` (4dp),
-`ci_lower` (mu − 2·std_dev, 4dp), `ci_upper` (mu + 2·std_dev, 4dp).
-
-**State:** `selectedRows: Set<number>` (row indices). Default: all rows selected (show full chart).
-
-**Chart:** Recharts `ComposedChart`:
-- `Line` for `mu` (blue, solid)
-- `Area` for CI band `[ci_lower, ci_upper]` (blue, 20% opacity)
-- X-axis: timestep t
-- Y-axis: traffic count units
-- When rows selected in DataGrid → X domain restricted to `[min(selected_t), max(selected_t)]`
-
-Defensive: if `zinb_series` is empty, show "No ZINB data available" message.
-
-### 5d. Tab 2 — Network Influence
-
-**DataGrid columns:** `neighbor_id`, `direction` ("out"/"in"), `location_name` (looked up from
-master_index nodes), `attention_at_t` (current timestep's α, sortable), `avg_attention` (mean α
-over all 96 timesteps), `max_attention`.
-
-Default sort: `attention_at_t` descending.
-
-**State:** `selectedNeighbor: number | null` (neighbor_id).
-
-**Force graph:** `react-force-graph-2d` loaded via `dynamic()` with `ssr: false`.
-- Nodes: center node (id = current node, fixed position) + all 1-hop neighbors
-- Edges: width and opacity proportional to `attention_at_t` (attention at current timestep from store)
-- Selected neighbor from DataGrid → node highlighted (different color / glow ring)
-- Hovering graph node → tooltip with `location_name`
-
-Defensive: if `edges_1hop` is empty, show "No 1-hop edges found" message.
-
-Current timestep sync: read `currentTimestep` from Zustand store.
-
-### 5e. Tab 3 — Self-Healing Log
-
-**DataGrid rows:** Only timesteps where `mask_series[t] === true` (these are the "masking events").
-**Columns:** `t`, `ground_truth` (null shown as "—"), `imputed`, `delta` (imputed − ground_truth,
-null if simulated).
-
-**State:** `focusTStep: number | null` — the selected timestep from the DataGrid.
-
-**Chart:** Recharts `LineChart` with two series:
-- `ground_truth_series` (blue, skip null gaps with `connectNulls: false`)
-- `imputed_series` (orange)
-- When a row is selected → X domain zooms to `[focusTStep − 8, focusTStep + 8]`, clamped to [0, T-1]
-- Vertical `ReferenceLine` at `focusTStep` to highlight the selected masked event
-- Shaded `ReferenceArea` over all masked timesteps (faint red band)
-
-Defensive: if `mask_series` has no `true` values, show "No masking events in this payload" message.
-
----
-
-## Step 6 — Validation
-
-### 6a. Backend (Python)
-Run in agent container:
-```bash
-python src/export_ui_payload.py --start_date 2024-05-09 --end_date 2024-05-11
-```
-Confirm:
-- `frontend/public/data/master_index.json` written without assertion failures.
-- `frontend/public/data/nodes/` directory created with one file per node.
-- Schema assertions: `len(node_0.zinb_series) == 96`, etc.
-- ZINB tripwire assertions pass (no positive violations expected from trained model).
-
-### 6b. Frontend TypeScript
-Run via host or agent:
-```bash
-cd frontend && npx tsc --noEmit
-```
-Must return 0 errors.
-
-### 6c. Visual verification
-Navigate to `http://localhost:3000` — existing map view still works.
-Navigate to `http://localhost:3000/analytics/nodes/0` — new analytics page renders with 3 tabs.
-Verify DataGrid row selection drives chart updates for each tab.
-
----
-
-## Step 7 — EXPERIMENTS.md Ledger Update
-
-Per CLAUDE.md §6, append a row upon completion of a successful rendering.
-**The task is not complete until this row is written.**
-
----
-
-## Files Created/Modified Summary
-
-| Path | Type | Change |
+| Check | Command | Pass criterion |
 |:---|:---|:---|
-| `src/export_ui_payload.py` | edit | Stop writing monolithic; write `master_index.json` + per-node `node_{id}.json`; add theta capture; ZINB tripwires |
-| `frontend/src/types/payload.ts` | edit | Add `ZINBEntry`, `HopEdge`, `NodeDetailPayload`; simplify `NodeEntry`; add `MasterIndex` alias |
-| `frontend/src/components/MapVisualizer.tsx` | edit | Fetch `master_index.json` instead of `ui_payload.json` |
-| `frontend/src/components/NodeInspector.tsx` | edit | Replace monolithic fetch with lazy per-node fetch of `node_{id}.json` |
-| `frontend/src/app/analytics/nodes/[id]/page.tsx` | **new** | Analytics route with MUI Drawer + Tabs + 3 DataGrid/chart panes |
-| `EXPERIMENTS.md` | edit | Append ledger row on completion |
+| Python sharding | `python src/export_ui_payload.py` | No assertion failures; files written to `frontend/public/data/` |
+| TypeScript types | `docker compose exec frontend-dev npx tsc --noEmit` | 0 errors |
+| Map route | `http://localhost:3000/` | Map renders, floating analytics button visible |
+| Analytics route | `http://localhost:3000/analytics` | AppBar, Omnibar, DataGrid all render; no console errors |
+| Tab 1 | Select 1+ rows in DataGrid | Recharts chart renders μ line + CI band |
+| Telemetry | Trigger JS error in console | Entry appears in `/workspace/frontend_runtime_errors.log` |
 
 ---
 
-## Risks & Tripwires
+## Step 10 — EXPERIMENTS.md Ledger Update
 
-- **`theta` shape**: `result["theta"]` is `[1, num_nodes_total]` (same shape as `mu`). Verify this
-  matches before using; the assert on imputed_features shape will catch broader mismatches.
-- **`react-force-graph-2d` SSR crash**: Must use `dynamic({ ssr: false })`. Failure to do so will
-  cause a Next.js server-side crash on `window` access.
-- **MUI emotion cache**: In Next.js App Router with RSC, `@emotion/react` requires a client-side
-  registry. Since the analytics page is a full Client Component (`"use client"`), the default
-  emotion setup works without a server registry.
-- **`useParams` in Next.js 16**: `params` as a `Promise` applies to Server Components only.
-  `useParams()` from `next/navigation` in a Client Component returns the values synchronously —
-  no await needed.
-- **Node file count**: With ~20 real nodes + 5 simulated = ~25 files. File I/O in the export
-  script adds negligible overhead vs. 96 forward passes.
+Per CLAUDE.md §6, append a row upon successful rendering confirmation. **Task is not complete until this row is written.**
+
+---
+
+## Files to Create / Modify
+
+| Path | Action | Description |
+|:---|:---|:---|
+| `frontend/src/app/api/log/route.ts` | **CREATE** | Telemetry POST handler → appends to `frontend_runtime_errors.log` |
+| `frontend/src/app/layout.tsx` | **EDIT** | Add `GlobalErrorReporter` client component |
+| `src/export_ui_payload.py` | **EDIT** | Write sharded `master_index.json` + `node_{id}.json`; add theta; ZINB tripwires |
+| `frontend/src/types/payload.ts` | **EDIT** | Add `ZINBEntry`, `HopEdge`, `NodeDetailPayload`, `MasterIndex`; simplify `NodeEntry` |
+| `frontend/src/components/MapScene.tsx` | **EDIT** | Add MUI Fab linking to `/analytics` |
+| `frontend/src/components/MapVisualizer.tsx` | **EDIT** | Fetch `master_index.json` instead of `ui_payload.json` |
+| `frontend/src/components/NodeInspector.tsx` | **EDIT** | Replace monolithic fetch with lazy per-node fetch of `node_{id}.json` |
+| `frontend/src/app/analytics/page.tsx` | **CREATE** | Omnibar + DataGrid + Tabs layout; Tab 1 Recharts Forecast Variance |
+| `EXPERIMENTS.md` | **EDIT** | Append ledger row on successful rendering |
+
+---
+
+## Human-in-the-Loop Pause Points
+
+1. **After Step 3 (navigation button):** Pause — ask user to confirm floating button renders.
+2. **After Step 4 (Analytics layout):** Pause — ask user to confirm Omnibar + DataGrid render.
+3. **After Step 5 (Tab 1 chart):** Pause — ask user to confirm chart renders and CI bands are visible.
 
 ---
 

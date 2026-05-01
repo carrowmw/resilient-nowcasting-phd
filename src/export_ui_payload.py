@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import csv
 import json
 import logging
 import math
@@ -53,7 +54,10 @@ logger = logging.getLogger(__name__)
 CHECKPOINT_PATH = "models/best_pipeline.pt"
 SENSORS_PATH = "data/traffic_sensors.json"
 PARQUET_PATH = "data/processed/master_dataset_15T.parquet"
-OUTPUT_PATH = "data/processed/ui_payload.json"
+MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
+NODES_DIR = "frontend/public/data/nodes"
+PLACES_CACHE_PATH = "data/external/places_cache_test.json"
+PLACES_TEMPLATE_PATH = "data/external/google_places_template.csv"
 
 HIDDEN_DIM = 64
 EMBEDDING_DIM = 32
@@ -177,6 +181,78 @@ def extract_timestep_attention(
     """
     last_slice = alpha[(seq_len - 1) * num_edges : seq_len * num_edges, :]  # [E, num_heads]
     return last_slice.mean(dim=-1)  # [E]
+
+
+# ---------------------------------------------------------------------------
+# Semantic tag helpers
+# ---------------------------------------------------------------------------
+
+def load_semantic_tags(
+    locations: List[str],
+    places_cache_path: str = PLACES_CACHE_PATH,
+    template_path: str = PLACES_TEMPLATE_PATH,
+) -> Dict[str, List[str]]:
+    """
+    Build a {location_name: [tag, ...]} mapping from two Places data sources.
+
+    Sources:
+      1. places_cache_test.json — live API features: commercial_density,
+         is_school_zone, highway_proximity.
+      2. google_places_template.csv — zone_type, nearby_poi_count.
+
+    Simulated nodes are not in either source and receive an empty list.
+    """
+    tags: Dict[str, List[str]] = {loc: [] for loc in locations}
+
+    # Source 1: Live Places API cache
+    if Path(places_cache_path).exists():
+        with open(places_cache_path) as f:
+            cache: Dict[str, Dict] = json.load(f)
+        for loc, feats in cache.items():
+            if loc not in tags:
+                continue
+            t = tags[loc]
+            cd = int(feats.get("commercial_density", 0))
+            if cd >= 15:
+                t.append("high_commercial_density")
+            elif cd >= 5:
+                t.append("medium_commercial_density")
+            elif cd > 0:
+                t.append("low_commercial_density")
+            if feats.get("is_school_zone"):
+                t.append("school_zone")
+            hp = int(feats.get("highway_proximity", 0))
+            if hp >= 15:
+                t.append("high_transit_density")
+            elif hp >= 5:
+                t.append("medium_transit_density")
+            elif hp > 0:
+                t.append("low_transit_density")
+
+    # Source 2: Template CSV (zone_type, nearby_poi_count)
+    if Path(template_path).exists():
+        with open(template_path, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                loc = row.get("location_id", "").strip()
+                if loc not in tags:
+                    continue
+                t = tags[loc]
+                zone = row.get("zone_type", "").strip()
+                if zone:
+                    t.append(zone.lower().replace(" ", "_") + "_zone")
+                try:
+                    poi = int(row.get("nearby_poi_count", 0) or 0)
+                except ValueError:
+                    poi = 0
+                if poi >= 20:
+                    t.append("high_poi_density")
+                elif poi >= 8:
+                    t.append("medium_poi_density")
+                elif poi >= 1:
+                    t.append("low_poi_density")
+
+    return tags
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +424,7 @@ def main() -> None:
     ground_truth_series: List[List] = [[] for _ in range(num_nodes_total)]
     imputed_series: List[List[float]] = [[] for _ in range(num_nodes_total)]
     mask_series: List[List[bool]] = [[] for _ in range(num_nodes_total)]
+    theta_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
     # edge_attention_data: filled once edge topology is known
     edge_attention_data: Dict[Tuple[int, int], List[float]] = {}
     edge_index_cached: torch.Tensor | None = None
@@ -399,17 +476,24 @@ def main() -> None:
                 result["mu"], result["theta"]
             )[0]  # [num_nodes_total]
 
+            # ZINB non-negative tripwires (Offensive Programming)
+            assert (mu > 0).all(), \
+                f"t={t}: ZINB tripwire — mu has non-positive values: {mu.min()}"
+            assert (theta > 0).all(), \
+                f"t={t}: ZINB tripwire — theta has non-positive values: {theta.min()}"
+
             # NaN tripwire on outputs
             assert not torch.isnan(mu).any(), f"t={t}: NaN in mu"
             assert not torch.isnan(std_dev).any(), f"t={t}: NaN in std_dev"
 
-            # Store per-node prediction & uncertainty
+            # Store per-node prediction, uncertainty, and theta
             for node_id in range(num_nodes_total):
                 timeseries_data[node_id].append({
                     "t": t,
                     "prediction": round(float(mu[node_id]), 4),
                     "uncertainty": round(float(std_dev[node_id]), 4),
                 })
+                theta_data[node_id].append(round(float(theta[node_id]), 4))
 
             # -------- Imputation analytics (length-96 arrays per node) --------
             # imputed_features: [1, num_nodes_total, seq_len, time_series_dim]
@@ -492,34 +576,59 @@ def main() -> None:
     logger.info("Inference loop complete.")
 
     # ------------------------------------------------------------------
-    # 8. Assemble JSON payload
+    # 8. Load semantic tags from Places cache + template CSV
     # ------------------------------------------------------------------
-    logger.info("Assembling JSON payload …")
+    logger.info("Loading semantic tags …")
+    semantic_tags = load_semantic_tags(real_location_names)
+    tagged_count = sum(1 for v in semantic_tags.values() if v)
+    logger.info(f"  {tagged_count}/{len(real_location_names)} sensors have semantic tags")
 
-    nodes_payload: List[Dict] = []
+    # ------------------------------------------------------------------
+    # 9. Build 1-hop edge lookup per node
+    # ------------------------------------------------------------------
+    logger.info("Building 1-hop edge lookup …")
+    assert edge_index_cached is not None, "TRIPWIRE: No edges accumulated — is the graph empty?"
+    num_edges: int = edge_index_cached.shape[1]
+    node_edges: Dict[int, List[Dict]] = {i: [] for i in range(num_nodes_total)}
+    for e in range(num_edges):
+        src = int(edge_index_cached[0, e])
+        tgt = int(edge_index_cached[1, e])
+        attn_seq = edge_attention_data.get((src, tgt), [])
+        node_edges[src].append({
+            "neighbor_id": tgt,
+            "direction": "outgoing",
+            "attention_sequence": attn_seq,
+        })
+        node_edges[tgt].append({
+            "neighbor_id": src,
+            "direction": "incoming",
+            "attention_sequence": attn_seq,
+        })
+
+    # ------------------------------------------------------------------
+    # 10. Build and write master_index.json
+    #     (lightweight: timeseries + semantic_tags only, no imputation arrays)
+    # ------------------------------------------------------------------
+    logger.info("Writing master_index.json …")
+    master_nodes: List[Dict] = []
     for meta in nodes_meta:
         node_id = meta["id"]
-        nodes_payload.append({
+        master_nodes.append({
             "id": node_id,
             "location_name": meta["location_name"],
             "lat": meta["lat"],
             "lon": meta["lon"],
             "is_simulated": meta["is_simulated"],
             "timeseries": timeseries_data[node_id],
-            "ground_truth_series": ground_truth_series[node_id],
-            "imputed_series": imputed_series[node_id],
-            "mask_series": mask_series[node_id],
+            "semantic_tags": semantic_tags.get(meta["location_name"], []),
         })
 
-    edges_payload: List[Dict] = []
-    for (src, tgt), attn_seq in edge_attention_data.items():
-        edges_payload.append({
-            "source": src,
-            "target": tgt,
-            "attention_sequence": attn_seq,
-        })
+    edges_payload: List[Dict] = [
+        {"source": src, "target": tgt, "attention_sequence": attn_seq}
+        for (src, tgt), attn_seq in edge_attention_data.items()
+    ]
 
-    payload = {
+    master_index: Dict = {
         "metadata": {
             "num_nodes": num_nodes_total,
             "num_real_nodes": num_nodes_real,
@@ -531,57 +640,85 @@ def main() -> None:
             "start_date": args.start_date,
             "end_date": args.end_date,
         },
-        "nodes": nodes_payload,
+        "nodes": master_nodes,
         "edges": edges_payload,
     }
 
-    # ------------------------------------------------------------------
-    # 9. Schema validation (fast assertions before writing)
-    # ------------------------------------------------------------------
-    assert len(payload["nodes"]) == num_nodes_total, "Node count mismatch in payload"
-    # Verify simulated nodes are present and flagged
-    sim_nodes_found = [n for n in payload["nodes"] if n["is_simulated"]]
+    # Schema assertions before write
+    assert len(master_index["nodes"]) == num_nodes_total, "Node count mismatch in master_index"
+    sim_nodes_found = [n for n in master_index["nodes"] if n["is_simulated"]]
     assert len(sim_nodes_found) == num_simulated, \
         f"Expected {num_simulated} simulated nodes, found {len(sim_nodes_found)}"
-    # Verify timeseries length
-    for node in payload["nodes"]:
+    for node in master_index["nodes"]:
         assert len(node["timeseries"]) == num_timesteps, \
-            f"Node {node['id']} has {len(node['timeseries'])} timesteps, expected {num_timesteps}"
-        assert len(node["ground_truth_series"]) == num_timesteps, \
-            f"Node {node['id']} ground_truth_series len={len(node['ground_truth_series'])} != {num_timesteps}"
-        assert len(node["imputed_series"]) == num_timesteps, \
-            f"Node {node['id']} imputed_series len={len(node['imputed_series'])} != {num_timesteps}"
-        assert len(node["mask_series"]) == num_timesteps, \
-            f"Node {node['id']} mask_series len={len(node['mask_series'])} != {num_timesteps}"
-        if node["is_simulated"]:
-            assert all(g is None for g in node["ground_truth_series"]), \
-                f"Simulated node {node['id']} must have null ground_truth_series"
-            assert all(m is True for m in node["mask_series"]), \
-                f"Simulated node {node['id']} must have all-true mask_series"
-        else:
-            assert all(isinstance(g, (int, float)) for g in node["ground_truth_series"]), \
-                f"Real node {node['id']} ground_truth_series must be numeric"
-    # Verify edge attention sequence length
-    for edge in payload["edges"]:
+            f"master_index node {node['id']} timeseries length mismatch"
+        assert isinstance(node["semantic_tags"], list), \
+            f"Node {node['id']} semantic_tags must be a list"
+    for edge in master_index["edges"]:
         assert len(edge["attention_sequence"]) == num_timesteps, \
-            f"Edge ({edge['source']},{edge['target']}) has wrong attention_sequence length"
+            f"Edge ({edge['source']},{edge['target']}) attention_sequence length mismatch"
 
+    os.makedirs(os.path.dirname(MASTER_INDEX_PATH), exist_ok=True)
+    with open(MASTER_INDEX_PATH, "w") as fh:
+        json.dump(master_index, fh, indent=2)
     logger.info(
-        f"Schema validation passed | "
-        f"nodes={num_nodes_total} | "
-        f"edges={len(edges_payload)} | "
-        f"timesteps={num_timesteps}"
+        f"master_index.json written  "
+        f"({os.path.getsize(MASTER_INDEX_PATH) / 1024:.1f} KB) | "
+        f"nodes={num_nodes_total} | edges={len(edges_payload)}"
     )
 
     # ------------------------------------------------------------------
-    # 10. Write output
+    # 11. Build and write per-node node_{id}.json
+    #     (deep data: zinb_series + imputation arrays + 1-hop edges)
     # ------------------------------------------------------------------
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    with open(OUTPUT_PATH, "w") as fh:
-        json.dump(payload, fh, indent=2)
+    logger.info(f"Writing {num_nodes_total} per-node files to {NODES_DIR}/ …")
+    os.makedirs(NODES_DIR, exist_ok=True)
 
-    file_size_mb = os.path.getsize(OUTPUT_PATH) / (1024 ** 2)
-    logger.info(f"Payload written to {OUTPUT_PATH}  ({file_size_mb:.2f} MB)")
+    for meta in nodes_meta:
+        node_id = meta["id"]
+
+        # Build zinb_series with per-timestep NaN tripwires
+        zinb_series: List[Dict] = []
+        for t_idx in range(num_timesteps):
+            entry: Dict = {
+                "t": t_idx,
+                "mu": timeseries_data[node_id][t_idx]["prediction"],
+                "theta": theta_data[node_id][t_idx],
+                "std_dev": timeseries_data[node_id][t_idx]["uncertainty"],
+            }
+            assert not math.isnan(entry["mu"]), \
+                f"NaN in node {node_id} zinb mu at t={t_idx}"
+            assert not math.isnan(entry["theta"]), \
+                f"NaN in node {node_id} zinb theta at t={t_idx}"
+            assert not math.isnan(entry["std_dev"]), \
+                f"NaN in node {node_id} zinb std_dev at t={t_idx}"
+            zinb_series.append(entry)
+
+        for v in imputed_series[node_id]:
+            assert not math.isnan(v), f"NaN in node {node_id} imputed_series"
+
+        node_data: Dict = {
+            "id": node_id,
+            "location_name": meta["location_name"],
+            "lat": meta["lat"],
+            "lon": meta["lon"],
+            "is_simulated": meta["is_simulated"],
+            "zinb_series": zinb_series,
+            "ground_truth_series": ground_truth_series[node_id],
+            "imputed_series": imputed_series[node_id],
+            "mask_series": mask_series[node_id],
+            "edges_1hop": node_edges[node_id],
+        }
+
+        node_path = os.path.join(NODES_DIR, f"node_{node_id}.json")
+        with open(node_path, "w") as fh:
+            json.dump(node_data, fh, indent=2)
+
+    logger.info(
+        f"Per-node files written | "
+        f"nodes={num_nodes_total} | "
+        f"timesteps={num_timesteps}"
+    )
     logger.info("export_ui_payload.py COMPLETE.")
 
 

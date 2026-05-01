@@ -204,7 +204,7 @@ export default function MapVisualizer() {
 
     map.on("load", async () => {
       try {
-        const res = await fetch("/data/ui_payload.json");
+        const res = await fetch("/data/master_index.json");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const payload: UIPayload = await res.json();
 
