@@ -252,15 +252,27 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
 // ---------------------------------------------------------------------------
 
 function EdgeList({ edges }: { edges: AttentionEdge[] }) {
-  const sorted = [...edges].sort((a, b) => b.edge_weight - a.edge_weight);
-  const maxW = sorted[0]?.edge_weight ?? 1;
+  const currentTimestep = useTimeStore((s) => s.currentTimestep);
+
+  const { topIncoming, topOutgoing } = useMemo(() => {
+    const byWeight = (a: AttentionEdge, b: AttentionEdge) =>
+      (b.weight_sequence[currentTimestep] ?? 0) - (a.weight_sequence[currentTimestep] ?? 0);
+    return {
+      topIncoming: edges.filter((e) => e.direction === "incoming").sort(byWeight).slice(0, 5),
+      topOutgoing: edges.filter((e) => e.direction === "outgoing").sort(byWeight).slice(0, 5),
+    };
+  }, [edges, currentTimestep]);
+
+  const sorted = [...topIncoming, ...topOutgoing];
+  const maxW = Math.max(...sorted.map((e) => e.weight_sequence[currentTimestep] ?? 0), 0.001);
 
   return (
     <ul className="mt-1 space-y-1">
       {sorted.map((e, i) => {
         const isIncoming = e.direction === "incoming";
         const neighborId = isIncoming ? e.source_id : e.target_id;
-        const barW = Math.round((e.edge_weight / maxW) * 80);
+        const w = e.weight_sequence[currentTimestep] ?? 0;
+        const barW = Math.round((w / maxW) * 80);
         return (
           <li key={i} className="flex items-center gap-2 text-[10px]">
             {/* Direction arrow */}
@@ -288,7 +300,7 @@ function EdgeList({ edges }: { edges: AttentionEdge[] }) {
             />
             {/* Numeric weight */}
             <span className="ml-auto font-mono text-slate-400">
-              {e.edge_weight.toFixed(3)}
+              {w.toFixed(3)}
             </span>
           </li>
         );

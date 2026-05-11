@@ -93,7 +93,7 @@ function buildLayers(
     autoHighlight: true,
     highlightColor: [255, 255, 255, 55],
     onClick: ({ object }) => onSelectNode(object ? object.id : null),
-    onHover: ({ object }) => onHoverNode(object ? object.id : null),
+    onHover: ({ object }) => { onHoverNode(object ? object.id : null); return true; },
     updateTriggers: {
       getFillColor: [timestep],
       getRadius: [timestep, hoveredNodeId],
@@ -116,7 +116,7 @@ function buildLayers(
     autoHighlight: true,
     highlightColor: [255, 255, 255, 55],
     onClick: ({ object }) => onSelectNode(object ? object.id : null),
-    onHover: ({ object }) => onHoverNode(object ? object.id : null),
+    onHover: ({ object }) => { onHoverNode(object ? object.id : null); return true; },
     updateTriggers: {
       getLineColor: [timestep],
       getRadius: [timestep, hoveredNodeId],
@@ -162,7 +162,7 @@ function buildLayers(
 
   // ── Localized ego-graph layer (top-K edges from node_{id}.json) ────────────
   // Blue arcs = incoming attention; rose arcs = outgoing attention.
-  // Width scales with edge_weight. Visible only when a node is selected
+  // Width and alpha scale with weight_sequence[timestep]. Visible only when a node is selected
   // and ego-graph data has been fetched by NodeInspector.
   const egoArcLayer = new ArcLayer<AttentionEdge>({
     id: "ego-graph-layer",
@@ -170,14 +170,23 @@ function buildLayers(
     visible: selectedNodeId !== null && (egoGraphEdges?.length ?? 0) > 0,
     getSourcePosition: (d) => [d.source_lon, d.source_lat],
     getTargetPosition: (d) => [d.target_lon, d.target_lat],
-    getSourceColor: (d) =>
-      d.direction === "incoming" ? [96, 165, 250, 220] : [251, 113, 133, 220],
-    getTargetColor: (d) =>
-      d.direction === "incoming" ? [96, 165, 250, 160] : [251, 113, 133, 160],
-    getWidth: (d) => Math.max(2, d.edge_weight * 14),
+    getSourceColor: (d) => {
+      const w = d.weight_sequence[timestep] ?? 0;
+      const alpha = Math.round(80 + w * 175);
+      return d.direction === "incoming" ? [96, 165, 250, alpha] : [251, 113, 133, alpha];
+    },
+    getTargetColor: (d) => {
+      const w = d.weight_sequence[timestep] ?? 0;
+      const alpha = Math.round(50 + w * 110);
+      return d.direction === "incoming" ? [96, 165, 250, alpha] : [251, 113, 133, alpha];
+    },
+    getWidth: (d) => Math.max(2, (d.weight_sequence[timestep] ?? 0) * 14),
     widthUnits: "pixels",
     updateTriggers: {
       data: [selectedNodeId],
+      getSourceColor: [timestep],
+      getTargetColor: [timestep],
+      getWidth: [timestep],
     },
   });
 

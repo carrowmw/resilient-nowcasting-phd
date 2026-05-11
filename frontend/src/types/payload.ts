@@ -97,7 +97,7 @@ export interface AttentionEdge {
   source_id: number;
   target_id: number;
   direction: "incoming" | "outgoing";
-  edge_weight: number;  // mean GAT attention weight over all inference timesteps
+  weight_sequence: number[];  // per-timestep GAT attention weights, length = num_timesteps
   source_lat: number;
   source_lon: number;
   target_lat: number;

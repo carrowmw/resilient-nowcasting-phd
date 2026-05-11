@@ -77,7 +77,7 @@ SIMULATED_NODE_COORDS: List[Tuple[float, float]] = [
 ]
 
 NUM_TIMESTEPS_TARGET = 96  # 24 h × 4 per hour
-TOP_K_EGO_EDGES = 5       # top K incoming + top K outgoing per node in ego_graph_edges
+TOP_K_EGO_EDGES = 10      # top K incoming + top K outgoing per node in ego_graph_edges
 
 
 # ---------------------------------------------------------------------------
@@ -450,14 +450,15 @@ def build_ego_graph_edges(
     node_id: int,
     edge_attention_data: Dict[Tuple[int, int], List[float]],
     node_coord_map: Dict[int, Tuple[float, float]],
+    num_timesteps: int,
     top_k: int = TOP_K_EGO_EDGES,
 ) -> List[Dict]:
     """
     Extract top-K incoming and top-K outgoing GAT attention edges for node_id.
 
-    Mean attention weight over all inference timesteps is the scalar edge_weight.
-    Source and target coordinates are embedded so the frontend ArcLayer needs no
-    secondary lookup.
+    Returns the full per-timestep weight_sequence (length = num_timesteps) so the
+    frontend can rank edges dynamically at the active timestep instead of using a
+    static mean scalar.
 
     Edges where either endpoint has NaN coordinates are skipped (external data
     quality issue, not a model failure — logged at WARNING level).
@@ -466,11 +467,12 @@ def build_ego_graph_edges(
         node_id:             the focal node
         edge_attention_data: {(src, tgt): List[float]} — full attention history
         node_coord_map:      {node_id: (lat, lon)}
+        num_timesteps:       expected length of every attention sequence (tripwire)
         top_k:               max edges returned per direction
 
     Returns:
         List of up to 2*top_k dicts, each with keys:
-        source_id, target_id, direction, edge_weight,
+        source_id, target_id, direction, weight_sequence,
         source_lat, source_lon, target_lat, target_lon
     """
     incoming: List[Dict] = []
@@ -487,6 +489,12 @@ def build_ego_graph_edges(
                 f"({src},{tgt}) — skipped"
             )
             continue
+
+        # Offensive tripwire: every sequence must span the full inference window
+        assert len(attn_seq) == num_timesteps, (
+            f"TRIPWIRE: edge ({src},{tgt}) attention_sequence length "
+            f"{len(attn_seq)} != expected {num_timesteps}"
+        )
 
         mean_w = float(np.mean(attn_seq))
         assert not math.isnan(mean_w), (
@@ -506,7 +514,8 @@ def build_ego_graph_edges(
             "source_id": src,
             "target_id": tgt,
             "direction": direction,
-            "edge_weight": round(mean_w, 6),
+            "weight_sequence": [round(w, 6) for w in attn_seq],
+            "_mean_w": mean_w,  # transient sort key — stripped before return
             "source_lat": src_lat,
             "source_lon": src_lon,
             "target_lat": tgt_lat,
@@ -514,10 +523,13 @@ def build_ego_graph_edges(
         }
         (incoming if direction == "incoming" else outgoing).append(entry)
 
-    incoming.sort(key=lambda x: x["edge_weight"], reverse=True)
-    outgoing.sort(key=lambda x: x["edge_weight"], reverse=True)
+    incoming.sort(key=lambda x: x["_mean_w"], reverse=True)
+    outgoing.sort(key=lambda x: x["_mean_w"], reverse=True)
 
-    return incoming[:top_k] + outgoing[:top_k]
+    result = incoming[:top_k] + outgoing[:top_k]
+    for e in result:
+        del e["_mean_w"]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1039,12 +1051,17 @@ def main() -> None:
             assert "pi" in entry and "is_missing" in entry, \
                 f"Node {node_id}: zinb_series entry missing pi or is_missing"
 
-        # Localized ego-graph: top-K incoming + outgoing edges by mean attention weight
-        ego_edges = build_ego_graph_edges(node_id, edge_attention_data, node_coord_map)
+        # Localized ego-graph: top-K incoming + outgoing edges with full weight_sequence
+        ego_edges = build_ego_graph_edges(
+            node_id, edge_attention_data, node_coord_map, num_timesteps
+        )
         assert isinstance(ego_edges, list)
         for e in ego_edges:
-            assert e["edge_weight"] >= 0.0, \
-                f"Negative edge_weight in node {node_id} ego_graph: {e}"
+            assert len(e["weight_sequence"]) == num_timesteps, (
+                f"ego_graph node {node_id}: weight_sequence length mismatch"
+            )
+            assert all(w >= 0.0 for w in e["weight_sequence"]), \
+                f"Negative weight in node {node_id} ego_graph: {e}"
             assert e["direction"] in ("incoming", "outgoing"), \
                 f"Invalid direction in node {node_id} ego_graph: {e['direction']}"
 
