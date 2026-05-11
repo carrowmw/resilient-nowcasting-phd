@@ -317,8 +317,6 @@ export default function NodeInspector() {
   const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
-  const attentionThreshold = useTimeStore((s) => s.attentionThreshold);
-  const setAttentionThreshold = useTimeStore((s) => s.setAttentionThreshold);
   const setEgoGraphEdges = useTimeStore((s) => s.setEgoGraphEdges);
 
   const [nodeDetail, setNodeDetail] = useState<NodeDetailPayload | null>(null);
@@ -474,23 +472,6 @@ export default function NodeInspector() {
         </div>
       )}
 
-      {/* ── Attention threshold slider ── */}
-      <div className="mt-4 border-t border-white/10 pt-3">
-        <label className="flex items-center justify-between text-[11px] text-slate-300">
-          <span>Attention threshold</span>
-          <span className="font-mono text-slate-400">{attentionThreshold.toFixed(2)}</span>
-        </label>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={attentionThreshold}
-          onChange={(e) => setAttentionThreshold(Number(e.target.value))}
-          className="mt-1 w-full accent-amber-400"
-          aria-label="Attention edge weight threshold"
-        />
-      </div>
     </aside>
   );
 }

@@ -6,7 +6,7 @@ interface TimeState {
   maxTimesteps: number;
   isPlaying: boolean;
   selectedNodeId: number | null;
-  attentionThreshold: number;
+  globalAttentionThreshold: number;
   egoGraphEdges: AttentionEdge[] | null;
 
   setTimestep: (step: number) => void;
@@ -14,7 +14,7 @@ interface TimeState {
   togglePlayback: () => void;
   incrementTimestep: () => void;
   setSelectedNodeId: (id: number | null) => void;
-  setAttentionThreshold: (v: number) => void;
+  setGlobalAttentionThreshold: (v: number) => void;
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
 }
 
@@ -23,7 +23,7 @@ const useTimeStore = create<TimeState>((set, get) => ({
   maxTimesteps: 95,
   isPlaying: false,
   selectedNodeId: null,
-  attentionThreshold: 0.05,
+  globalAttentionThreshold: 0.5,
   egoGraphEdges: null,
 
   setTimestep: (step: number) =>
@@ -44,8 +44,8 @@ const useTimeStore = create<TimeState>((set, get) => ({
   setSelectedNodeId: (id: number | null) => set({ selectedNodeId: id }),
 
   // Clamp threshold to [0, 1] — attention weights live in [0, 1].
-  setAttentionThreshold: (v: number) =>
-    set({ attentionThreshold: Math.max(0, Math.min(1, v)) }),
+  setGlobalAttentionThreshold: (v: number) =>
+    set({ globalAttentionThreshold: Math.max(0, Math.min(1, v)) }),
 
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => set({ egoGraphEdges: edges }),
 }));

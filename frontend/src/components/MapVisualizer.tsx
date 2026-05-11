@@ -104,17 +104,22 @@ function buildLayers(
     },
   });
 
-  // ── Simulated-node layer (hollow ring) ─────────────────────────────────────
+  // ── Simulated-node layer (hollow ring with transparent fill) ──────────────
+  // filled: true + getFillColor: [0,0,0,0] creates an invisible solid disk that
+  // covers the hollow centre, giving the full circle — not just the stroke — a
+  // pickable hit-area. Without this the centre gap of the ring passes all
+  // pointer events through to the map, making synthetic nodes unclickable.
   const simNodes = payload.nodes.filter((n) => n.is_simulated);
   const simLayer = new ScatterplotLayer<NodeEntry>({
     id: "nodes-simulated",
     data: simNodes,
     getPosition: (d) => [d.lon, d.lat],
     getLineColor: (d) => nodeFillColor(d, timestep),
+    getFillColor: [0, 0, 0, 0],
     getRadius: (d) => nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
     radiusUnits: "meters",
     stroked: true,
-    filled: false,
+    filled: true,
     lineWidthMinPixels: 3,
     pickable: true,
     autoHighlight: true,
@@ -149,6 +154,7 @@ function buildLayers(
   const arcLayer = new ArcLayer<WeightedEdge>({
     id: "topology-layer",
     data: weighted,
+    visible: selectedNodeId === null,
     getSourcePosition: (d) => {
       const src = nodeMap.get(d.edge.source);
       return src ? [src.lon, src.lat] : [0, 0];
@@ -228,7 +234,7 @@ export default function MapVisualizer() {
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
   const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
-  const attentionThreshold = useTimeStore((s) => s.attentionThreshold);
+  const globalAttentionThreshold = useTimeStore((s) => s.globalAttentionThreshold);
   const egoGraphEdges = useTimeStore((s) => s.egoGraphEdges);
 
   // ── Initialise MapLibre + deck.gl overlay once ────────────────────────────
@@ -300,7 +306,7 @@ export default function MapVisualizer() {
               s.currentTimestep,
               {
                 selectedNodeId: s.selectedNodeId,
-                attentionThreshold: s.attentionThreshold,
+                attentionThreshold: s.globalAttentionThreshold,
                 hoveredNodeId: id,
                 egoGraphEdges: s.egoGraphEdges,
               },
@@ -318,7 +324,7 @@ export default function MapVisualizer() {
             state.currentTimestep,
             {
               selectedNodeId: state.selectedNodeId,
-              attentionThreshold: state.attentionThreshold,
+              attentionThreshold: state.globalAttentionThreshold,
               hoveredNodeId: hoveredNodeIdRef.current,
               egoGraphEdges: state.egoGraphEdges,
             },
@@ -362,7 +368,7 @@ export default function MapVisualizer() {
           s.currentTimestep,
           {
             selectedNodeId: s.selectedNodeId,
-            attentionThreshold: s.attentionThreshold,
+            attentionThreshold: s.globalAttentionThreshold,
             hoveredNodeId: id,
             egoGraphEdges: s.egoGraphEdges,
           },
@@ -379,7 +385,7 @@ export default function MapVisualizer() {
         currentTimestep,
         {
           selectedNodeId,
-          attentionThreshold,
+          attentionThreshold: globalAttentionThreshold,
           hoveredNodeId: hoveredNodeIdRef.current,
           egoGraphEdges,
         },
@@ -387,7 +393,7 @@ export default function MapVisualizer() {
         (id) => rebuildHoverRef.current(id),
       ),
     });
-  }, [currentTimestep, selectedNodeId, attentionThreshold, egoGraphEdges, setSelectedNodeId]);
+  }, [currentTimestep, selectedNodeId, globalAttentionThreshold, egoGraphEdges, setSelectedNodeId]);
 
   return (
     <div

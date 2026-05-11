@@ -14,6 +14,7 @@ const MapVisualizer = dynamic(() => import('./MapVisualizer'), {
 
 const TimeSlider = dynamic(() => import('./TimeSlider'), { ssr: false });
 const NodeInspector = dynamic(() => import('./NodeInspector'), { ssr: false });
+const AttentionControls = dynamic(() => import('./AttentionControls'), { ssr: false });
 
 export default function MapScene() {
   return (
@@ -21,6 +22,7 @@ export default function MapScene() {
       <MapVisualizer />
       <NodeInspector />
       <TimeSlider />
+      <AttentionControls />
 
       {/* Floating button: navigate to the Analytics dashboard.
           Positioned top-left to avoid conflicting with the NodeInspector (top-right)

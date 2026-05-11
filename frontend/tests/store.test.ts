@@ -17,7 +17,7 @@ beforeEach(() => {
     maxTimesteps: 95,
     isPlaying: false,
     selectedNodeId: null,
-    attentionThreshold: 0.05,
+    globalAttentionThreshold: 0.5,
   });
 });
 
@@ -136,25 +136,25 @@ describe('setSelectedNodeId', () => {
   });
 });
 
-// ── setAttentionThreshold ────────────────────────────────────────────────────
+// ── setGlobalAttentionThreshold ──────────────────────────────────────────────
 
-describe('setAttentionThreshold', () => {
-  it('defaults to 0.05', () => {
-    expect(useTimeStore.getState().attentionThreshold).toBeCloseTo(0.05);
+describe('setGlobalAttentionThreshold', () => {
+  it('defaults to 0.5', () => {
+    expect(useTimeStore.getState().globalAttentionThreshold).toBeCloseTo(0.5);
   });
 
   it('accepts an in-range value', () => {
-    useTimeStore.getState().setAttentionThreshold(0.4);
-    expect(useTimeStore.getState().attentionThreshold).toBeCloseTo(0.4);
+    useTimeStore.getState().setGlobalAttentionThreshold(0.4);
+    expect(useTimeStore.getState().globalAttentionThreshold).toBeCloseTo(0.4);
   });
 
   it('clamps below 0', () => {
-    useTimeStore.getState().setAttentionThreshold(-0.5);
-    expect(useTimeStore.getState().attentionThreshold).toBe(0);
+    useTimeStore.getState().setGlobalAttentionThreshold(-0.5);
+    expect(useTimeStore.getState().globalAttentionThreshold).toBe(0);
   });
 
   it('clamps above 1', () => {
-    useTimeStore.getState().setAttentionThreshold(2);
-    expect(useTimeStore.getState().attentionThreshold).toBe(1);
+    useTimeStore.getState().setGlobalAttentionThreshold(2);
+    expect(useTimeStore.getState().globalAttentionThreshold).toBe(1);
   });
 });
