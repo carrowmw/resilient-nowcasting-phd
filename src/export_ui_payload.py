@@ -25,10 +25,11 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from scipy.special import betainc
 
 # Allow direct execution from repo root or from src/
 sys.path.insert(0, str(Path(__file__).parent))
@@ -256,6 +257,195 @@ def load_semantic_tags(
 
 
 # ---------------------------------------------------------------------------
+# Calibration metric helpers
+# ---------------------------------------------------------------------------
+
+def _zinb_cdf(y_obs: float, mu: float, theta: float, pi_val: float) -> float:
+    """
+    ZINB CDF at observed count y_obs.
+
+    F_NB(y; mu, theta) = betainc(theta, floor(y)+1, theta/(theta+mu))
+    F_ZINB(y)          = pi + (1 - pi) * F_NB(y)
+
+    Both mu and theta are guaranteed > 0 by upstream tripwires.
+    """
+    assert mu > 0.0,    f"_zinb_cdf: mu={mu} must be > 0"
+    assert theta > 0.0, f"_zinb_cdf: theta={theta} must be > 0"
+    assert 0.0 < pi_val < 1.0, f"_zinb_cdf: pi={pi_val} must be in (0,1)"
+    k = int(math.floor(y_obs))
+    p_nb = theta / (theta + mu)
+    cdf_nb = float(betainc(theta, k + 1, p_nb))
+    u = pi_val + (1.0 - pi_val) * cdf_nb
+    assert 0.0 <= u <= 1.0, f"_zinb_cdf: PIT value {u} outside [0,1] — parametric error"
+    return u
+
+
+def compute_pit_histogram(
+    ground_truth_series: List[List],
+    mu_series: List[List[float]],
+    theta_series: List[List[float]],
+    pi_series: List[List[float]],
+    num_real_nodes: int,
+    num_bins: int = 10,
+) -> List[Dict]:
+    """
+    Compute the Probability Integral Transform histogram for the ZINB distribution.
+
+    Iterates over all real nodes and all timesteps where ground truth is a valid
+    (non-None, non-NaN) count.  Returns a list of num_bins dicts with:
+      { "bin_center": float, "density": float }
+    where density = fraction of PIT values in that bin (sums to ~1.0).
+
+    A perfectly calibrated model produces a uniform histogram (density ≈ 0.1 per bin).
+    """
+    bin_edges = np.linspace(0.0, 1.0, num_bins + 1)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    counts = np.zeros(num_bins, dtype=np.int64)
+
+    for node_id in range(num_real_nodes):
+        gt_seq = ground_truth_series[node_id]
+        mu_seq = mu_series[node_id]
+        th_seq = theta_series[node_id]
+        pi_seq = pi_series[node_id]
+        assert len(gt_seq) == len(mu_seq) == len(th_seq) == len(pi_seq), (
+            f"PIT: length mismatch for node {node_id}: "
+            f"gt={len(gt_seq)} mu={len(mu_seq)} theta={len(th_seq)} pi={len(pi_seq)}"
+        )
+        for t_idx, (gt, mu_val, th_val, pi_val) in enumerate(
+            zip(gt_seq, mu_seq, th_seq, pi_seq)
+        ):
+            if gt is None or math.isnan(gt):
+                continue
+            u = _zinb_cdf(float(gt), float(mu_val), float(th_val), float(pi_val))
+            bin_idx = min(int(u * num_bins), num_bins - 1)
+            counts[bin_idx] += 1
+
+    total = int(counts.sum())
+    assert total > 0, "TRIPWIRE: PIT histogram has zero valid observations — check ground truth data"
+
+    return [
+        {"bin_center": round(float(bin_centers[i]), 4), "density": round(float(counts[i] / total), 6)}
+        for i in range(num_bins)
+    ]
+
+
+def compute_zero_inflation_reliability(
+    ground_truth_series: List[List],
+    pi_series: List[List[float]],
+    num_real_nodes: int,
+    num_bins: int = 10,
+) -> List[Dict]:
+    """
+    Compute the zero-inflation reliability diagram.
+
+    For each valid (non-None, non-NaN) observation, pairs the predicted pi (zero-inflation
+    probability) with whether the observed count is a true structural zero (y_obs == 0).
+    Bins pi into num_bins equal-width buckets across [0, 1] and computes the actual
+    fraction of true zeros in each bucket.
+
+    Returns a list of dicts (one per non-empty bin):
+      { "pi_center": float, "observed_zero_fraction": float, "count": int }
+
+    A perfectly calibrated model has all points on the y = x diagonal.
+    Bins with zero observations are omitted to avoid charting artifacts.
+    """
+    bin_edges = np.linspace(0.0, 1.0, num_bins + 1)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    zero_counts = np.zeros(num_bins, dtype=np.int64)
+    total_counts = np.zeros(num_bins, dtype=np.int64)
+
+    for node_id in range(num_real_nodes):
+        gt_seq = ground_truth_series[node_id]
+        pi_seq = pi_series[node_id]
+        assert len(gt_seq) == len(pi_seq), (
+            f"Reliability: length mismatch node {node_id}: gt={len(gt_seq)} pi={len(pi_seq)}"
+        )
+        for gt, pi_val in zip(gt_seq, pi_seq):
+            if gt is None or math.isnan(gt):
+                continue
+            assert 0.0 < pi_val < 1.0, f"Reliability: pi={pi_val} outside (0,1)"
+            bin_idx = min(int(pi_val * num_bins), num_bins - 1)
+            total_counts[bin_idx] += 1
+            if gt == 0.0:
+                zero_counts[bin_idx] += 1
+
+    result = []
+    for i in range(num_bins):
+        n = int(total_counts[i])
+        if n == 0:
+            continue
+        result.append({
+            "pi_center": round(float(bin_centers[i]), 4),
+            "observed_zero_fraction": round(float(zero_counts[i] / n), 6),
+            "count": n,
+        })
+    return result
+
+
+def compute_two_extremes(
+    ground_truth: List,
+    mu_predictions: List[float],
+) -> Dict:
+    """
+    Compute MAE and RMSE under two missing-data strategies.
+
+    Drop mode: exclude timesteps where ground truth is None or NaN.
+    Fill mode: replace None/NaN ground truths with 0.0 before computing.
+
+    Args:
+        ground_truth:   per-timestep observed counts (float | None, may include NaN)
+        mu_predictions: per-timestep ZINB mean predictions
+
+    Returns dict with keys: mae_drop_nan, rmse_drop_nan (None if no valid GT),
+    mae_fill_nan, rmse_fill_nan.
+    """
+    assert len(ground_truth) == len(mu_predictions), (
+        f"two_extremes: length mismatch gt={len(ground_truth)} pred={len(mu_predictions)}"
+    )
+
+    # Drop mode
+    drop_preds, drop_gts = [], []
+    for mu_val, gt in zip(mu_predictions, ground_truth):
+        if gt is None or (isinstance(gt, float) and math.isnan(gt)):
+            continue
+        drop_preds.append(mu_val)
+        drop_gts.append(float(gt))
+
+    if drop_preds:
+        arr_p = np.array(drop_preds, dtype=np.float64)
+        arr_g = np.array(drop_gts, dtype=np.float64)
+        residuals = arr_p - arr_g
+        mae_drop: Optional[float] = float(np.mean(np.abs(residuals)))
+        rmse_drop: Optional[float] = float(np.sqrt(np.mean(residuals ** 2)))
+        assert mae_drop >= 0.0, f"TRIPWIRE: negative MAE_drop={mae_drop}"
+        assert rmse_drop >= 0.0, f"TRIPWIRE: negative RMSE_drop={rmse_drop}"
+    else:
+        mae_drop = None
+        rmse_drop = None
+
+    # Fill mode: replace None/NaN with 0.0
+    fill_gts = np.array(
+        [0.0 if (gt is None or (isinstance(gt, float) and math.isnan(gt))) else float(gt)
+         for gt in ground_truth],
+        dtype=np.float64,
+    )
+    assert not np.isnan(fill_gts).any(), "TRIPWIRE: NaN in fill_gts after substitution"
+    arr_fill_p = np.array(mu_predictions, dtype=np.float64)
+    residuals_fill = arr_fill_p - fill_gts
+    mae_fill = float(np.mean(np.abs(residuals_fill)))
+    rmse_fill = float(np.sqrt(np.mean(residuals_fill ** 2)))
+    assert mae_fill >= 0.0, f"TRIPWIRE: negative MAE_fill={mae_fill}"
+    assert rmse_fill >= 0.0, f"TRIPWIRE: negative RMSE_fill={rmse_fill}"
+
+    return {
+        "mae_drop_nan": round(mae_drop, 4) if mae_drop is not None else None,
+        "rmse_drop_nan": round(rmse_drop, 4) if rmse_drop is not None else None,
+        "mae_fill_nan": round(mae_fill, 4),
+        "rmse_fill_nan": round(rmse_fill, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -425,6 +615,7 @@ def main() -> None:
     imputed_series: List[List[float]] = [[] for _ in range(num_nodes_total)]
     mask_series: List[List[bool]] = [[] for _ in range(num_nodes_total)]
     theta_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
+    pi_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
     # edge_attention_data: filled once edge topology is known
     edge_attention_data: Dict[Tuple[int, int], List[float]] = {}
     edge_index_cached: torch.Tensor | None = None
@@ -486,7 +677,15 @@ def main() -> None:
             assert not torch.isnan(mu).any(), f"t={t}: NaN in mu"
             assert not torch.isnan(std_dev).any(), f"t={t}: NaN in std_dev"
 
-            # Store per-node prediction, uncertainty, and theta
+            # pi — zero-inflation probability from sigmoid: (0, 1) strictly
+            pi_raw: torch.Tensor = result["pi"][0]  # [num_nodes_total]
+            assert (pi_raw > 0).all(), \
+                f"t={t}: TRIPWIRE — pi has zero/negative values: {pi_raw.min()}"
+            assert (pi_raw < 1).all(), \
+                f"t={t}: TRIPWIRE — pi has saturated-to-1 values: {pi_raw.max()}"
+            assert not torch.isnan(pi_raw).any(), f"t={t}: NaN in pi"
+
+            # Store per-node prediction, uncertainty, theta, and pi
             for node_id in range(num_nodes_total):
                 timeseries_data[node_id].append({
                     "t": t,
@@ -494,6 +693,7 @@ def main() -> None:
                     "uncertainty": round(float(std_dev[node_id]), 4),
                 })
                 theta_data[node_id].append(round(float(theta[node_id]), 4))
+                pi_data[node_id].append(round(float(pi_raw[node_id]), 6))
 
             # -------- Imputation analytics (length-96 arrays per node) --------
             # imputed_features: [1, num_nodes_total, seq_len, time_series_dim]
@@ -576,6 +776,38 @@ def main() -> None:
     logger.info("Inference loop complete.")
 
     # ------------------------------------------------------------------
+    # 7b. Compute calibration metrics (global + per-node)
+    # ------------------------------------------------------------------
+    logger.info("Computing PIT histogram …")
+    pit_histogram = compute_pit_histogram(
+        ground_truth_series=ground_truth_series,
+        mu_series=[[ts["prediction"] for ts in timeseries_data[n]] for n in range(num_nodes_total)],
+        theta_series=theta_data,
+        pi_series=pi_data,
+        num_real_nodes=num_nodes_real,
+    )
+    logger.info(f"  PIT histogram computed ({sum(b['density'] for b in pit_histogram):.4f} total density)")
+
+    logger.info("Computing zero-inflation reliability …")
+    zero_inflation_reliability = compute_zero_inflation_reliability(
+        ground_truth_series=ground_truth_series,
+        pi_series=pi_data,
+        num_real_nodes=num_nodes_real,
+    )
+    logger.info(f"  Reliability diagram: {len(zero_inflation_reliability)} non-empty bins")
+
+    logger.info("Computing per-node Two-Extremes missingness bracket …")
+    two_extremes_per_node: List[Dict] = []
+    for node_id in range(num_nodes_total):
+        mu_preds = [ts["prediction"] for ts in timeseries_data[node_id]]
+        te = compute_two_extremes(
+            ground_truth=ground_truth_series[node_id],
+            mu_predictions=mu_preds,
+        )
+        two_extremes_per_node.append(te)
+    logger.info("  Two-Extremes computed for all nodes.")
+
+    # ------------------------------------------------------------------
     # 8. Load semantic tags from Places cache + template CSV
     # ------------------------------------------------------------------
     logger.info("Loading semantic tags …")
@@ -621,6 +853,7 @@ def main() -> None:
             "is_simulated": meta["is_simulated"],
             "timeseries": timeseries_data[node_id],
             "semantic_tags": semantic_tags.get(meta["location_name"], []),
+            "two_extremes": two_extremes_per_node[node_id],
         })
 
     edges_payload: List[Dict] = [
@@ -642,6 +875,8 @@ def main() -> None:
         },
         "nodes": master_nodes,
         "edges": edges_payload,
+        "pit_histogram": pit_histogram,
+        "zero_inflation_reliability": zero_inflation_reliability,
     }
 
     # Schema assertions before write
@@ -649,11 +884,19 @@ def main() -> None:
     sim_nodes_found = [n for n in master_index["nodes"] if n["is_simulated"]]
     assert len(sim_nodes_found) == num_simulated, \
         f"Expected {num_simulated} simulated nodes, found {len(sim_nodes_found)}"
+    assert len(master_index["pit_histogram"]) == 10, \
+        f"PIT histogram must have 10 bins, got {len(master_index['pit_histogram'])}"
+    assert len(master_index["zero_inflation_reliability"]) <= 10, \
+        "Reliability diagram must have at most 10 bins"
     for node in master_index["nodes"]:
         assert len(node["timeseries"]) == num_timesteps, \
             f"master_index node {node['id']} timeseries length mismatch"
         assert isinstance(node["semantic_tags"], list), \
             f"Node {node['id']} semantic_tags must be a list"
+        te = node["two_extremes"]
+        assert te is not None, f"Node {node['id']} missing two_extremes"
+        assert te["mae_fill_nan"] >= 0.0, f"Node {node['id']} mae_fill_nan is negative"
+        assert te["rmse_fill_nan"] >= 0.0, f"Node {node['id']} rmse_fill_nan is negative"
     for edge in master_index["edges"]:
         assert len(edge["attention_sequence"]) == num_timesteps, \
             f"Edge ({edge['source']},{edge['target']}) attention_sequence length mismatch"
@@ -708,6 +951,7 @@ def main() -> None:
             "imputed_series": imputed_series[node_id],
             "mask_series": mask_series[node_id],
             "edges_1hop": node_edges[node_id],
+            "two_extremes": two_extremes_per_node[node_id],
         }
 
         node_path = os.path.join(NODES_DIR, f"node_{node_id}.json")

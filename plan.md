@@ -1,4 +1,4 @@
-# Plan: Iteration 4 — ZINB Calibration Metrics & Dashboard Upgrade
+# Plan: ZINB Calibration Diagnostic UI on Main Map View
 
 **Phase Anchor:** `NSTAR_PHASES.md` → Phase 1 (Static Data Bridge ONLY). No live API.
 **North Stars consulted:** `NSTAR_BACKEND_ARCHITECTURE.md`, `NSTAR_FRONTEND_ARCHITECTURE.md`, `NSTAR_MLOPS.md`
@@ -7,321 +7,379 @@
 
 ---
 
-## Pre-flight Checks
+## Pre-flight Observations (from code reading)
 
-- `pi` is already returned by the model in analysis mode: `result['pi']` → shape `[1, num_nodes_total]`, values from `torch.sigmoid()` ∈ (0, 1).
-- `ground_truth_series[node_id]` can contain `None` (simulated nodes) and `NaN` (real nodes with sensor outages, since `max(0.0, float(NaN)) → NaN`).
-- `scipy.special.betainc` is available in the container's Python environment.
-- **Branching question per CLAUDE.md §6:** This is a major feature addition. The user should confirm if a new branch is needed, or the work continues on `main`.
+| Observation                                                             | File                                     | Impact                                             |
+| :---------------------------------------------------------------------- | :--------------------------------------- | :------------------------------------------------- |
+| `pi_data[node_id]` already collected (length `num_timesteps`)           | `export_ui_payload.py`                   | Can inject directly into `zinb_series`             |
+| `mask_series[node_id]` already collected (length `num_timesteps`)       | `export_ui_payload.py`                   | Alias as `is_missing` inside `zinb_series`         |
+| `edge_attention_data: Dict[(src,tgt), List[float]]` available post-loop | `export_ui_payload.py`                   | Source for ego-graph top-K computation             |
+| `nodes_meta` carries lat/lon for all nodes (real + simulated)           | `export_ui_payload.py`                   | Embed coordinates into `ego_graph_edges`           |
+| Node selection already uses `onClick` (single-click)                    | `MapVisualizer.tsx` ln 88/110            | No code change needed for this sub-task            |
+| Analytics Fab is currently at `bottom: 196, right: 24`                  | `MapScene.tsx` ln 32-35                  | Must move to `top: 24, left: 24`                   |
+| `edges_1hop` is per-node and not consumed by `MapVisualizer`            | `NodeInspector.tsx`, `MapVisualizer.tsx` | New `ego_graph_edges` field is the correct conduit |
+| Recharts is already installed in the frontend container                 | `analytics/page.tsx`                     | Can be imported in `NodeInspector.tsx` immediately |
 
 ---
 
-## Step 1 — Auto-commit rollback point
+## Step 0 — Auto-commit rollback point
 
-Before any file edits, execute:
 ```bash
 git add .
-git commit -m "Auto-commit before Iteration 4 ZINB Calibration Metrics"
+git commit -m "Auto-commit before ZINB Diagnostic UI on Map View"
 ```
 
 ---
 
-## Step 2 — Backend: `src/export_ui_payload.py`
+## Step 1 — Backend: `src/export_ui_payload.py`
 
-### 2a. New import
-
-```python
-from scipy.special import betainc
-```
-
-### 2b. New accumulator in inference loop setup
+### 1a. New constant
 
 ```python
-pi_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
+TOP_K_EGO_EDGES = 5   # top K incoming + top K outgoing per node
 ```
 
-### 2c. In the 24-hour inference loop — capture `pi` with tripwires
+### 1b. New helper: `build_ego_graph_edges`
 
-After `theta: torch.Tensor = result["theta"][0]`, add:
+After the `compute_two_extremes` function, add:
 
 ```python
-pi_raw: torch.Tensor = result["pi"][0]   # [num_nodes_total] from sigmoid → (0,1)
-assert (pi_raw > 0).all(),  f"t={t}: TRIPWIRE — pi has zero/negative values: {pi_raw.min()}"
-assert (pi_raw < 1).all(),  f"t={t}: TRIPWIRE — pi has saturated-to-1 values: {pi_raw.max()}"
-assert not torch.isnan(pi_raw).any(), f"t={t}: NaN in pi"
-
-for node_id in range(num_nodes_total):
-    pi_data[node_id].append(round(float(pi_raw[node_id]), 6))
-```
-
-### 2d. Three new post-loop helper functions
-
-#### `compute_pit_histogram`
-
-**Mathematical basis:**
-
-The ZINB CDF at observed count `y`:
-
-```
-F_NB(y; mu, theta) = betainc(theta, floor(y)+1, theta/(theta+mu))
-F_ZINB(y)          = pi + (1 - pi) * F_NB(y)
-```
-
-For each real node and each timestep where `ground_truth` is not None/NaN, compute the PIT value `u = F_ZINB(y_obs)`. Assert `0 <= u <= 1` (tripwire). Bin 10 equal-width bins across [0, 1]. Return array of `{bin_center, density}` dicts where density = count/total.
-
-**Tripwires:**
-- `assert 0.0 <= u <= 1.0` — PIT values outside [0,1] indicate a parametric error.
-- `assert theta > 0 and mu > 0` — satisfied by prior per-step assertions; re-checked here.
-- If `theta + mu == 0` the script crashes immediately (ZeroDivisionError, not silently suppressed).
-
-```python
-def compute_pit_histogram(
-    ground_truth_series: List[List],          # [node][t] → float | None
-    mu_series: List[List[float]],             # [node][t]
-    theta_series: List[List[float]],          # [node][t]
-    pi_series: List[List[float]],             # [node][t]
-    num_real_nodes: int,
-    num_bins: int = 10,
+def build_ego_graph_edges(
+    node_id: int,
+    edge_attention_data: Dict[Tuple[int, int], List[float]],
+    node_coord_map: Dict[int, Tuple[float, float]],   # {id: (lat, lon)}
+    top_k: int = TOP_K_EGO_EDGES,
 ) -> List[Dict]:
 ```
 
-Returns `[{"bin_center": float, "density": float}, ...]` (10 entries).
+**Algorithm:**
 
-#### `compute_zero_inflation_reliability`
+1. Iterate `edge_attention_data.items()`.
+2. For each `(src, tgt)`:
+   - If `tgt == node_id` → incoming edge; if `src == node_id` → outgoing edge.
+3. For matched edges: compute `mean_w = float(np.mean(attn_seq))`.
+4. Tripwire: `assert not math.isnan(mean_w)`.
+5. Skip any edge where either endpoint's lat or lon is `float('nan')` (external data quality; log a warning rather than crashing, since coordinate availability is outside model control).
+6. Sort incoming by `mean_w` descending → take top `K`. Same for outgoing.
+7. Return combined list of dicts:
 
-For each real node at each timestep where ground truth is not None/NaN:
-- Record `(pi_predicted, is_true_zero)` where `is_true_zero = (y_obs == 0.0)`.
-- Create 10 equal-width bins for pi ∈ [0, 1].
-- For each bin, compute `observed_zero_fraction = count_true_zeros / total_in_bin`.
-- Skip bins with 0 observations (set fraction to None, omit from output to avoid charting artifacts).
-
-Returns `[{"pi_center": float, "observed_zero_fraction": float, "count": int}, ...]` (up to 10 entries).
-
-#### `compute_two_extremes`
-
-For one node:
-
-```python
-def compute_two_extremes(
-    ground_truth: List,          # floats | None | NaN
-    mu_predictions: List[float],
-) -> Dict:
-```
-
-- **Drop mode:** filter to rows where ground truth is not None and not NaN. Compute `MAE_drop = mean(|mu - y|)`, `RMSE_drop = sqrt(mean((mu - y)^2))`. If no valid rows: `None`.
-- **Fill mode:** replace None/NaN with `0.0`. Compute `MAE_fill`, `RMSE_fill` over all timesteps.
-
-Returns `{"mae_drop_nan": float|None, "rmse_drop_nan": float|None, "mae_fill_nan": float, "rmse_fill_nan": float}`.
-
-**Tripwires:**
-- Assert no negative MAE/RMSE (mathematically impossible but catches implementation bugs).
-- Assert all-fill arrays contain no NaN after substitution.
-
-### 2e. Desk Check — PIT Tripwire (CLAUDE.md §8)
-
-| Scenario | y_obs | mu | theta | pi | Expected u | Tripwire fires? |
-|:---|:---|:---|:---|:---|:---|:---|
-| softplus output, count=5 | 5.0 | 3.0 | 2.0 | 0.1 | 0.1 + 0.9 * betainc(2,6,0.4) ≈ 0.82 | No (∈ [0,1]) |
-| High pi near structural zero | 0.0 | 0.5 | 1.0 | 0.95 | 0.95 + 0.05 * betainc(1,1,1/(1.5)) ≈ 0.983 | No |
-| Unclamped pi=1.0 | — | — | — | 1.0 | NOT < 1 | **Yes — crashes** |
-| NaN ground truth | NaN | — | — | — | Skipped by `None/NaN` guard | No crash |
-
-### 2f. Integration into output files
-
-**`master_index.json`** gains two top-level keys:
 ```json
 {
-  "pit_histogram": [{"bin_center": 0.05, "density": 0.09}, ...],
-  "zero_inflation_reliability": [{"pi_center": 0.15, "observed_zero_fraction": 0.12, "count": 234}, ...]
+  "source_id": int,
+  "target_id": int,
+  "direction": "incoming" | "outgoing",
+  "edge_weight": float (4 d.p.),
+  "source_lat": float,
+  "source_lon": float,
+  "target_lat": float,
+  "target_lon": float
 }
 ```
 
-Each node entry in `master_index["nodes"]` gains:
-```json
-{
-  "two_extremes": {
-    "mae_drop_nan": 4.21,
-    "rmse_drop_nan": 6.87,
-    "mae_fill_nan": 5.30,
-    "rmse_fill_nan": 8.14
+### 1c. Desk Check — Ego-Graph Function (CLAUDE.md §8)
+
+| Scenario                                                      | edge_attention_data                     | Expected result                                       |
+| :------------------------------------------------------------ | :-------------------------------------- | :---------------------------------------------------- |
+| Node 0 has 3 incoming edges, weights [0.9, 0.4, 0.1], top_k=2 | {(1,0):[0.9], (2,0):[0.4], (3,0):[0.1]} | Returns 2 incoming entries, sorted desc: [0.9, 0.4]   |
+| Node 0 has 10 outgoing edges, top_k=5                         | {(0,1):[w], …, (0,10):[w]}              | Exactly 5 outgoing entries                            |
+| Edge with NaN mean (empty attn_seq)                           | {(1,0):[]}                              | `np.mean([])` → NaN → `math.isnan` → logged + skipped |
+| Node has no edges at all                                      | {}                                      | Returns empty list []                                 |
+
+### 1d. Extend `zinb_series` entries to include `pi` and `is_missing`
+
+In the per-node write loop (section 11), update the `zinb_series` construction:
+
+```python
+# Explicit alignment tripwire
+assert len(mask_series[node_id]) == len(pi_data[node_id]) == num_timesteps, (
+    f"TRIPWIRE: temporal misalignment for node {node_id}: "
+    f"mask_series={len(mask_series[node_id])}, "
+    f"pi_data={len(pi_data[node_id])}, expected={num_timesteps}"
+)
+
+zinb_series: List[Dict] = []
+for t_idx in range(num_timesteps):
+    entry: Dict = {
+        "t": t_idx,
+        "mu": timeseries_data[node_id][t_idx]["prediction"],
+        "theta": theta_data[node_id][t_idx],
+        "std_dev": timeseries_data[node_id][t_idx]["uncertainty"],
+        "pi": pi_data[node_id][t_idx],          # NEW
+        "is_missing": mask_series[node_id][t_idx],  # NEW
+    }
+    # existing NaN tripwires for mu, theta, std_dev ...
+    assert not math.isnan(entry["pi"]), f"NaN in node {node_id} pi at t={t_idx}"
+    zinb_series.append(entry)
+```
+
+### 1e. Build `ego_graph_edges` and inject into per-node JSON
+
+After the `zinb_series` loop:
+
+```python
+# Build coordinate lookup for this invocation
+node_coord_map: Dict[int, Tuple[float, float]] = {
+    m["id"]: (m["lat"], m["lon"]) for m in nodes_meta
+}
+ego_edges = build_ego_graph_edges(
+    node_id, edge_attention_data, node_coord_map
+)
+
+node_data: Dict = {
+    ...existing fields...,
+    "zinb_series": zinb_series,          # now includes pi + is_missing
+    "ego_graph_edges": ego_edges,        # NEW
+}
+```
+
+### 1f. Per-node schema assertions before write (new checks)
+
+```python
+assert isinstance(node_data["ego_graph_edges"], list)
+for e in node_data["ego_graph_edges"]:
+    assert e["edge_weight"] >= 0.0, f"Negative edge_weight in node {node_id} ego_graph"
+    assert e["direction"] in ("incoming", "outgoing")
+# Verify pi + is_missing are present in every zinb entry
+for entry in node_data["zinb_series"]:
+    assert "pi" in entry and "is_missing" in entry, \
+        f"Node {node_id}: zinb_series entry missing pi or is_missing"
+```
+
+---
+
+## Step 2 — Frontend Types: `frontend/src/types/payload.ts`
+
+### 2a. Extend `ZINBEntry`
+
+```typescript
+export interface ZINBEntry {
+  t: number;
+  mu: number;
+  theta: number;
+  std_dev: number;
+  pi: number; // NEW — zero-inflation probability ∈ (0,1)
+  is_missing: boolean; // NEW — true if this timestep was artificially masked before imputation
+}
+```
+
+### 2b. Add `AttentionEdge`
+
+```typescript
+export interface AttentionEdge {
+  source_id: number;
+  target_id: number;
+  direction: "incoming" | "outgoing";
+  edge_weight: number; // mean GAT attention weight over all timesteps
+  source_lat: number;
+  source_lon: number;
+  target_lat: number;
+  target_lon: number;
+}
+```
+
+### 2c. Update `NodeDetailPayload`
+
+Add:
+
+```typescript
+ego_graph_edges?: AttentionEdge[];  // absent in pre-Iteration-4b payloads
+```
+
+---
+
+## Step 3 — Zustand Store: `frontend/src/store/useTimeStore.ts`
+
+Add one field and one action to share ego-graph data between NodeInspector (writer) and MapVisualizer (reader):
+
+```typescript
+// In TimeState interface:
+egoGraphEdges: AttentionEdge[] | null;
+setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
+
+// In create(...):
+egoGraphEdges: null,
+setEgoGraphEdges: (edges) => set({ egoGraphEdges: edges }),
+```
+
+Import `AttentionEdge` from `@/types/payload` (type-only import to avoid circular deps).
+
+---
+
+## Step 4 — Node Inspector: `frontend/src/components/NodeInspector.tsx`
+
+### 4a. Zustand writes on node-data load
+
+In the `useEffect` that fetches `node_{id}.json`:
+
+```typescript
+.then((d: NodeDetailPayload | null) => {
+  setNodeDetail(d);
+  setEgoGraphEdges(d?.ego_graph_edges ?? null);  // NEW — share with MapVisualizer
+})
+// On cleanup / null selection:
+setEgoGraphEdges(null);
+```
+
+### 4b. MNAR Ghosting Timeline (new Recharts section below existing SVG chart)
+
+**Data preparation** (`useMemo`):
+
+```typescript
+// Collect contiguous runs of is_missing === true for ReferenceArea spans
+const missingRuns = useMemo(() => {
+  if (!nodeDetail) return [];
+  const runs: { x1: number; x2: number }[] = [];
+  let start: number | null = null;
+  nodeDetail.zinb_series.forEach(({ t, is_missing }) => {
+    if (is_missing && start === null) start = t;
+    if (!is_missing && start !== null) {
+      runs.push({ x1: start, x2: t - 1 });
+      start = null;
+    }
+  });
+  if (start !== null)
+    runs.push({ x1: start, x2: nodeDetail.zinb_series.length - 1 });
+  return runs;
+}, [nodeDetail]);
+```
+
+**Chart** (Recharts `LineChart` inside `ResponsiveContainer`, height 110px):
+
+- X axis: `dataKey="t"`, `tick={{ fontSize: 9 }}`
+- Y axis: domain `[0, 1]`, `tick={{ fontSize: 9 }}`, width 28
+- `CartesianGrid` at low opacity
+- One `<Line dataKey="pi" stroke="#a78bfa" dot={false} strokeWidth={1.5} />` (violet, matching π symbol)
+- `{missingRuns.map(r => <ReferenceArea key={...} x1={r.x1} x2={r.x2} fill="rgba(239,68,68,0.18)" />)}`
+- Vertical cursor `<ReferenceLine x={currentTimestep} stroke="rgba(255,255,255,0.4)" />` (matches existing chart cursor)
+- No legend (the chart label above is sufficient)
+- Label row above chart: `"π (zero-inflation probability) — red shading = artificially masked"`
+
+**Defensive rendering:** wrap in `{nodeDetail.zinb_series?.[0]?.pi !== undefined ? <chart> : null}` so old payloads without `pi` degrade gracefully.
+
+### 4c. Attention Edge Rank List
+
+Below the pi chart, new section titled "Top Attention Edges":
+
+```
+┌──────────────────────────────────────┐
+│ Top Attention Edges                  │
+│ ← Node 7    ████████░░  0.843        │
+│ ← Node 3    ██████░░░░  0.612        │
+│ → Node 12   ████░░░░░░  0.441        │
+│   (etc.)                             │
+└──────────────────────────────────────┘
+```
+
+Each row:
+
+- Direction arrow: `←` for incoming, `→` for outgoing (colored: incoming = blue-400, outgoing = amber-400)
+- Neighbor ID (source for incoming, target for outgoing)
+- A CSS `width: {weight * 100}%` inline-progress bar (max width 80px, height 3px)
+- Numeric weight to 3 d.p.
+
+Rendered from `nodeDetail.ego_graph_edges ?? []`, sorted by `edge_weight` descending.
+
+**Defensive rendering:** wrap in `{(nodeDetail.ego_graph_edges?.length ?? 0) > 0 ? <list> : null}`.
+
+---
+
+## Step 5 — Map Visualizer: `frontend/src/components/MapVisualizer.tsx`
+
+### 5a. Hover scaling
+
+Add `hoveredNodeIdRef = useRef<number | null>(null)` at component level.
+
+Extend `buildLayers` signature: `hoveredNodeId: number | null`.
+
+In the radius function:
+
+```typescript
+getRadius: (d) => nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
+```
+
+On both ScatterplotLayers:
+
+```typescript
+autoHighlight: true,
+highlightColor: [255, 255, 255, 60],
+onHover: ({ object }) => {
+  const newId = object ? (object as NodeEntry).id : null;
+  if (hoveredNodeIdRef.current !== newId) {
+    hoveredNodeIdRef.current = newId;
+    rebuildLayers();   // helper that calls overlay.setProps(...)
   }
-}
+},
 ```
 
-**`nodes/node_{id}.json`** also gains a `two_extremes` key at the root (same 4 scalars).
+Extract layer-rebuild logic into a `rebuildLayers()` closure inside the second `useEffect` to avoid duplication.
 
-### 2g. Schema assertions before write (new checks)
+### 5b. Ego-Graph ArcLayer
 
-```python
-assert len(master_index["pit_histogram"]) == 10
-assert len(master_index["zero_inflation_reliability"]) <= 10
-for node in master_index["nodes"]:
-    te = node.get("two_extremes")
-    assert te is not None
-    assert te["mae_fill_nan"] >= 0
-    assert te["rmse_fill_nan"] >= 0
+Read `egoGraphEdges` from the store (subscribe alongside `currentTimestep`/`selectedNodeId`).
+
+Add to `buildLayers`:
+
+```typescript
+const egoArcLayer = new ArcLayer<AttentionEdge>({
+  id: "ego-graph-layer",
+  data: egoGraphEdges ?? [],
+  getSourcePosition: (d) => [d.source_lon, d.source_lat],
+  getTargetPosition: (d) => [d.target_lon, d.target_lat],
+  getSourceColor: (d) =>
+    d.direction === "incoming" ? [96, 165, 250, 220] : [251, 113, 133, 220],
+  getTargetColor: (d) =>
+    d.direction === "incoming" ? [96, 165, 250, 180] : [251, 113, 133, 180],
+  getWidth: (d) => Math.max(2, d.edge_weight * 12),
+  widthUnits: "pixels",
+  updateTriggers: { data: [selectedNodeId] },
+  visible: selectedNodeId !== null && (egoGraphEdges?.length ?? 0) > 0,
+});
+return [realLayer, simLayer, arcLayer, egoArcLayer];
 ```
+
+Color convention: **blue** = incoming attention (information flowing in), **rose** = outgoing attention (this node attending outward). Width scales linearly with `edge_weight`.
+
+### 5c. Single-click confirmation
+
+`onClick` is already present on both ScatterplotLayers (lines 88 and 110). **No code change needed.** The plan documents this for traceability.
 
 ---
 
-## Step 3 — Frontend Types: `frontend/src/types/payload.ts`
+## Step 6 — Map Scene: `frontend/src/components/MapScene.tsx`
 
-Add the following new interfaces (zero breaking changes to existing types):
+Move the Fab `<Link>` from `{bottom: 196, right: 24}` to `{top: 24, left: 24}`.
 
-```typescript
-// ZINB Calibration — PIT histogram bin
-export interface PITBin {
-  bin_center: number;  // midpoint of the [0,1] bin
-  density: number;     // fraction of PIT values falling in this bin
-}
-
-// ZINB Calibration — Zero-inflation reliability bin
-export interface ZeroInflationBin {
-  pi_center: number;                // midpoint of the pi bin
-  observed_zero_fraction: number;   // actual fraction of true zeros in this bin
-  count: number;                    // number of observations in this bin
-}
-
-// Per-node Two-Extremes missingness bracket
-export interface TwoExtremes {
-  mae_drop_nan: number | null;   // null when no valid (non-NaN) ground truths
-  rmse_drop_nan: number | null;
-  mae_fill_nan: number;          // always present (NaN filled with 0)
-  rmse_fill_nan: number;
-}
-```
-
-Update `NodeEntry` (master_index nodes array) to include:
-```typescript
-two_extremes?: TwoExtremes;
-```
-
-Update `MasterIndex` to include:
-```typescript
-pit_histogram?: PITBin[];
-zero_inflation_reliability?: ZeroInflationBin[];
-```
-
-Update `NodeDetailPayload` to include:
-```typescript
-two_extremes?: TwoExtremes;
-```
+Also remove the `bottom` and `right` inline style properties and replace with `top` and `left`.
 
 ---
 
-## Step 4 — Frontend Analytics Page: `frontend/src/app/analytics/page.tsx`
+## Step 7 — EXPERIMENTS.md Ledger Update
 
-### 4a. New imports
-
-```typescript
-import { BarChart, Bar, ScatterChart, Scatter, ReferenceLine,
-         XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import type { PITBin, ZeroInflationBin, TwoExtremes } from "@/types/payload";
-```
-
-### 4b. Update `NodeRow` type
-
-Add four new fields:
-```typescript
-mae_drop_nan: number | null;
-rmse_drop_nan: number | null;
-mae_fill_nan: number | null;   // null if two_extremes absent
-rmse_fill_nan: number | null;
-```
-
-### 4c. Update `rows` useMemo to extract Two-Extremes scalars
-
-```typescript
-mae_drop_nan: node.two_extremes?.mae_drop_nan ?? null,
-rmse_drop_nan: node.two_extremes?.rmse_drop_nan ?? null,
-mae_fill_nan: node.two_extremes?.mae_fill_nan ?? null,
-rmse_fill_nan: node.two_extremes?.rmse_fill_nan ?? null,
-```
-
-### 4d. Add 4 new columns to `columns` array
-
-| field | headerName | width | type |
-|:---|:---|:---|:---|
-| `mae_drop_nan` | MAE (drop NaN) | 110 | number, 3dp, nullable |
-| `rmse_drop_nan` | RMSE (drop NaN) | 120 | number, 3dp, nullable |
-| `mae_fill_nan` | MAE (fill 0) | 100 | number, 3dp |
-| `rmse_fill_nan` | RMSE (fill 0) | 110 | number, 3dp |
-
-Null-safe `valueFormatter`: if value is null return `"—"`, else `value.toFixed(3)`.
-
-### 4e. Add Tab 4 to the Tabs scaffold
-
-```tsx
-<Tab label="ZINB Calibration" value={3} />
-```
-
-(Existing Tabs 1, 2, 3 are unchanged. Tabs 1 and 2 remain disabled.)
-
-### 4f. Tab 3 panel — ZINB Calibration
-
-Two side-by-side charts inside a `Box sx={{ display: 'flex', gap: 2 }}`:
-
-**Left — PIT Histogram (BarChart)**
-- Data: `masterIndex.pit_histogram`
-- `<Bar dataKey="density" fill="#60a5fa" />`
-- X-axis: `bin_center` (0.05 → 0.95)
-- Y-axis: density
-- A `<ReferenceLine y={0.1} stroke="#f59e0b" strokeDasharray="4 4" />` marks the uniform target (1/10 = 0.1).
-- Label above chart: "PIT Histogram — uniform bars indicate perfect calibration"
-
-**Right — Zero-Inflation Reliability (ScatterChart)**
-- Data: `masterIndex.zero_inflation_reliability`
-- `<Scatter dataKey="observed_zero_fraction" name="Observed fraction" />`
-- X-axis: `pi_center` (predicted π)
-- Y-axis: `observed_zero_fraction` (actual fraction of zeros)
-- `<ReferenceLine` segment: a dashed `y = x` diagonal. Rendered as a `<Line>` in a `<ComposedChart>` overlaid, or as a custom reference line using `<ReferenceLine segment={[{x:0,y:0},{x:1,y:1}]} />`.
-- Label: "Zero-Inflation Reliability — points on the dashed line indicate perfect calibration"
-
-**Defensive rendering:** Both charts are wrapped in:
-```tsx
-{!masterIndex.pit_histogram || masterIndex.pit_histogram.length === 0 ? (
-  <Alert severity="info">Calibration data not present in this payload. Re-run export_ui_payload.py.</Alert>
-) : (
-  /* charts */
-)}
-```
-
-### 4g. Zero math on the frontend
-
-The analytics page performs **zero** statistical computation for the calibration tab. It renders pre-computed arrays from the payload directly. The PIT and Reliability data arrive already aggregated into 10-bin arrays. No CDF, binning, or metric derivation is performed in the browser.
-
----
-
-## Step 5 — EXPERIMENTS.md Ledger Update
-
-Per CLAUDE.md §6, append a new row upon successful implementation:
-
-| Field | Value |
-|:---|:---|
-| Date | 2026-05-11 |
-| Branch | main |
-| Prompt/Goal | Iteration 4: Add PIT histogram, zero-inflation reliability, and Two-Extremes MAE/RMSE to payload + ZINB Calibration tab in analytics dashboard |
-| Outcome | 3 new calibration metrics computed in export_ui_payload.py; master_index.json extended with global PIT/reliability arrays and per-node Two-Extremes scalars; payload.ts updated with 3 new interfaces; analytics page gains 4 DataGrid columns and Tab 4 with BarChart + ScatterChart |
+Per CLAUDE.md §6, append a row upon completion.
 
 ---
 
 ## Files to Create / Modify
 
-| Path | Action | Description |
-|:---|:---|:---|
-| `src/export_ui_payload.py` | **EDIT** | Add pi accumulator, 3 calibration functions, inject metrics into JSON outputs |
-| `frontend/src/types/payload.ts` | **EDIT** | Add `PITBin`, `ZeroInflationBin`, `TwoExtremes`; update `NodeEntry`, `MasterIndex`, `NodeDetailPayload` |
-| `frontend/src/app/analytics/page.tsx` | **EDIT** | Add 4 DataGrid columns, Tab 4 with PIT BarChart + Reliability ScatterChart |
-| `EXPERIMENTS.md` | **EDIT** | Append ledger row |
+| Path                                        | Action   | Description                                                                                                           |
+| :------------------------------------------ | :------- | :-------------------------------------------------------------------------------------------------------------------- |
+| `src/export_ui_payload.py`                  | **EDIT** | Add `build_ego_graph_edges`; extend `zinb_series` with `pi`+`is_missing`; inject `ego_graph_edges` into per-node JSON |
+| `frontend/src/types/payload.ts`             | **EDIT** | Extend `ZINBEntry` (pi, is_missing); add `AttentionEdge`; update `NodeDetailPayload`                                  |
+| `frontend/src/store/useTimeStore.ts`        | **EDIT** | Add `egoGraphEdges` + `setEgoGraphEdges`                                                                              |
+| `frontend/src/components/NodeInspector.tsx` | **EDIT** | Add pi MNAR timeline (Recharts), ego-graph edge list, write to store on load                                          |
+| `frontend/src/components/MapVisualizer.tsx` | **EDIT** | Add ego-graph ArcLayer, hover-scaling, read egoGraphEdges from store                                                  |
+| `frontend/src/components/MapScene.tsx`      | **EDIT** | Move Fab to top-left                                                                                                  |
+| `EXPERIMENTS.md`                            | **EDIT** | Append ledger row                                                                                                     |
 
 ---
 
-## No-op confirmation (strict constraints respected)
+## No-op confirmations (strict constraints respected)
 
-- **Zero Host Install:** No `pip install` or `npm install` on host. `scipy` is already in the container's Python environment (required by prior steps; verify with `python -c "from scipy.special import betainc; print('ok')"` if uncertain).
-- **Zero Frontend Math:** All binning, CDF computation, and metric arithmetic is done exclusively in `export_ui_payload.py`. The Next.js page is a pure renderer.
-- **Offensive Tripwires:** `pi ∈ (0,1)`, `u ∈ [0,1]`, no bare `except`, no silent NaN drops.
-- **No live API:** All data flows through the static JSON bridge per Phase 1 constraint.
+- **Zero Host Install:** No new packages. Recharts already in container, Deck.gl ArcLayer already imported in MapVisualizer.
+- **Zero Frontend Math:** `build_ego_graph_edges` (sorting, mean weight) is computed in Python. NodeInspector and MapVisualizer are pure renderers of pre-aggregated data.
+- **Offensive Tripwires:** alignment assert, NaN tripwire on `pi` in `zinb_series`, non-negative edge weight assert, direction enum assert.
+- **No live API:** Static JSON bridge only.
+- **Single-click:** Already implemented — confirmed at `MapVisualizer.tsx:88,110`.
 
 ---
 

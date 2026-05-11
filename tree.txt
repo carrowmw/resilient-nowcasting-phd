@@ -28,6 +28,7 @@
 │   ├── AGENTS.md
 │   ├── CLAUDE.md
 │   ├── eslint.config.mjs
+│   ├── frontend_runtime_errors.log
 │   ├── next-env.d.ts
 │   ├── next.config.ts
 │   ├── package-lock.json
@@ -35,6 +36,58 @@
 │   ├── postcss.config.mjs
 │   ├── public
 │   │   ├── data
+│   │   │   ├── master_index.json
+│   │   │   ├── nodes
+│   │   │   │   ├── node_0.json
+│   │   │   │   ├── node_1.json
+│   │   │   │   ├── node_10.json
+│   │   │   │   ├── node_11.json
+│   │   │   │   ├── node_12.json
+│   │   │   │   ├── node_13.json
+│   │   │   │   ├── node_14.json
+│   │   │   │   ├── node_15.json
+│   │   │   │   ├── node_16.json
+│   │   │   │   ├── node_17.json
+│   │   │   │   ├── node_18.json
+│   │   │   │   ├── node_19.json
+│   │   │   │   ├── node_2.json
+│   │   │   │   ├── node_20.json
+│   │   │   │   ├── node_21.json
+│   │   │   │   ├── node_22.json
+│   │   │   │   ├── node_23.json
+│   │   │   │   ├── node_24.json
+│   │   │   │   ├── node_25.json
+│   │   │   │   ├── node_26.json
+│   │   │   │   ├── node_27.json
+│   │   │   │   ├── node_28.json
+│   │   │   │   ├── node_29.json
+│   │   │   │   ├── node_3.json
+│   │   │   │   ├── node_30.json
+│   │   │   │   ├── node_31.json
+│   │   │   │   ├── node_32.json
+│   │   │   │   ├── node_33.json
+│   │   │   │   ├── node_34.json
+│   │   │   │   ├── node_35.json
+│   │   │   │   ├── node_36.json
+│   │   │   │   ├── node_37.json
+│   │   │   │   ├── node_38.json
+│   │   │   │   ├── node_39.json
+│   │   │   │   ├── node_4.json
+│   │   │   │   ├── node_40.json
+│   │   │   │   ├── node_41.json
+│   │   │   │   ├── node_42.json
+│   │   │   │   ├── node_43.json
+│   │   │   │   ├── node_44.json
+│   │   │   │   ├── node_45.json
+│   │   │   │   ├── node_46.json
+│   │   │   │   ├── node_47.json
+│   │   │   │   ├── node_48.json
+│   │   │   │   ├── node_49.json
+│   │   │   │   ├── node_5.json
+│   │   │   │   ├── node_6.json
+│   │   │   │   ├── node_7.json
+│   │   │   │   ├── node_8.json
+│   │   │   │   └── node_9.json
 │   │   │   └── ui_payload.json
 │   │   ├── file.svg
 │   │   ├── globe.svg
@@ -44,7 +97,13 @@
 │   ├── README.md
 │   ├── src
 │   │   ├── app
+│   │   │   ├── analytics
+│   │   │   │   └── page.tsx
+│   │   │   ├── api
+│   │   │   │   └── log
+│   │   │   │       └── route.ts
 │   │   │   ├── favicon.ico
+│   │   │   ├── GlobalErrorReporter.tsx
 │   │   │   ├── globals.css
 │   │   │   ├── layout.tsx
 │   │   │   └── page.tsx
@@ -241,4 +300,4 @@
         └── tmp
             └── code
 
-73 directories, 169 files
+77 directories, 224 files

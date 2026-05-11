@@ -18,6 +18,9 @@ import {
   ComposedChart,
   Line,
   Area,
+  BarChart,
+  Bar,
+  ReferenceLine,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -25,7 +28,11 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import type { MasterIndex, NodeEntry } from "@/types/payload";
+import type {
+  MasterIndex,
+  NodeEntry,
+  PITBin,
+} from "@/types/payload";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,10 +46,21 @@ interface NodeRow {
   max_mu: number;
   avg_sigma: number;
   semantic_tags: string;
+  mae_drop_nan: number | null;
+  rmse_drop_nan: number | null;
+  mae_fill_nan: number | null;
+  rmse_fill_nan: number | null;
 }
 
 // Each chart point has numeric keys for mu and ci bounds per selected node.
 type ChartPoint = Record<string, number>;
+
+// Diagonal data uses the same axis keys as the reliability chart (pi_center / observed_zero_fraction)
+// so that the Line component can resolve them against the configured axes.
+const RELIABILITY_DIAGONAL = [
+  { pi_center: 0, observed_zero_fraction: 0 },
+  { pi_center: 1, observed_zero_fraction: 1 },
+];
 
 // ---------------------------------------------------------------------------
 // Colour palette for multi-node overlay
@@ -91,6 +109,7 @@ export default function AnalyticsPage() {
       const avg_mu = preds.reduce((a, b) => a + b, 0) / n;
       const max_mu = preds.length ? Math.max(...preds) : 0;
       const avg_sigma = sigmas.reduce((a, b) => a + b, 0) / n;
+      const te = node.two_extremes;
       return {
         id: node.id,
         location_name: node.location_name,
@@ -99,6 +118,10 @@ export default function AnalyticsPage() {
         max_mu,
         avg_sigma,
         semantic_tags: node.semantic_tags?.join(", ") || "—",
+        mae_drop_nan: te?.mae_drop_nan ?? null,
+        rmse_drop_nan: te?.rmse_drop_nan ?? null,
+        mae_fill_nan: te?.mae_fill_nan ?? null,
+        rmse_fill_nan: te?.rmse_fill_nan ?? null,
       };
     });
   }, [masterIndex]);
@@ -117,9 +140,6 @@ export default function AnalyticsPage() {
   }, [rows, filterText]);
 
   // ---- Chart data (Amendment 1: separate ci_lower / ci_upper fields) -------
-  // Each point: { t, mu_{id}, ci_lower_{id}, ci_upper_{id} }
-  // Rendered as: <Area dataKey={['ci_lower_{id}', 'ci_upper_{id}']} /> —
-  // Recharts' native range support; no background-colour clipping needed.
 
   const chartData: ChartPoint[] = useMemo(() => {
     if (!masterIndex || selectedIds.length === 0) return [];
@@ -141,7 +161,21 @@ export default function AnalyticsPage() {
     });
   }, [masterIndex, selectedIds]);
 
+  // ---- Reliability chart data (dots + diagonal in one ComposedChart) -------
+  // The diagonal Line uses RELIABILITY_DIAGONAL with its own `data` prop.
+  // The scatter Line uses the reliability bins from the payload.
+
+  const reliabilityData = useMemo(
+    () => masterIndex?.zero_inflation_reliability ?? [],
+    [masterIndex]
+  );
+
   // ---- DataGrid column definitions ----------------------------------------
+
+  const nullableFmt = (value: unknown): string => {
+    if (value === null || value === undefined) return "—";
+    return (value as number).toFixed(3);
+  };
 
   const columns: GridColDef<NodeRow>[] = [
     { field: "id", headerName: "ID", width: 64, type: "number" },
@@ -167,6 +201,34 @@ export default function AnalyticsPage() {
       width: 95,
       type: "number",
       valueFormatter: (value: number) => value.toFixed(3),
+    },
+    {
+      field: "mae_drop_nan",
+      headerName: "MAE (drop NaN)",
+      width: 130,
+      type: "number",
+      valueFormatter: nullableFmt,
+    },
+    {
+      field: "rmse_drop_nan",
+      headerName: "RMSE (drop NaN)",
+      width: 140,
+      type: "number",
+      valueFormatter: nullableFmt,
+    },
+    {
+      field: "mae_fill_nan",
+      headerName: "MAE (fill 0)",
+      width: 110,
+      type: "number",
+      valueFormatter: nullableFmt,
+    },
+    {
+      field: "rmse_fill_nan",
+      headerName: "RMSE (fill 0)",
+      width: 115,
+      type: "number",
+      valueFormatter: nullableFmt,
     },
     {
       field: "semantic_tags",
@@ -213,6 +275,11 @@ export default function AnalyticsPage() {
       </Box>
     );
   }
+
+  const hasPIT =
+    Array.isArray(masterIndex.pit_histogram) &&
+    masterIndex.pit_histogram.length > 0;
+  const hasReliability = reliabilityData.length > 0;
 
   // ---- Full layout --------------------------------------------------------
 
@@ -383,6 +450,7 @@ export default function AnalyticsPage() {
             <Tab label="Forecast Variance" value={0} />
             <Tab label="Network Influence" value={1} disabled />
             <Tab label="Self-Healing Log" value={2} disabled />
+            <Tab label="ZINB Calibration" value={3} />
           </Tabs>
         </Box>
 
@@ -462,8 +530,6 @@ export default function AnalyticsPage() {
                        * dataKey receives an array of two field names:
                        * Recharts reads [ci_lower_{id}, ci_upper_{id}] from
                        * each data point and fills the band between them.
-                       * No background-colour clipping; the CartesianGrid
-                       * remains fully visible through the transparent fill.
                        */
                       <Area
                         key={`ci_${id}`}
@@ -496,6 +562,257 @@ export default function AnalyticsPage() {
                   })}
                 </ComposedChart>
               </ResponsiveContainer>
+            )}
+          </Box>
+        )}
+
+        {/* Tab 3 — ZINB Calibration */}
+        {activeTab === 3 && (
+          <Box
+            sx={{
+              flex: 1,
+              overflow: "auto",
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            {!hasPIT && !hasReliability ? (
+              <Alert
+                severity="info"
+                sx={{
+                  bgcolor: "rgba(96,165,250,0.07)",
+                  color: "#93c5fd",
+                  border: "1px solid rgba(96,165,250,0.15)",
+                  "& .MuiAlert-icon": { color: "#60a5fa" },
+                  fontSize: "0.82rem",
+                }}
+              >
+                Calibration data not present in this payload. Re-run{" "}
+                <code>export_ui_payload.py</code> to generate the PIT histogram
+                and zero-inflation reliability arrays.
+              </Alert>
+            ) : (
+              <Box
+                sx={{
+                  display: "flex",
+                  gap: 2,
+                  flex: 1,
+                  minHeight: 300,
+                  flexWrap: "wrap",
+                }}
+              >
+                {/* ---- Left: PIT Histogram ---- */}
+                <Box
+                  sx={{
+                    flex: 1,
+                    minWidth: 300,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 0.5,
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "#64748b", fontSize: "0.75rem" }}
+                  >
+                    PIT Histogram — uniform bars indicate perfect calibration
+                  </Typography>
+                  {hasPIT ? (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart
+                        data={masterIndex.pit_histogram as PITBin[]}
+                        margin={{ top: 8, right: 16, left: -4, bottom: 28 }}
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke="rgba(255,255,255,0.04)"
+                        />
+                        <XAxis
+                          dataKey="bin_center"
+                          stroke="#1e293b"
+                          tick={{ fill: "#334155", fontSize: 10 }}
+                          tickFormatter={(v: number) => v.toFixed(2)}
+                          label={{
+                            value: "PIT value  u = F_ZINB(y_obs)",
+                            position: "insideBottom",
+                            offset: -14,
+                            fill: "#334155",
+                            fontSize: 10,
+                          }}
+                        />
+                        <YAxis
+                          stroke="#1e293b"
+                          tick={{ fill: "#334155", fontSize: 10 }}
+                          width={48}
+                          label={{
+                            value: "Density",
+                            angle: -90,
+                            position: "insideLeft",
+                            offset: 14,
+                            fill: "#334155",
+                            fontSize: 10,
+                          }}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "rgba(10,10,10,0.96)",
+                            border: "1px solid rgba(255,255,255,0.08)",
+                            color: "#e2e8f0",
+                            fontSize: "0.72rem",
+                            borderRadius: 6,
+                          }}
+                          formatter={(v: unknown) => [
+                            Number(v).toFixed(4),
+                            "density",
+                          ]}
+                        />
+                        {/* Uniform reference: 1/10 = 0.10 */}
+                        <ReferenceLine
+                          y={0.1}
+                          stroke="#f59e0b"
+                          strokeDasharray="4 4"
+                          label={{
+                            value: "Uniform (0.10)",
+                            position: "insideTopRight",
+                            fill: "#f59e0b",
+                            fontSize: 9,
+                          }}
+                        />
+                        <Bar
+                          dataKey="density"
+                          fill="#60a5fa"
+                          fillOpacity={0.8}
+                          isAnimationActive={false}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <Alert severity="warning" sx={{ fontSize: "0.78rem" }}>
+                      PIT histogram not available in this payload.
+                    </Alert>
+                  )}
+                </Box>
+
+                {/* ---- Right: Zero-Inflation Reliability ---- */}
+                <Box
+                  sx={{
+                    flex: 1,
+                    minWidth: 300,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 0.5,
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "#64748b", fontSize: "0.75rem" }}
+                  >
+                    Zero-Inflation Reliability — points on the dashed y = x
+                    line indicate perfect calibration
+                  </Typography>
+                  {hasReliability ? (
+                    <ResponsiveContainer width="100%" height={280}>
+                      {/*
+                       * ComposedChart with two Line series:
+                       *   1. Scatter dots (stroke=none, large dots) — observed zero fractions
+                       *   2. Dashed diagonal (y = x) — perfect calibration reference
+                       * Both use the same axis keys (pi_center / observed_zero_fraction) so
+                       * the diagonal data also uses those key names for correct axis resolution.
+                       */}
+                      <ComposedChart
+                        margin={{ top: 8, right: 16, left: -4, bottom: 28 }}
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke="rgba(255,255,255,0.04)"
+                        />
+                        <XAxis
+                          dataKey="pi_center"
+                          type="number"
+                          domain={[0, 1]}
+                          stroke="#1e293b"
+                          tick={{ fill: "#334155", fontSize: 10 }}
+                          tickFormatter={(v: number) => v.toFixed(1)}
+                          label={{
+                            value: "Predicted π (zero-inflation probability)",
+                            position: "insideBottom",
+                            offset: -14,
+                            fill: "#334155",
+                            fontSize: 10,
+                          }}
+                        />
+                        <YAxis
+                          dataKey="observed_zero_fraction"
+                          type="number"
+                          domain={[0, 1]}
+                          stroke="#1e293b"
+                          tick={{ fill: "#334155", fontSize: 10 }}
+                          width={48}
+                          label={{
+                            value: "Observed zero fraction",
+                            angle: -90,
+                            position: "insideLeft",
+                            offset: 14,
+                            fill: "#334155",
+                            fontSize: 10,
+                          }}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "rgba(10,10,10,0.96)",
+                            border: "1px solid rgba(255,255,255,0.08)",
+                            color: "#e2e8f0",
+                            fontSize: "0.72rem",
+                            borderRadius: 6,
+                          }}
+                          formatter={(v: unknown, name: string) => [
+                            Number(v).toFixed(4),
+                            name,
+                          ]}
+                        />
+                        <Legend
+                          wrapperStyle={{
+                            color: "#475569",
+                            fontSize: "0.72rem",
+                          }}
+                        />
+                        {/* y = x diagonal — same axis keys, two endpoint data points */}
+                        <Line
+                          data={RELIABILITY_DIAGONAL}
+                          type="linear"
+                          dataKey="observed_zero_fraction"
+                          stroke="#f59e0b"
+                          strokeDasharray="6 3"
+                          strokeWidth={1.5}
+                          dot={false}
+                          activeDot={false}
+                          name="Perfect calibration (y = x)"
+                          isAnimationActive={false}
+                          legendType="plainline"
+                        />
+                        {/* Observed scatter — dots only, no connecting line */}
+                        <Line
+                          data={reliabilityData}
+                          type="monotone"
+                          dataKey="observed_zero_fraction"
+                          stroke="none"
+                          dot={{ r: 5, fill: "#34d399", stroke: "#34d399" }}
+                          activeDot={{ r: 7, fill: "#34d399" }}
+                          name="Observed zero fraction"
+                          isAnimationActive={false}
+                          legendType="circle"
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <Alert severity="warning" sx={{ fontSize: "0.78rem" }}>
+                      Reliability diagram not available in this payload.
+                    </Alert>
+                  )}
+                </Box>
+              </Box>
             )}
           </Box>
         )}
