@@ -7,7 +7,7 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { ScatterplotLayer, ArcLayer } from "@deck.gl/layers";
 
 import useTimeStore from "@/store/useTimeStore";
-import type { UIPayload, NodeEntry, EdgeEntry } from "@/types/payload";
+import type { UIPayload, NodeEntry, EdgeEntry, AttentionEdge } from "@/types/payload";
 
 // Newcastle upon Tyne city centre
 const INITIAL_VIEW = {
@@ -21,21 +21,19 @@ const INITIAL_VIEW = {
 const MAP_STYLE =
   "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
-// Defensive cap on the global edge set when no node is selected. With ego-graph
-// isolation active, ALL edges touching the selected node are shown regardless.
+// Defensive cap on the global edge set when no node is selected.
 const GLOBAL_EDGE_CAP = 80;
 
 /**
  * Maps a normalised value t∈[0,1] to a Green→Yellow→Red RGBA tuple.
- * t=0 → dim green, t=0.5 → yellow, t=1 → red.
  */
 function heatColor(t: number): [number, number, number, number] {
   const c = Math.min(1, Math.max(0, t));
   if (c < 0.5) {
-    const s = c * 2; // 0→1
+    const s = c * 2;
     return [Math.round(s * 255), 200, 0, 220];
   }
-  const s = (c - 0.5) * 2; // 0→1
+  const s = (c - 0.5) * 2;
   return [255, Math.round(200 * (1 - s)), 0, 220];
 }
 
@@ -57,12 +55,18 @@ function nodeRadius(d: NodeEntry, timestep: number): number {
 interface FilterState {
   selectedNodeId: number | null;
   attentionThreshold: number;
+  hoveredNodeId: number | null;
+  egoGraphEdges: AttentionEdge[] | null;
 }
 
 /**
- * Construct ScatterplotLayers (real + simulated) and an ArcLayer for the given
- * payload snapshot. Ego-graph isolation: when selectedNodeId is set, only edges
- * incident to that node are kept.
+ * Build all Deck.gl layers for the current frame.
+ *
+ * Layers (bottom to top):
+ *   1. nodes-real       — solid ScatterplotLayer for physical sensors
+ *   2. nodes-simulated  — hollow ring ScatterplotLayer for synthetic nodes
+ *   3. topology-layer   — global or ego-graph ArcLayer (master_index edges)
+ *   4. ego-graph-layer  — localized top-K ArcLayer from node_{id}.json
  */
 function buildLayers(
   payload: UIPayload,
@@ -70,68 +74,68 @@ function buildLayers(
   timestep: number,
   filters: FilterState,
   onSelectNode: (id: number | null) => void,
+  onHoverNode: (id: number | null) => void,
 ) {
-  const { selectedNodeId, attentionThreshold } = filters;
+  const { selectedNodeId, attentionThreshold, hoveredNodeId, egoGraphEdges } = filters;
 
-  // ── Real-node layer (solid filled disc) ────────────────────────────────────
+  // ── Real-node layer ────────────────────────────────────────────────────────
   const realNodes = payload.nodes.filter((n) => !n.is_simulated);
   const realLayer = new ScatterplotLayer<NodeEntry>({
     id: "nodes-real",
     data: realNodes,
     getPosition: (d) => [d.lon, d.lat],
     getFillColor: (d) => nodeFillColor(d, timestep),
-    getRadius: (d) => nodeRadius(d, timestep),
+    getRadius: (d) => nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
     radiusUnits: "meters",
     stroked: false,
     filled: true,
     pickable: true,
+    autoHighlight: true,
+    highlightColor: [255, 255, 255, 55],
     onClick: ({ object }) => onSelectNode(object ? object.id : null),
+    onHover: ({ object }) => onHoverNode(object ? object.id : null),
     updateTriggers: {
       getFillColor: [timestep],
-      getRadius: [timestep],
+      getRadius: [timestep, hoveredNodeId],
     },
   });
 
   // ── Simulated-node layer (hollow ring) ─────────────────────────────────────
-  // NSTAR_FRONTEND_ARCHITECTURE.md §A: simulated nodes must be visually distinct.
-  // Deck.gl's stroked/filled flags are layer-wide, so we split into two layers.
   const simNodes = payload.nodes.filter((n) => n.is_simulated);
   const simLayer = new ScatterplotLayer<NodeEntry>({
     id: "nodes-simulated",
     data: simNodes,
     getPosition: (d) => [d.lon, d.lat],
-    // Ring inherits the same uncertainty heat colour for visual coherence.
     getLineColor: (d) => nodeFillColor(d, timestep),
-    getRadius: (d) => nodeRadius(d, timestep),
+    getRadius: (d) => nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
     radiusUnits: "meters",
     stroked: true,
     filled: false,
     lineWidthMinPixels: 3,
     pickable: true,
+    autoHighlight: true,
+    highlightColor: [255, 255, 255, 55],
     onClick: ({ object }) => onSelectNode(object ? object.id : null),
+    onHover: ({ object }) => onHoverNode(object ? object.id : null),
     updateTriggers: {
       getLineColor: [timestep],
-      getRadius: [timestep],
+      getRadius: [timestep, hoveredNodeId],
     },
   });
 
-  // ── Topology Layer (attention arcs) ────────────────────────────────────────
+  // ── Global topology layer (master_index edges) ─────────────────────────────
   type WeightedEdge = { edge: EdgeEntry; weight: number };
   let weighted: WeightedEdge[] = payload.edges
     .map((e) => ({ edge: e, weight: e.attention_sequence[timestep] ?? 0 }))
     .filter((x) => x.weight >= attentionThreshold);
 
   if (selectedNodeId !== null) {
-    // Ego-graph: keep only edges touching the selected node.
     weighted = weighted.filter(
       (x) =>
         x.edge.source === selectedNodeId || x.edge.target === selectedNodeId,
     );
   } else {
-    // Defensive cap to prevent visual hairball when nothing is selected.
-    weighted = weighted
-      .sort((a, b) => b.weight - a.weight)
-      .slice(0, GLOBAL_EDGE_CAP);
+    weighted = weighted.sort((a, b) => b.weight - a.weight).slice(0, GLOBAL_EDGE_CAP);
   }
 
   const arcLayer = new ArcLayer<WeightedEdge>({
@@ -156,7 +160,28 @@ function buildLayers(
     },
   });
 
-  return [realLayer, simLayer, arcLayer];
+  // ── Localized ego-graph layer (top-K edges from node_{id}.json) ────────────
+  // Blue arcs = incoming attention; rose arcs = outgoing attention.
+  // Width scales with edge_weight. Visible only when a node is selected
+  // and ego-graph data has been fetched by NodeInspector.
+  const egoArcLayer = new ArcLayer<AttentionEdge>({
+    id: "ego-graph-layer",
+    data: egoGraphEdges ?? [],
+    visible: selectedNodeId !== null && (egoGraphEdges?.length ?? 0) > 0,
+    getSourcePosition: (d) => [d.source_lon, d.source_lat],
+    getTargetPosition: (d) => [d.target_lon, d.target_lat],
+    getSourceColor: (d) =>
+      d.direction === "incoming" ? [96, 165, 250, 220] : [251, 113, 133, 220],
+    getTargetColor: (d) =>
+      d.direction === "incoming" ? [96, 165, 250, 160] : [251, 113, 133, 160],
+    getWidth: (d) => Math.max(2, d.edge_weight * 14),
+    widthUnits: "pixels",
+    updateTriggers: {
+      data: [selectedNodeId],
+    },
+  });
+
+  return [realLayer, simLayer, arcLayer, egoArcLayer];
 }
 
 export default function MapVisualizer() {
@@ -167,13 +192,18 @@ export default function MapVisualizer() {
   const payloadRef = useRef<UIPayload | null>(null);
   const nodeMapRef = useRef<Map<number, NodeEntry>>(new Map());
 
+  // Hover state is kept in a ref (not Zustand) to avoid React re-renders on
+  // every pointer movement — only the WebGL overlay needs to rebuild.
+  const hoveredNodeIdRef = useRef<number | null>(null);
+
   const setMaxTimesteps = useTimeStore((s) => s.setMaxTimesteps);
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
   const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
   const attentionThreshold = useTimeStore((s) => s.attentionThreshold);
+  const egoGraphEdges = useTimeStore((s) => s.egoGraphEdges);
 
-  // ─── Initialise MapLibre + deck.gl overlay once ────────────────────────────
+  // ── Initialise MapLibre + deck.gl overlay once ────────────────────────────
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -194,8 +224,6 @@ export default function MapVisualizer() {
     mapRef.current = map;
     overlayRef.current = overlay;
 
-    // Click on empty map area → deselect node (Deck.gl onClick fires first when
-    // a pickable object is hit, so this only runs on background clicks).
     map.on("click", () => {
       if (useTimeStore.getState().selectedNodeId !== null) {
         useTimeStore.getState().setSelectedNodeId(null);
@@ -232,12 +260,35 @@ export default function MapVisualizer() {
             {
               selectedNodeId: state.selectedNodeId,
               attentionThreshold: state.attentionThreshold,
+              hoveredNodeId: hoveredNodeIdRef.current,
+              egoGraphEdges: state.egoGraphEdges,
             },
             setSelectedNodeId,
+            (id) => {
+              if (hoveredNodeIdRef.current !== id) {
+                hoveredNodeIdRef.current = id;
+                const s = useTimeStore.getState();
+                overlay.setProps({
+                  layers: buildLayers(
+                    payload,
+                    nodeMap,
+                    s.currentTimestep,
+                    {
+                      selectedNodeId: s.selectedNodeId,
+                      attentionThreshold: s.attentionThreshold,
+                      hoveredNodeId: id,
+                      egoGraphEdges: s.egoGraphEdges,
+                    },
+                    setSelectedNodeId,
+                    () => {},
+                  ),
+                });
+              }
+            },
           ),
         });
       } catch (err) {
-        console.warn("[MapVisualizer] Failed to load ui_payload.json", err);
+        console.warn("[MapVisualizer] Failed to load master_index.json", err);
       }
     });
 
@@ -250,7 +301,7 @@ export default function MapVisualizer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Rebuild layers whenever the timestep, selection, or threshold changes.
+  // Rebuild layers whenever timestep, selection, threshold, or ego-graph data changes.
   useEffect(() => {
     const payload = payloadRef.current;
     const overlay = overlayRef.current;
@@ -260,11 +311,40 @@ export default function MapVisualizer() {
         payload,
         nodeMapRef.current,
         currentTimestep,
-        { selectedNodeId, attentionThreshold },
+        {
+          selectedNodeId,
+          attentionThreshold,
+          hoveredNodeId: hoveredNodeIdRef.current,
+          egoGraphEdges,
+        },
         setSelectedNodeId,
+        (id) => {
+          if (hoveredNodeIdRef.current !== id) {
+            hoveredNodeIdRef.current = id;
+            const p = payloadRef.current;
+            const ov = overlayRef.current;
+            if (!p || !ov) return;
+            const s = useTimeStore.getState();
+            ov.setProps({
+              layers: buildLayers(
+                p,
+                nodeMapRef.current,
+                s.currentTimestep,
+                {
+                  selectedNodeId: s.selectedNodeId,
+                  attentionThreshold: s.attentionThreshold,
+                  hoveredNodeId: id,
+                  egoGraphEdges: s.egoGraphEdges,
+                },
+                setSelectedNodeId,
+                () => {},
+              ),
+            });
+          }
+        },
       ),
     });
-  }, [currentTimestep, selectedNodeId, attentionThreshold, setSelectedNodeId]);
+  }, [currentTimestep, selectedNodeId, attentionThreshold, egoGraphEdges, setSelectedNodeId]);
 
   return (
     <div

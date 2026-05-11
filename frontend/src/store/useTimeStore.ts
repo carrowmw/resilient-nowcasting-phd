@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { AttentionEdge } from '@/types/payload';
 
 interface TimeState {
   currentTimestep: number;
@@ -6,6 +7,7 @@ interface TimeState {
   isPlaying: boolean;
   selectedNodeId: number | null;
   attentionThreshold: number;
+  egoGraphEdges: AttentionEdge[] | null;
 
   setTimestep: (step: number) => void;
   setMaxTimesteps: (max: number) => void;
@@ -13,6 +15,7 @@ interface TimeState {
   incrementTimestep: () => void;
   setSelectedNodeId: (id: number | null) => void;
   setAttentionThreshold: (v: number) => void;
+  setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
 }
 
 const useTimeStore = create<TimeState>((set, get) => ({
@@ -21,6 +24,7 @@ const useTimeStore = create<TimeState>((set, get) => ({
   isPlaying: false,
   selectedNodeId: null,
   attentionThreshold: 0.05,
+  egoGraphEdges: null,
 
   setTimestep: (step: number) =>
     set({ currentTimestep: Math.max(0, Math.min(step, get().maxTimesteps)) }),
@@ -42,6 +46,8 @@ const useTimeStore = create<TimeState>((set, get) => ({
   // Clamp threshold to [0, 1] — attention weights live in [0, 1].
   setAttentionThreshold: (v: number) =>
     set({ attentionThreshold: Math.max(0, Math.min(1, v)) }),
+
+  setEgoGraphEdges: (edges: AttentionEdge[] | null) => set({ egoGraphEdges: edges }),
 }));
 
 export default useTimeStore;

@@ -86,8 +86,22 @@ export type UIPayload = MasterIndex;
 export interface ZINBEntry {
   t: number;
   mu: number;
-  theta: number; // dispersion parameter
+  theta: number;      // dispersion parameter
   std_dev: number;
+  pi: number;         // zero-inflation probability ∈ (0,1) — absent in pre-Iteration-4b payloads
+  is_missing: boolean; // true = this timestep was artificially masked before imputation
+}
+
+/** One directed GAT attention edge in the localized ego-graph. */
+export interface AttentionEdge {
+  source_id: number;
+  target_id: number;
+  direction: "incoming" | "outgoing";
+  edge_weight: number;  // mean GAT attention weight over all inference timesteps
+  source_lat: number;
+  source_lon: number;
+  target_lat: number;
+  target_lon: number;
 }
 
 export interface HopEdge {
@@ -107,5 +121,6 @@ export interface NodeDetailPayload {
   imputed_series: number[];
   mask_series: boolean[];
   edges_1hop: HopEdge[];
-  two_extremes?: TwoExtremes; // absent in payloads generated before Iteration 4
+  two_extremes?: TwoExtremes;       // absent in payloads generated before Iteration 4
+  ego_graph_edges?: AttentionEdge[]; // absent in payloads generated before Iteration 4b
 }

@@ -23,15 +23,15 @@ export default function MapScene() {
       <TimeSlider />
 
       {/* Floating button: navigate to the Analytics dashboard.
-          Positioned above the TimeSlider (bottom-6 ≈ 24px + ~140px content = ~164px).
-          Using 196px bottom keeps a comfortable 32px gap above the slider top edge. */}
+          Positioned top-left to avoid conflicting with the NodeInspector (top-right)
+          and the TimeSlider (bottom). */}
       <Link
         href="/analytics"
         aria-label="Open analytics dashboard"
         style={{
           position: 'absolute',
-          bottom: 196,
-          right: 24,
+          top: 24,
+          left: 24,
           zIndex: 20,
           display: 'flex',
           alignItems: 'center',

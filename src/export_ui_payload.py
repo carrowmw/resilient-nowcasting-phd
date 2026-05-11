@@ -77,6 +77,7 @@ SIMULATED_NODE_COORDS: List[Tuple[float, float]] = [
 ]
 
 NUM_TIMESTEPS_TARGET = 96  # 24 h × 4 per hour
+TOP_K_EGO_EDGES = 5       # top K incoming + top K outgoing per node in ego_graph_edges
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +444,80 @@ def compute_two_extremes(
         "mae_fill_nan": round(mae_fill, 4),
         "rmse_fill_nan": round(rmse_fill, 4),
     }
+
+
+def build_ego_graph_edges(
+    node_id: int,
+    edge_attention_data: Dict[Tuple[int, int], List[float]],
+    node_coord_map: Dict[int, Tuple[float, float]],
+    top_k: int = TOP_K_EGO_EDGES,
+) -> List[Dict]:
+    """
+    Extract top-K incoming and top-K outgoing GAT attention edges for node_id.
+
+    Mean attention weight over all inference timesteps is the scalar edge_weight.
+    Source and target coordinates are embedded so the frontend ArcLayer needs no
+    secondary lookup.
+
+    Edges where either endpoint has NaN coordinates are skipped (external data
+    quality issue, not a model failure — logged at WARNING level).
+
+    Args:
+        node_id:             the focal node
+        edge_attention_data: {(src, tgt): List[float]} — full attention history
+        node_coord_map:      {node_id: (lat, lon)}
+        top_k:               max edges returned per direction
+
+    Returns:
+        List of up to 2*top_k dicts, each with keys:
+        source_id, target_id, direction, edge_weight,
+        source_lat, source_lon, target_lat, target_lon
+    """
+    incoming: List[Dict] = []
+    outgoing: List[Dict] = []
+
+    for (src, tgt), attn_seq in edge_attention_data.items():
+        if src != node_id and tgt != node_id:
+            continue
+        direction = "incoming" if tgt == node_id else "outgoing"
+
+        if not attn_seq:
+            logger.warning(
+                f"ego_graph node {node_id}: empty attention sequence for edge "
+                f"({src},{tgt}) — skipped"
+            )
+            continue
+
+        mean_w = float(np.mean(attn_seq))
+        assert not math.isnan(mean_w), (
+            f"TRIPWIRE: NaN mean attention for edge ({src},{tgt})"
+        )
+
+        src_lat, src_lon = node_coord_map.get(src, (float("nan"), float("nan")))
+        tgt_lat, tgt_lon = node_coord_map.get(tgt, (float("nan"), float("nan")))
+
+        if any(math.isnan(v) for v in (src_lat, src_lon, tgt_lat, tgt_lon)):
+            logger.warning(
+                f"ego_graph node {node_id}: NaN coordinates for edge ({src},{tgt}) — skipped"
+            )
+            continue
+
+        entry = {
+            "source_id": src,
+            "target_id": tgt,
+            "direction": direction,
+            "edge_weight": round(mean_w, 6),
+            "source_lat": src_lat,
+            "source_lon": src_lon,
+            "target_lat": tgt_lat,
+            "target_lon": tgt_lon,
+        }
+        (incoming if direction == "incoming" else outgoing).append(entry)
+
+    incoming.sort(key=lambda x: x["edge_weight"], reverse=True)
+    outgoing.sort(key=lambda x: x["edge_weight"], reverse=True)
+
+    return incoming[:top_k] + outgoing[:top_k]
 
 
 # ---------------------------------------------------------------------------
@@ -917,10 +992,23 @@ def main() -> None:
     logger.info(f"Writing {num_nodes_total} per-node files to {NODES_DIR}/ …")
     os.makedirs(NODES_DIR, exist_ok=True)
 
+    # Coordinate lookup for ego-graph edge embedding (built once, reused per node)
+    node_coord_map: Dict[int, Tuple[float, float]] = {
+        m["id"]: (m["lat"], m["lon"]) for m in nodes_meta
+    }
+
     for meta in nodes_meta:
         node_id = meta["id"]
 
-        # Build zinb_series with per-timestep NaN tripwires
+        # Temporal alignment tripwire: mask_series, pi_data, and zinb entries
+        # must all be exactly num_timesteps long before we interleave them.
+        assert len(mask_series[node_id]) == len(pi_data[node_id]) == num_timesteps, (
+            f"TRIPWIRE: temporal misalignment for node {node_id}: "
+            f"mask_series={len(mask_series[node_id])}, "
+            f"pi_data={len(pi_data[node_id])}, expected={num_timesteps}"
+        )
+
+        # Build zinb_series with per-timestep NaN tripwires (now includes pi + is_missing)
         zinb_series: List[Dict] = []
         for t_idx in range(num_timesteps):
             entry: Dict = {
@@ -928,6 +1016,8 @@ def main() -> None:
                 "mu": timeseries_data[node_id][t_idx]["prediction"],
                 "theta": theta_data[node_id][t_idx],
                 "std_dev": timeseries_data[node_id][t_idx]["uncertainty"],
+                "pi": pi_data[node_id][t_idx],
+                "is_missing": mask_series[node_id][t_idx],
             }
             assert not math.isnan(entry["mu"]), \
                 f"NaN in node {node_id} zinb mu at t={t_idx}"
@@ -935,10 +1025,28 @@ def main() -> None:
                 f"NaN in node {node_id} zinb theta at t={t_idx}"
             assert not math.isnan(entry["std_dev"]), \
                 f"NaN in node {node_id} zinb std_dev at t={t_idx}"
+            assert not math.isnan(entry["pi"]), \
+                f"NaN in node {node_id} zinb pi at t={t_idx}"
+            assert isinstance(entry["is_missing"], bool), \
+                f"is_missing must be bool for node {node_id} at t={t_idx}"
             zinb_series.append(entry)
 
         for v in imputed_series[node_id]:
             assert not math.isnan(v), f"NaN in node {node_id} imputed_series"
+
+        # Post-build schema check: every entry must carry pi and is_missing
+        for entry in zinb_series:
+            assert "pi" in entry and "is_missing" in entry, \
+                f"Node {node_id}: zinb_series entry missing pi or is_missing"
+
+        # Localized ego-graph: top-K incoming + outgoing edges by mean attention weight
+        ego_edges = build_ego_graph_edges(node_id, edge_attention_data, node_coord_map)
+        assert isinstance(ego_edges, list)
+        for e in ego_edges:
+            assert e["edge_weight"] >= 0.0, \
+                f"Negative edge_weight in node {node_id} ego_graph: {e}"
+            assert e["direction"] in ("incoming", "outgoing"), \
+                f"Invalid direction in node {node_id} ego_graph: {e['direction']}"
 
         node_data: Dict = {
             "id": node_id,
@@ -952,6 +1060,7 @@ def main() -> None:
             "mask_series": mask_series[node_id],
             "edges_1hop": node_edges[node_id],
             "two_extremes": two_extremes_per_node[node_id],
+            "ego_graph_edges": ego_edges,
         }
 
         node_path = os.path.join(NODES_DIR, f"node_{node_id}.json")
