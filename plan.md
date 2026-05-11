@@ -1,401 +1,307 @@
-# Plan: Analytics Dashboard & Human-in-the-Loop Telemetry (Phase 1)
+# Plan: Iteration 4 — ZINB Calibration Metrics & Dashboard Upgrade
 
 **Phase Anchor:** `NSTAR_PHASES.md` → Phase 1 (Static Data Bridge ONLY). No live API.
-**North Stars consulted:** `NSTAR_FRONTEND_ARCHITECTURE.md`, `NSTAR_BACKEND_ARCHITECTURE.md`, `NSTAR_PHASES.md`
-**Date:** 2026-05-01
-**Branch:** `main` (auto-commit rollback point already created: `a207d08`)
+**North Stars consulted:** `NSTAR_BACKEND_ARCHITECTURE.md`, `NSTAR_FRONTEND_ARCHITECTURE.md`, `NSTAR_MLOPS.md`
+**Date:** 2026-05-11
+**Branch:** `main`
 
 ---
 
-## Current State Assessment
+## Pre-flight Checks
 
-| Component | Location | Status |
-|:---|:---|:---|
-| Monolithic fetch | `MapVisualizer.tsx` line 207 | Fetches `/data/ui_payload.json` → must migrate to `/data/master_index.json` |
-| Monolithic fetch | `NodeInspector.tsx` line 193 | Fetches `/data/ui_payload.json` → must migrate to per-node lazy fetch |
-| Sharded data files | `frontend/public/data/` | `master_index.json` + `nodes/node_*.json` already exist (pre-generated) |
-| `export_ui_payload.py` | `src/` | Still writes to `data/processed/ui_payload.json`; must be refactored to write sharded output formally |
-| `payload.ts` types | `frontend/src/types/` | Has `ground_truth_series` / `imputed_series` on `NodeEntry` → must restructure |
-| Analytics route | — | Does not exist |
-| Telemetry API | — | Does not exist |
-| Floating nav button | `MapScene.tsx` | Does not exist |
+- `pi` is already returned by the model in analysis mode: `result['pi']` → shape `[1, num_nodes_total]`, values from `torch.sigmoid()` ∈ (0, 1).
+- `ground_truth_series[node_id]` can contain `None` (simulated nodes) and `NaN` (real nodes with sensor outages, since `max(0.0, float(NaN)) → NaN`).
+- `scipy.special.betainc` is available in the container's Python environment.
+- **Branching question per CLAUDE.md §6:** This is a major feature addition. The user should confirm if a new branch is needed, or the work continues on `main`.
 
 ---
 
-## Step 1 — Telemetry Pipe (Error Catching)
+## Step 1 — Auto-commit rollback point
 
-### 1a. API Route: `frontend/src/app/api/log/route.ts`
-
-A lightweight Next.js App Router `POST` handler. Accepts a JSON body, prepends a UTC timestamp,
-and **appends** (never overwrites) to `/workspace/frontend_runtime_errors.log` using Node's `fs.appendFileSync`.
-
-```typescript
-// POST /api/log
-// Body: { type: string, message: string, source?: string, stack?: string }
-// Writes one JSON line per call to /workspace/frontend_runtime_errors.log
+Before any file edits, execute:
+```bash
+git add .
+git commit -m "Auto-commit before Iteration 4 ZINB Calibration Metrics"
 ```
-
-**Tripwire:** The route must return `405 Method Not Allowed` on non-POST requests (no GET handler,
-preventing log-flooding via browser prefetch).
-
-### 1b. Global Error Listener in `layout.tsx`
-
-Since `layout.tsx` is a **Server Component**, the listeners must be injected via a new small
-**Client Component** (`GlobalErrorReporter`) declared in the same file or a nearby file:
-
-```typescript
-"use client";
-export function GlobalErrorReporter() {
-  useEffect(() => {
-    const post = (payload: object) =>
-      fetch("/api/log", { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload) }).catch(() => {/* silent — the logger must not itself throw */});
-
-    const onError = (event: ErrorEvent) =>
-      post({ type: "onerror", message: event.message, source: event.filename, stack: event.error?.stack });
-
-    const onUnhandled = (event: PromiseRejectionEvent) =>
-      post({ type: "unhandledrejection", message: String(event.reason), stack: event.reason?.stack });
-
-    window.addEventListener("error", onError);
-    window.addEventListener("unhandledrejection", onUnhandled);
-    return () => {
-      window.removeEventListener("error", onError);
-      window.removeEventListener("unhandledrejection", onUnhandled);
-    };
-  }, []);
-  return null;
-}
-```
-
-`layout.tsx` renders `<GlobalErrorReporter />` inside `<body>` above `{children}`.
 
 ---
 
-## Step 2 — Backend Data Sharding (`src/export_ui_payload.py`)
+## Step 2 — Backend: `src/export_ui_payload.py`
 
-The sharded files already exist on disk (generated in a prior session). This step formally
-refactors the script to make it the authoritative source.
-
-### 2a. New Output Constants
-
-Remove `OUTPUT_PATH`. Add:
+### 2a. New import
 
 ```python
-MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
-NODES_DIR         = "frontend/public/data/nodes"
+from scipy.special import betainc
 ```
 
-### 2b. Capture `theta` per timestep
-
-Add a new accumulator alongside `timeseries_data`:
+### 2b. New accumulator in inference loop setup
 
 ```python
-theta_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
+pi_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
 ```
 
-In the inference loop, after `theta: torch.Tensor = result["theta"][0]`:
+### 2c. In the 24-hour inference loop — capture `pi` with tripwires
+
+After `theta: torch.Tensor = result["theta"][0]`, add:
 
 ```python
-# ZINB non-negative tripwires (Offensive Programming)
-assert (mu    > 0).all(), f"t={t}: ZINB tripwire — mu has non-positive values: {mu.min()}"
-assert (theta > 0).all(), f"t={t}: ZINB tripwire — theta has non-positive values: {theta.min()}"
+pi_raw: torch.Tensor = result["pi"][0]   # [num_nodes_total] from sigmoid → (0,1)
+assert (pi_raw > 0).all(),  f"t={t}: TRIPWIRE — pi has zero/negative values: {pi_raw.min()}"
+assert (pi_raw < 1).all(),  f"t={t}: TRIPWIRE — pi has saturated-to-1 values: {pi_raw.max()}"
+assert not torch.isnan(pi_raw).any(), f"t={t}: NaN in pi"
+
 for node_id in range(num_nodes_total):
-    theta_data[node_id].append(round(float(theta[node_id]), 4))
+    pi_data[node_id].append(round(float(pi_raw[node_id]), 6))
 ```
 
-### 2c. Build 1-hop edge lookup (post-loop)
+### 2d. Three new post-loop helper functions
 
-After the inference loop, construct `node_edges` dict mapping:
-`node_id → list[{"neighbor_id", "direction", "attention_sequence"}]`
+#### `compute_pit_histogram`
 
-Direction is `"outgoing"` if `edge[0] == node_id`, else `"incoming"`.
+**Mathematical basis:**
 
-### 2d. Per-node JSON schema (`nodes/node_{id}.json`)
+The ZINB CDF at observed count `y`:
 
-```jsonc
-{
-  "id": 0, "location_name": "...", "lat": ..., "lon": ..., "is_simulated": false,
-  "zinb_series": [{ "t": 0, "mu": 12.3, "theta": 5.1, "std_dev": 4.1 }],
-  "ground_truth_series": [12.0, 14.5, ..., null],
-  "imputed_series": [11.8, 14.2, ...],
-  "mask_series": [false, true, ...],
-  "edges_1hop": [{ "neighbor_id": 3, "direction": "outgoing", "attention_sequence": [...] }]
-}
+```
+F_NB(y; mu, theta) = betainc(theta, floor(y)+1, theta/(theta+mu))
+F_ZINB(y)          = pi + (1 - pi) * F_NB(y)
 ```
 
-### 2e. Master index JSON schema (`master_index.json`)
+For each real node and each timestep where `ground_truth` is not None/NaN, compute the PIT value `u = F_ZINB(y_obs)`. Assert `0 <= u <= 1` (tripwire). Bin 10 equal-width bins across [0, 1]. Return array of `{bin_center, density}` dicts where density = count/total.
 
-```jsonc
-{
-  "metadata": { /* same 9-field block */ },
-  "nodes": [{ "id": 0, "location_name": "...", "lat": ..., "lon": ..., "is_simulated": false,
-               "timeseries": [{ "t": 0, "prediction": 12.3, "uncertainty": 4.1 }] }],
-  "edges": [{ "source": 0, "target": 1, "attention_sequence": [...] }]
-}
-```
-
-### 2f. NaN assertions before each write
+**Tripwires:**
+- `assert 0.0 <= u <= 1.0` — PIT values outside [0,1] indicate a parametric error.
+- `assert theta > 0 and mu > 0` — satisfied by prior per-step assertions; re-checked here.
+- If `theta + mu == 0` the script crashes immediately (ZeroDivisionError, not silently suppressed).
 
 ```python
-for entry in node_data["zinb_series"]:
-    assert not math.isnan(entry["mu"]),     f"NaN in node {node_id} zinb mu at t={entry['t']}"
-    assert not math.isnan(entry["theta"]),  f"NaN in node {node_id} zinb theta at t={entry['t']}"
-    assert not math.isnan(entry["std_dev"]),f"NaN in node {node_id} zinb std_dev at t={entry['t']}"
-for v in node_data["imputed_series"]:
-    assert not math.isnan(v), f"NaN in node {node_id} imputed_series"
+def compute_pit_histogram(
+    ground_truth_series: List[List],          # [node][t] → float | None
+    mu_series: List[List[float]],             # [node][t]
+    theta_series: List[List[float]],          # [node][t]
+    pi_series: List[List[float]],             # [node][t]
+    num_real_nodes: int,
+    num_bins: int = 10,
+) -> List[Dict]:
 ```
 
-### 2g. Desk Check — ZINB Tripwire (CLAUDE.md §8)
+Returns `[{"bin_center": float, "density": float}, ...]` (10 entries).
 
-| Scenario | mu value | Tripwire fires? |
-|:---|:---|:---|
-| softplus(3.0) + eps | 3.049 > 0 ✓ | No |
-| softplus(0.0) + eps | 0.693 + ε > 0 ✓ | No |
-| Unclamped 0.0 | 0.0 NOT > 0 | **Yes — crashes immediately** |
-| NaN from degenerate grad | NaN NOT > 0 | **Yes — caught by existing `assert not torch.isnan(mu)`** |
+#### `compute_zero_inflation_reliability`
 
-All valid model outputs pass. Pathological values crash immediately. ✓
+For each real node at each timestep where ground truth is not None/NaN:
+- Record `(pi_predicted, is_true_zero)` where `is_true_zero = (y_obs == 0.0)`.
+- Create 10 equal-width bins for pi ∈ [0, 1].
+- For each bin, compute `observed_zero_fraction = count_true_zeros / total_in_bin`.
+- Skip bins with 0 observations (set fraction to None, omit from output to avoid charting artifacts).
+
+Returns `[{"pi_center": float, "observed_zero_fraction": float, "count": int}, ...]` (up to 10 entries).
+
+#### `compute_two_extremes`
+
+For one node:
+
+```python
+def compute_two_extremes(
+    ground_truth: List,          # floats | None | NaN
+    mu_predictions: List[float],
+) -> Dict:
+```
+
+- **Drop mode:** filter to rows where ground truth is not None and not NaN. Compute `MAE_drop = mean(|mu - y|)`, `RMSE_drop = sqrt(mean((mu - y)^2))`. If no valid rows: `None`.
+- **Fill mode:** replace None/NaN with `0.0`. Compute `MAE_fill`, `RMSE_fill` over all timesteps.
+
+Returns `{"mae_drop_nan": float|None, "rmse_drop_nan": float|None, "mae_fill_nan": float, "rmse_fill_nan": float}`.
+
+**Tripwires:**
+- Assert no negative MAE/RMSE (mathematically impossible but catches implementation bugs).
+- Assert all-fill arrays contain no NaN after substitution.
+
+### 2e. Desk Check — PIT Tripwire (CLAUDE.md §8)
+
+| Scenario | y_obs | mu | theta | pi | Expected u | Tripwire fires? |
+|:---|:---|:---|:---|:---|:---|:---|
+| softplus output, count=5 | 5.0 | 3.0 | 2.0 | 0.1 | 0.1 + 0.9 * betainc(2,6,0.4) ≈ 0.82 | No (∈ [0,1]) |
+| High pi near structural zero | 0.0 | 0.5 | 1.0 | 0.95 | 0.95 + 0.05 * betainc(1,1,1/(1.5)) ≈ 0.983 | No |
+| Unclamped pi=1.0 | — | — | — | 1.0 | NOT < 1 | **Yes — crashes** |
+| NaN ground truth | NaN | — | — | — | Skipped by `None/NaN` guard | No crash |
+
+### 2f. Integration into output files
+
+**`master_index.json`** gains two top-level keys:
+```json
+{
+  "pit_histogram": [{"bin_center": 0.05, "density": 0.09}, ...],
+  "zero_inflation_reliability": [{"pi_center": 0.15, "observed_zero_fraction": 0.12, "count": 234}, ...]
+}
+```
+
+Each node entry in `master_index["nodes"]` gains:
+```json
+{
+  "two_extremes": {
+    "mae_drop_nan": 4.21,
+    "rmse_drop_nan": 6.87,
+    "mae_fill_nan": 5.30,
+    "rmse_fill_nan": 8.14
+  }
+}
+```
+
+**`nodes/node_{id}.json`** also gains a `two_extremes` key at the root (same 4 scalars).
+
+### 2g. Schema assertions before write (new checks)
+
+```python
+assert len(master_index["pit_histogram"]) == 10
+assert len(master_index["zero_inflation_reliability"]) <= 10
+for node in master_index["nodes"]:
+    te = node.get("two_extremes")
+    assert te is not None
+    assert te["mae_fill_nan"] >= 0
+    assert te["rmse_fill_nan"] >= 0
+```
 
 ---
 
-## Step 3 — Cross-View Navigation (Floating Button)
+## Step 3 — Frontend Types: `frontend/src/types/payload.ts`
 
-Add a Material UI `Fab` (Floating Action Button) to `MapScene.tsx` linking to `/analytics`.
-
-```tsx
-// Bottom-right corner, above the TimeSlider
-import Fab from '@mui/material/Fab';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import Link from 'next/link';
-
-<Link href="/analytics" style={{ position: 'absolute', bottom: 96, right: 24, zIndex: 20 }}>
-  <Fab size="medium" aria-label="Open analytics" sx={{ bgcolor: 'rgba(30,30,30,0.9)', color: '#60a5fa' }}>
-    <BarChartIcon />
-  </Fab>
-</Link>
-```
-
-`MapScene.tsx` is already a Client Component (`"use client"`), so no wrapper change needed.
-
----
-
-## Step 4 — Master-Detail Analytics Layout
-
-### 4a. New file: `frontend/src/app/analytics/page.tsx`
-
-Client Component (`"use client"`). Fetches `master_index.json` once on mount.
-
-**Layout:**
-
-```
-┌──────────────────────────────────────────────────────┐
-│  AppBar: "NSTAR Analytics"          [← Back to Map]   │
-├──────────────────────────────────────────────────────┤
-│  [Omnibar — filter by location name or node ID]       │
-├──────────────────────────────────────────────────────┤
-│  MUI DataGrid (virtualized, ~40vh, multi-select)      │
-│  Columns: id | location_name | is_simulated |         │
-│           avg_μ | max_μ | avg_σ                       │
-├──────────────────────────────────────────────────────┤
-│  MUI Tabs                                             │
-│  [ Tab 1: Forecast Variance ] [ Tab 2: — ] [Tab 3:—]  │
-├──────────────────────────────────────────────────────┤
-│  Tab panel content (fills remaining height)           │
-└──────────────────────────────────────────────────────┘
-```
-
-### 4b. Omnibar
-
-A controlled MUI `TextField` with `variant="outlined"`, `placeholder="Filter nodes…"`.
-Filters the DataGrid rows client-side on each keystroke by matching `location_name` (case-insensitive
-`includes`) or exact `id` match. Zero external deps.
-
-### 4c. DataGrid columns (computed from `master_index.json`)
-
-| field | headerName | type |
-|:---|:---|:---|
-| `id` | ID | number |
-| `location_name` | Location | string |
-| `is_simulated` | Simulated | boolean (checkmark render) |
-| `avg_mu` | Avg μ | number (4dp), computed from `node.timeseries` |
-| `max_mu` | Peak μ | number (4dp) |
-| `avg_sigma` | Avg σ | number (4dp) |
-
-Default sort: `avg_mu` descending.
-Multi-select via checkbox column (`checkboxSelection={true}`).
-Selected row IDs → `selectedNodeIds: number[]` state drives all tab panels.
-
-### 4d. Tabs scaffold
-
-```tsx
-<Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
-  <Tab label="Forecast Variance" value={0} />
-  <Tab label="Network Influence"  value={1} disabled />
-  <Tab label="Self-Healing Log"   value={2} disabled />
-</Tabs>
-```
-
-Tabs 2 and 3 are disabled (not yet implemented). They will be enabled in future steps.
-
----
-
-## Step 5 — Tab 1: Forecast Variance
-
-### 5a. Data contract
-
-Tab 1 only uses `master_index.json` data (already loaded). No per-node file fetch needed.
-
-For each selected node, the `timeseries` array provides:
-- `t`: timestep index
-- `prediction`: μ (ZINB mean)
-- `uncertainty`: σ = std_dev (already computed as √(μ + μ²/θ) in the exporter)
-
-**CI derivation:**
-```
-ci_lower = max(0, prediction - 1.96 × uncertainty)
-ci_upper = prediction + 1.96 × uncertainty
-```
-
-### 5b. Chart implementation (Recharts `ComposedChart`)
-
-```tsx
-<ComposedChart data={chartData}>
-  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-  <XAxis dataKey="t" />
-  <YAxis />
-  <Tooltip />
-  <Legend />
-  {/* CI band */}
-  <Area type="monotone" dataKey="ci_upper" fill="#3b82f680" stroke="none" />
-  <Area type="monotone" dataKey="ci_lower" fill="#0f172a"   stroke="none" />
-  {/* μ line */}
-  <Line type="monotone" dataKey="prediction" stroke="#60a5fa" dot={false} strokeWidth={2} />
-</ComposedChart>
-```
-
-When multiple nodes are selected: each node gets its own `<Line>` keyed by `node_id`.
-CI bands are shown for all selected nodes (each with a distinct hue offset).
-
-**Defensive:** If `selectedNodeIds.length === 0`, render `<Alert severity="info">Select one or more nodes from the table above to plot their forecast variance.</Alert>`.
-
-### 5c. Recharts CI band technique
-
-Recharts `Area` requires a single numeric range. The standard pattern for a CI band is:
-1. Build `chartData` with both `ci_lower` and `ci_upper` fields.
-2. First `Area` plots `ci_upper` with fill color, stroke none.
-3. Second `Area` plots `ci_lower` with the **background color** as fill (effectively clips the bottom).
-
-This is a known Recharts idiom — no custom shape renderers needed.
-
----
-
-## Step 6 — TypeScript Types (`frontend/src/types/payload.ts`)
-
-Add new interfaces without breaking existing code:
+Add the following new interfaces (zero breaking changes to existing types):
 
 ```typescript
-// NEW: per-node analytics file
-export interface ZINBEntry   { t: number; mu: number; theta: number; std_dev: number; }
-export interface HopEdge     { neighbor_id: number; direction: "outgoing" | "incoming"; attention_sequence: number[]; }
-export interface NodeDetailPayload {
-  id: number; location_name: string; lat: number; lon: number; is_simulated: boolean;
-  zinb_series: ZINBEntry[];
-  ground_truth_series: (number | null)[];
-  imputed_series: number[];
-  mask_series: boolean[];
-  edges_1hop: HopEdge[];
+// ZINB Calibration — PIT histogram bin
+export interface PITBin {
+  bin_center: number;  // midpoint of the [0,1] bin
+  density: number;     // fraction of PIT values falling in this bin
 }
 
-// UPDATED: NodeEntry no longer carries imputed/GT/mask (those are in NodeDetailPayload)
-export interface NodeEntry {
-  id: number; location_name: string; lat: number; lon: number; is_simulated: boolean;
-  timeseries: TimestepEntry[];
+// ZINB Calibration — Zero-inflation reliability bin
+export interface ZeroInflationBin {
+  pi_center: number;                // midpoint of the pi bin
+  observed_zero_fraction: number;   // actual fraction of true zeros in this bin
+  count: number;                    // number of observations in this bin
 }
 
-// ADDED: top-level alias for master_index.json
-export interface MasterIndex { metadata: PayloadMetadata; nodes: NodeEntry[]; edges: EdgeEntry[]; }
-
-// KEPT for backward compatibility (NodeInspector currently references UIPayload)
-export type UIPayload = MasterIndex;
+// Per-node Two-Extremes missingness bracket
+export interface TwoExtremes {
+  mae_drop_nan: number | null;   // null when no valid (non-NaN) ground truths
+  rmse_drop_nan: number | null;
+  mae_fill_nan: number;          // always present (NaN filled with 0)
+  rmse_fill_nan: number;
+}
 ```
 
-`NodeInspector.tsx` will be updated in Step 7 to use `NodeDetailPayload` via a lazy fetch.
-
----
-
-## Step 7 — Migrate Existing Components to Sharded Data
-
-### 7a. `MapVisualizer.tsx`
-
-One-line change (line 207):
+Update `NodeEntry` (master_index nodes array) to include:
 ```typescript
-// BEFORE:
-const res = await fetch("/data/ui_payload.json");
-// AFTER:
-const res = await fetch("/data/master_index.json");
+two_extremes?: TwoExtremes;
 ```
 
-`UIPayload = MasterIndex`, so no other types need to change.
+Update `MasterIndex` to include:
+```typescript
+pit_histogram?: PITBin[];
+zero_inflation_reliability?: ZeroInflationBin[];
+```
 
-### 7b. `NodeInspector.tsx`
+Update `NodeDetailPayload` to include:
+```typescript
+two_extremes?: TwoExtremes;
+```
 
-Replace the monolithic `ui_payload.json` fetch with a lazy per-node fetch:
+---
+
+## Step 4 — Frontend Analytics Page: `frontend/src/app/analytics/page.tsx`
+
+### 4a. New imports
 
 ```typescript
-const [nodeDetail, setNodeDetail] = useState<NodeDetailPayload | null>(null);
-useEffect(() => {
-  if (selectedNodeId === null) { setNodeDetail(null); return; }
-  fetch(`/data/nodes/node_${selectedNodeId}.json`)
-    .then(r => r.ok ? r.json() : null)
-    .then((d: NodeDetailPayload | null) => setNodeDetail(d))
-    .catch(() => setNodeDetail(null));
-}, [selectedNodeId]);
+import { BarChart, Bar, ScatterChart, Scatter, ReferenceLine,
+         XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import type { PITBin, ZeroInflationBin, TwoExtremes } from "@/types/payload";
 ```
 
-Update display fields: `nodeDetail.zinb_series[currentTimestep].mu` and `.std_dev`.
-The existing `NodeChart` displays `ground_truth_series`, `imputed_series`, `mask_series` from `nodeDetail`
-— same field names, so the SVG rendering code is unchanged.
+### 4b. Update `NodeRow` type
 
-Remove the large `UIPayload` state and the `fetched` ref guard (no longer needed).
+Add four new fields:
+```typescript
+mae_drop_nan: number | null;
+rmse_drop_nan: number | null;
+mae_fill_nan: number | null;   // null if two_extremes absent
+rmse_fill_nan: number | null;
+```
+
+### 4c. Update `rows` useMemo to extract Two-Extremes scalars
+
+```typescript
+mae_drop_nan: node.two_extremes?.mae_drop_nan ?? null,
+rmse_drop_nan: node.two_extremes?.rmse_drop_nan ?? null,
+mae_fill_nan: node.two_extremes?.mae_fill_nan ?? null,
+rmse_fill_nan: node.two_extremes?.rmse_fill_nan ?? null,
+```
+
+### 4d. Add 4 new columns to `columns` array
+
+| field | headerName | width | type |
+|:---|:---|:---|:---|
+| `mae_drop_nan` | MAE (drop NaN) | 110 | number, 3dp, nullable |
+| `rmse_drop_nan` | RMSE (drop NaN) | 120 | number, 3dp, nullable |
+| `mae_fill_nan` | MAE (fill 0) | 100 | number, 3dp |
+| `rmse_fill_nan` | RMSE (fill 0) | 110 | number, 3dp |
+
+Null-safe `valueFormatter`: if value is null return `"—"`, else `value.toFixed(3)`.
+
+### 4e. Add Tab 4 to the Tabs scaffold
+
+```tsx
+<Tab label="ZINB Calibration" value={3} />
+```
+
+(Existing Tabs 1, 2, 3 are unchanged. Tabs 1 and 2 remain disabled.)
+
+### 4f. Tab 3 panel — ZINB Calibration
+
+Two side-by-side charts inside a `Box sx={{ display: 'flex', gap: 2 }}`:
+
+**Left — PIT Histogram (BarChart)**
+- Data: `masterIndex.pit_histogram`
+- `<Bar dataKey="density" fill="#60a5fa" />`
+- X-axis: `bin_center` (0.05 → 0.95)
+- Y-axis: density
+- A `<ReferenceLine y={0.1} stroke="#f59e0b" strokeDasharray="4 4" />` marks the uniform target (1/10 = 0.1).
+- Label above chart: "PIT Histogram — uniform bars indicate perfect calibration"
+
+**Right — Zero-Inflation Reliability (ScatterChart)**
+- Data: `masterIndex.zero_inflation_reliability`
+- `<Scatter dataKey="observed_zero_fraction" name="Observed fraction" />`
+- X-axis: `pi_center` (predicted π)
+- Y-axis: `observed_zero_fraction` (actual fraction of zeros)
+- `<ReferenceLine` segment: a dashed `y = x` diagonal. Rendered as a `<Line>` in a `<ComposedChart>` overlaid, or as a custom reference line using `<ReferenceLine segment={[{x:0,y:0},{x:1,y:1}]} />`.
+- Label: "Zero-Inflation Reliability — points on the dashed line indicate perfect calibration"
+
+**Defensive rendering:** Both charts are wrapped in:
+```tsx
+{!masterIndex.pit_histogram || masterIndex.pit_histogram.length === 0 ? (
+  <Alert severity="info">Calibration data not present in this payload. Re-run export_ui_payload.py.</Alert>
+) : (
+  /* charts */
+)}
+```
+
+### 4g. Zero math on the frontend
+
+The analytics page performs **zero** statistical computation for the calibration tab. It renders pre-computed arrays from the payload directly. The PIT and Reliability data arrive already aggregated into 10-bin arrays. No CDF, binning, or metric derivation is performed in the browser.
 
 ---
 
-## Step 8 — Package Installation (Manual User Action Required)
+## Step 5 — EXPERIMENTS.md Ledger Update
 
-**The agent cannot run `docker` commands.** The user must run these on the host:
+Per CLAUDE.md §6, append a new row upon successful implementation:
 
-```bash
-docker compose exec frontend-dev npm install recharts @mui/x-data-grid
-docker compose exec frontend-dev npm install @mui/icons-material
-```
-
-MUI core + emotion are already installed (MapVisualizer uses them).
-
-**Verify (inside container, not via host node_modules):**
-```bash
-docker compose exec frontend-dev node -e "require('recharts'); require('@mui/x-data-grid'); console.log('OK')"
-```
-
----
-
-## Step 9 — Validation Checkpoints
-
-| Check | Command | Pass criterion |
-|:---|:---|:---|
-| Python sharding | `python src/export_ui_payload.py` | No assertion failures; files written to `frontend/public/data/` |
-| TypeScript types | `docker compose exec frontend-dev npx tsc --noEmit` | 0 errors |
-| Map route | `http://localhost:3000/` | Map renders, floating analytics button visible |
-| Analytics route | `http://localhost:3000/analytics` | AppBar, Omnibar, DataGrid all render; no console errors |
-| Tab 1 | Select 1+ rows in DataGrid | Recharts chart renders μ line + CI band |
-| Telemetry | Trigger JS error in console | Entry appears in `/workspace/frontend_runtime_errors.log` |
-
----
-
-## Step 10 — EXPERIMENTS.md Ledger Update
-
-Per CLAUDE.md §6, append a row upon successful rendering confirmation. **Task is not complete until this row is written.**
+| Field | Value |
+|:---|:---|
+| Date | 2026-05-11 |
+| Branch | main |
+| Prompt/Goal | Iteration 4: Add PIT histogram, zero-inflation reliability, and Two-Extremes MAE/RMSE to payload + ZINB Calibration tab in analytics dashboard |
+| Outcome | 3 new calibration metrics computed in export_ui_payload.py; master_index.json extended with global PIT/reliability arrays and per-node Two-Extremes scalars; payload.ts updated with 3 new interfaces; analytics page gains 4 DataGrid columns and Tab 4 with BarChart + ScatterChart |
 
 ---
 
@@ -403,23 +309,19 @@ Per CLAUDE.md §6, append a row upon successful rendering confirmation. **Task i
 
 | Path | Action | Description |
 |:---|:---|:---|
-| `frontend/src/app/api/log/route.ts` | **CREATE** | Telemetry POST handler → appends to `frontend_runtime_errors.log` |
-| `frontend/src/app/layout.tsx` | **EDIT** | Add `GlobalErrorReporter` client component |
-| `src/export_ui_payload.py` | **EDIT** | Write sharded `master_index.json` + `node_{id}.json`; add theta; ZINB tripwires |
-| `frontend/src/types/payload.ts` | **EDIT** | Add `ZINBEntry`, `HopEdge`, `NodeDetailPayload`, `MasterIndex`; simplify `NodeEntry` |
-| `frontend/src/components/MapScene.tsx` | **EDIT** | Add MUI Fab linking to `/analytics` |
-| `frontend/src/components/MapVisualizer.tsx` | **EDIT** | Fetch `master_index.json` instead of `ui_payload.json` |
-| `frontend/src/components/NodeInspector.tsx` | **EDIT** | Replace monolithic fetch with lazy per-node fetch of `node_{id}.json` |
-| `frontend/src/app/analytics/page.tsx` | **CREATE** | Omnibar + DataGrid + Tabs layout; Tab 1 Recharts Forecast Variance |
-| `EXPERIMENTS.md` | **EDIT** | Append ledger row on successful rendering |
+| `src/export_ui_payload.py` | **EDIT** | Add pi accumulator, 3 calibration functions, inject metrics into JSON outputs |
+| `frontend/src/types/payload.ts` | **EDIT** | Add `PITBin`, `ZeroInflationBin`, `TwoExtremes`; update `NodeEntry`, `MasterIndex`, `NodeDetailPayload` |
+| `frontend/src/app/analytics/page.tsx` | **EDIT** | Add 4 DataGrid columns, Tab 4 with PIT BarChart + Reliability ScatterChart |
+| `EXPERIMENTS.md` | **EDIT** | Append ledger row |
 
 ---
 
-## Human-in-the-Loop Pause Points
+## No-op confirmation (strict constraints respected)
 
-1. **After Step 3 (navigation button):** Pause — ask user to confirm floating button renders.
-2. **After Step 4 (Analytics layout):** Pause — ask user to confirm Omnibar + DataGrid render.
-3. **After Step 5 (Tab 1 chart):** Pause — ask user to confirm chart renders and CI bands are visible.
+- **Zero Host Install:** No `pip install` or `npm install` on host. `scipy` is already in the container's Python environment (required by prior steps; verify with `python -c "from scipy.special import betainc; print('ok')"` if uncertain).
+- **Zero Frontend Math:** All binning, CDF computation, and metric arithmetic is done exclusively in `export_ui_payload.py`. The Next.js page is a pure renderer.
+- **Offensive Tripwires:** `pi ∈ (0,1)`, `u ∈ [0,1]`, no bare `except`, no silent NaN drops.
+- **No live API:** All data flows through the static JSON bridge per Phase 1 constraint.
 
 ---
 
