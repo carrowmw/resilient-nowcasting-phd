@@ -92,7 +92,11 @@ function buildLayers(
     pickable: true,
     autoHighlight: true,
     highlightColor: [255, 255, 255, 55],
-    onClick: ({ object }) => onSelectNode(object ? object.id : null),
+    onClick: ({ object }) => {
+      if (!object) return false;
+      onSelectNode(object.id);
+      return true;
+    },
     onHover: ({ object }) => { onHoverNode(object ? object.id : null); return true; },
     updateTriggers: {
       getFillColor: [timestep],
@@ -115,7 +119,11 @@ function buildLayers(
     pickable: true,
     autoHighlight: true,
     highlightColor: [255, 255, 255, 55],
-    onClick: ({ object }) => onSelectNode(object ? object.id : null),
+    onClick: ({ object }) => {
+      if (!object) return false;
+      onSelectNode(object.id);
+      return true;
+    },
     onHover: ({ object }) => { onHoverNode(object ? object.id : null); return true; },
     updateTriggers: {
       getLineColor: [timestep],
@@ -205,6 +213,17 @@ export default function MapVisualizer() {
   // every pointer movement — only the WebGL overlay needs to rebuild.
   const hoveredNodeIdRef = useRef<number | null>(null);
 
+  // Self-referential hover rebuild function. Set once after data loads, updated
+  // on every state-effect run. Always reads live values from useTimeStore.getState()
+  // and from stable refs, so the closure never goes stale.
+  //
+  // The indirection through a ref (rather than a plain closure) is what breaks
+  // the "dead callback" bug: every buildLayers call passes
+  //   onHoverNode: (id) => rebuildHoverRef.current(id)
+  // so the next hover invocation always calls the *current* rebuild function,
+  // not a snapshot of it from the previous render.
+  const rebuildHoverRef = useRef<(id: number | null) => void>(() => {});
+
   const setMaxTimesteps = useTimeStore((s) => s.setMaxTimesteps);
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
@@ -233,7 +252,13 @@ export default function MapVisualizer() {
     mapRef.current = map;
     overlayRef.current = overlay;
 
+    // Only deselect on a bare map click (no node under the cursor).
+    // When the cursor is on a node, hoveredNodeIdRef is non-null and the
+    // layer's own onClick handler is responsible for setting the selection.
+    // Without this guard the map click fires AFTER the layer click and
+    // immediately nulls out the selection the layer just made.
     map.on("click", () => {
+      if (hoveredNodeIdRef.current !== null) return;
       if (useTimeStore.getState().selectedNodeId !== null) {
         useTimeStore.getState().setSelectedNodeId(null);
       }
@@ -260,6 +285,31 @@ export default function MapVisualizer() {
             ` ${payload.edges.length} edges, ${payload.metadata.timesteps} timesteps.`,
         );
 
+        // Initialise the self-referential hover rebuild function.
+        // Uses payloadRef/nodeMapRef/overlayRef so it stays correct if refs update.
+        rebuildHoverRef.current = (id: number | null) => {
+          if (hoveredNodeIdRef.current === id) return;
+          hoveredNodeIdRef.current = id;
+          const ov = overlayRef.current;
+          if (!ov) return;
+          const s = useTimeStore.getState();
+          ov.setProps({
+            layers: buildLayers(
+              payloadRef.current!,
+              nodeMapRef.current,
+              s.currentTimestep,
+              {
+                selectedNodeId: s.selectedNodeId,
+                attentionThreshold: s.attentionThreshold,
+                hoveredNodeId: id,
+                egoGraphEdges: s.egoGraphEdges,
+              },
+              setSelectedNodeId,
+              (id2) => rebuildHoverRef.current(id2),
+            ),
+          });
+        };
+
         const state = useTimeStore.getState();
         overlay.setProps({
           layers: buildLayers(
@@ -273,27 +323,7 @@ export default function MapVisualizer() {
               egoGraphEdges: state.egoGraphEdges,
             },
             setSelectedNodeId,
-            (id) => {
-              if (hoveredNodeIdRef.current !== id) {
-                hoveredNodeIdRef.current = id;
-                const s = useTimeStore.getState();
-                overlay.setProps({
-                  layers: buildLayers(
-                    payload,
-                    nodeMap,
-                    s.currentTimestep,
-                    {
-                      selectedNodeId: s.selectedNodeId,
-                      attentionThreshold: s.attentionThreshold,
-                      hoveredNodeId: id,
-                      egoGraphEdges: s.egoGraphEdges,
-                    },
-                    setSelectedNodeId,
-                    () => {},
-                  ),
-                });
-              }
-            },
+            (id) => rebuildHoverRef.current(id),
           ),
         });
       } catch (err) {
@@ -311,10 +341,37 @@ export default function MapVisualizer() {
   }, []);
 
   // Rebuild layers whenever timestep, selection, threshold, or ego-graph data changes.
+  // Also refreshes rebuildHoverRef.current so hover callbacks always see the latest
+  // Zustand snapshot (selectedNodeId, attentionThreshold, egoGraphEdges).
   useEffect(() => {
     const payload = payloadRef.current;
     const overlay = overlayRef.current;
     if (!payload || !overlay) return;
+
+    // Keep the hover rebuild function in sync with the latest closed-over state.
+    rebuildHoverRef.current = (id: number | null) => {
+      if (hoveredNodeIdRef.current === id) return;
+      hoveredNodeIdRef.current = id;
+      const ov = overlayRef.current;
+      if (!ov) return;
+      const s = useTimeStore.getState();
+      ov.setProps({
+        layers: buildLayers(
+          payloadRef.current!,
+          nodeMapRef.current,
+          s.currentTimestep,
+          {
+            selectedNodeId: s.selectedNodeId,
+            attentionThreshold: s.attentionThreshold,
+            hoveredNodeId: id,
+            egoGraphEdges: s.egoGraphEdges,
+          },
+          setSelectedNodeId,
+          (id2) => rebuildHoverRef.current(id2),
+        ),
+      });
+    };
+
     overlay.setProps({
       layers: buildLayers(
         payload,
@@ -327,30 +384,7 @@ export default function MapVisualizer() {
           egoGraphEdges,
         },
         setSelectedNodeId,
-        (id) => {
-          if (hoveredNodeIdRef.current !== id) {
-            hoveredNodeIdRef.current = id;
-            const p = payloadRef.current;
-            const ov = overlayRef.current;
-            if (!p || !ov) return;
-            const s = useTimeStore.getState();
-            ov.setProps({
-              layers: buildLayers(
-                p,
-                nodeMapRef.current,
-                s.currentTimestep,
-                {
-                  selectedNodeId: s.selectedNodeId,
-                  attentionThreshold: s.attentionThreshold,
-                  hoveredNodeId: id,
-                  egoGraphEdges: s.egoGraphEdges,
-                },
-                setSelectedNodeId,
-                () => {},
-              ),
-            });
-          }
-        },
+        (id) => rebuildHoverRef.current(id),
       ),
     });
   }, [currentTimestep, selectedNodeId, attentionThreshold, egoGraphEdges, setSelectedNodeId]);
