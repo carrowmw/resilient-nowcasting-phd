@@ -7,7 +7,12 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { ScatterplotLayer, ArcLayer } from "@deck.gl/layers";
 
 import useTimeStore from "@/store/useTimeStore";
-import type { UIPayload, NodeEntry, EdgeEntry, AttentionEdge } from "@/types/payload";
+import type {
+  UIPayload,
+  NodeEntry,
+  EdgeEntry,
+  AttentionEdge,
+} from "@/types/payload";
 
 // Newcastle upon Tyne city centre
 const INITIAL_VIEW = {
@@ -37,7 +42,10 @@ function heatColor(t: number): [number, number, number, number] {
   return [255, Math.round(200 * (1 - s)), 0, 220];
 }
 
-function nodeFillColor(d: NodeEntry, timestep: number): [number, number, number, number] {
+function nodeFillColor(
+  d: NodeEntry,
+  timestep: number,
+): [number, number, number, number] {
   const entry = d.timeseries[timestep];
   if (!entry) return [128, 128, 128, 180];
   const maxUncertainty = 50;
@@ -76,7 +84,8 @@ function buildLayers(
   onSelectNode: (id: number | null) => void,
   onHoverNode: (id: number | null) => void,
 ) {
-  const { selectedNodeId, attentionThreshold, hoveredNodeId, egoGraphEdges } = filters;
+  const { selectedNodeId, attentionThreshold, hoveredNodeId, egoGraphEdges } =
+    filters;
 
   // ── Real-node layer ────────────────────────────────────────────────────────
   const realNodes = payload.nodes.filter((n) => !n.is_simulated);
@@ -85,7 +94,8 @@ function buildLayers(
     data: realNodes,
     getPosition: (d) => [d.lon, d.lat],
     getFillColor: (d) => nodeFillColor(d, timestep),
-    getRadius: (d) => nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
+    getRadius: (d) =>
+      nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
     radiusUnits: "meters",
     stroked: false,
     filled: true,
@@ -97,7 +107,10 @@ function buildLayers(
       onSelectNode(object.id);
       return true;
     },
-    onHover: ({ object }) => { onHoverNode(object ? object.id : null); return true; },
+    onHover: ({ object }) => {
+      onHoverNode(object ? object.id : null);
+      return true;
+    },
     updateTriggers: {
       getFillColor: [timestep],
       getRadius: [timestep, hoveredNodeId],
@@ -116,7 +129,8 @@ function buildLayers(
     getPosition: (d) => [d.lon, d.lat],
     getLineColor: (d) => nodeFillColor(d, timestep),
     getFillColor: [0, 0, 0, 0],
-    getRadius: (d) => nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
+    getRadius: (d) =>
+      nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
     radiusUnits: "meters",
     stroked: true,
     filled: true,
@@ -129,7 +143,10 @@ function buildLayers(
       onSelectNode(object.id);
       return true;
     },
-    onHover: ({ object }) => { onHoverNode(object ? object.id : null); return true; },
+    onHover: ({ object }) => {
+      onHoverNode(object ? object.id : null);
+      return true;
+    },
     updateTriggers: {
       getLineColor: [timestep],
       getRadius: [timestep, hoveredNodeId],
@@ -148,7 +165,9 @@ function buildLayers(
         x.edge.source === selectedNodeId || x.edge.target === selectedNodeId,
     );
   } else {
-    weighted = weighted.sort((a, b) => b.weight - a.weight).slice(0, GLOBAL_EDGE_CAP);
+    weighted = weighted
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, GLOBAL_EDGE_CAP);
   }
 
   const arcLayer = new ArcLayer<WeightedEdge>({
@@ -163,8 +182,8 @@ function buildLayers(
       const tgt = nodeMap.get(d.edge.target);
       return tgt ? [tgt.lon, tgt.lat] : [0, 0];
     },
-    getSourceColor: (d) => [255, 165, 0, Math.round(d.weight * 255)],
-    getTargetColor: (d) => [255, 69, 0, Math.round(d.weight * 255)],
+    getSourceColor: (d) => [255, 165, 0, Math.round(10 + d.weight * 245)],
+    getTargetColor: (d) => [255, 69, 0, Math.round(10 + d.weight * 245)],
     getWidth: (d) => Math.max(1, d.weight * 80),
     updateTriggers: {
       getSourceColor: [timestep],
@@ -176,8 +195,9 @@ function buildLayers(
 
   // ── Localized ego-graph layer (top-K edges from node_{id}.json) ────────────
   // Blue arcs = incoming attention; rose arcs = outgoing attention.
-  // Width and alpha scale with weight_sequence[timestep]. Visible only when a node is selected
-  // and ego-graph data has been fetched by NodeInspector.
+  // Width and alpha scale with weight_sequence[currentTimestep]. Visible only when a
+  // node is selected and ego-graph data has been fetched by NodeInspector.
+  const currentTimestep = timestep;
   const egoArcLayer = new ArcLayer<AttentionEdge>({
     id: "ego-graph-layer",
     data: egoGraphEdges ?? [],
@@ -185,22 +205,37 @@ function buildLayers(
     getSourcePosition: (d) => [d.source_lon, d.source_lat],
     getTargetPosition: (d) => [d.target_lon, d.target_lat],
     getSourceColor: (d) => {
-      const w = d.weight_sequence[timestep] ?? 0;
+      const w = d.weight_sequence[currentTimestep] ?? 0;
       const alpha = Math.round(80 + w * 175);
-      return d.direction === "incoming" ? [96, 165, 250, alpha] : [251, 113, 133, alpha];
+      return d.direction === "incoming"
+        ? [96, 165, 250, alpha]
+        : [251, 113, 133, alpha];
     },
     getTargetColor: (d) => {
-      const w = d.weight_sequence[timestep] ?? 0;
+      const w = d.weight_sequence[currentTimestep] ?? 0;
       const alpha = Math.round(50 + w * 110);
-      return d.direction === "incoming" ? [96, 165, 250, alpha] : [251, 113, 133, alpha];
+      return d.direction === "incoming"
+        ? [96, 165, 250, alpha]
+        : [251, 113, 133, alpha];
     },
-    getWidth: (d) => Math.max(2, (d.weight_sequence[timestep] ?? 0) * 14),
+    getWidth: (d) => {
+      const w = d.weight_sequence[currentTimestep] ?? 0;
+      // Tripwire: must fire continuously while scrubbing TimeSlider. If this
+      // logs only once at mount, the layer's updateTriggers are not wired and
+      // accessors are closing over a stale currentTimestep.
+      console.log(
+        `[ego-arc] getWidth t=${currentTimestep} edge=${d.source_id}->${d.target_id} w=${w.toFixed(3)}`,
+      );
+      return w * 200;
+    },
     widthUnits: "pixels",
     updateTriggers: {
-      data: [selectedNodeId],
-      getSourceColor: [timestep],
-      getTargetColor: [timestep],
-      getWidth: [timestep],
+      getWidth: [currentTimestep],
+      getSourceColor: [currentTimestep],
+      getTargetColor: [currentTimestep],
+      // Re-evaluate the data binding when timestep advances or the underlying
+      // edges array changes (e.g. a different node was selected).
+      data: [currentTimestep, egoGraphEdges],
     },
   });
 
@@ -234,7 +269,9 @@ export default function MapVisualizer() {
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
   const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
-  const globalAttentionThreshold = useTimeStore((s) => s.globalAttentionThreshold);
+  const globalAttentionThreshold = useTimeStore(
+    (s) => s.globalAttentionThreshold,
+  );
   const egoGraphEdges = useTimeStore((s) => s.egoGraphEdges);
 
   // ── Initialise MapLibre + deck.gl overlay once ────────────────────────────
@@ -393,7 +430,13 @@ export default function MapVisualizer() {
         (id) => rebuildHoverRef.current(id),
       ),
     });
-  }, [currentTimestep, selectedNodeId, globalAttentionThreshold, egoGraphEdges, setSelectedNodeId]);
+  }, [
+    currentTimestep,
+    selectedNodeId,
+    globalAttentionThreshold,
+    egoGraphEdges,
+    setSelectedNodeId,
+  ]);
 
   return (
     <div

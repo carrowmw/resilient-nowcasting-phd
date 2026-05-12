@@ -46,7 +46,9 @@ function ImpuationChart({ node, currentTimestep }: ImpChartProps) {
 
   const xOf = (t: number) => PAD.left + (T <= 1 ? 0 : (t / (T - 1)) * INNER_W);
   const yOf = (v: number) =>
-    PAD.top + IMPUTE_INNER_H - ((v - yMin) / (yMax - yMin || 1)) * IMPUTE_INNER_H;
+    PAD.top +
+    IMPUTE_INNER_H -
+    ((v - yMin) / (yMax - yMin || 1)) * IMPUTE_INNER_H;
 
   const gtSegments = useMemo(() => {
     const segs: string[] = [];
@@ -107,25 +109,61 @@ function ImpuationChart({ node, currentTimestep }: ImpChartProps) {
         fill="none"
         stroke="rgba(255,255,255,0.2)"
       />
-      <text x={PAD.left - 4} y={PAD.top + 4} fill="rgba(255,255,255,0.6)" fontSize="9" textAnchor="end">
+      <text
+        x={PAD.left - 4}
+        y={PAD.top + 4}
+        fill="rgba(255,255,255,0.6)"
+        fontSize="9"
+        textAnchor="end"
+      >
         {yMax.toFixed(1)}
       </text>
-      <text x={PAD.left - 4} y={PAD.top + IMPUTE_INNER_H} fill="rgba(255,255,255,0.6)" fontSize="9" textAnchor="end">
+      <text
+        x={PAD.left - 4}
+        y={PAD.top + IMPUTE_INNER_H}
+        fill="rgba(255,255,255,0.6)"
+        fontSize="9"
+        textAnchor="end"
+      >
         {yMin.toFixed(1)}
       </text>
-      <text x={PAD.left} y={IMPUTE_H - 4} fill="rgba(255,255,255,0.6)" fontSize="9">
+      <text
+        x={PAD.left}
+        y={IMPUTE_H - 4}
+        fill="rgba(255,255,255,0.6)"
+        fontSize="9"
+      >
         t=0
       </text>
-      <text x={PAD.left + INNER_W} y={IMPUTE_H - 4} fill="rgba(255,255,255,0.6)" fontSize="9" textAnchor="end">
+      <text
+        x={PAD.left + INNER_W}
+        y={IMPUTE_H - 4}
+        fill="rgba(255,255,255,0.6)"
+        fontSize="9"
+        textAnchor="end"
+      >
         t={T - 1}
       </text>
-      <polyline points={imputedPoints} fill="none" stroke="rgb(255, 165, 0)" strokeWidth="1.5" />
+      <polyline
+        points={imputedPoints}
+        fill="none"
+        stroke="rgb(255, 165, 0)"
+        strokeWidth="1.5"
+      />
       {gtSegments.map((seg, i) => (
-        <polyline key={i} points={seg} fill="none" stroke="rgb(96, 165, 250)" strokeWidth="1.5" />
+        <polyline
+          key={i}
+          points={seg}
+          fill="none"
+          stroke="rgb(96, 165, 250)"
+          strokeWidth="1.5"
+        />
       ))}
       <line
-        x1={cursorX} y1={PAD.top}
-        x2={cursorX} y2={PAD.top + IMPUTE_INNER_H}
+        x1={cursorX}
+        y1={PAD.top}
+        x2={cursorX}
+        y2={PAD.top + IMPUTE_INNER_H}
         stroke="rgba(255,255,255,0.55)"
         strokeWidth="1"
         strokeDasharray="2 2"
@@ -207,27 +245,60 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
         stroke="rgba(255,255,255,0.2)"
       />
       {/* Y-axis labels: 0 and 1 */}
-      <text x={PAD.left - 4} y={PAD.top + 4} fill="rgba(255,255,255,0.5)" fontSize="9" textAnchor="end">1</text>
-      <text x={PAD.left - 4} y={PAD.top + PI_INNER_H} fill="rgba(255,255,255,0.5)" fontSize="9" textAnchor="end">0</text>
+      <text
+        x={PAD.left - 4}
+        y={PAD.top + 4}
+        fill="rgba(255,255,255,0.5)"
+        fontSize="9"
+        textAnchor="end"
+      >
+        1
+      </text>
+      <text
+        x={PAD.left - 4}
+        y={PAD.top + PI_INNER_H}
+        fill="rgba(255,255,255,0.5)"
+        fontSize="9"
+        textAnchor="end"
+      >
+        0
+      </text>
       {/* 0.5 reference line */}
       <line
-        x1={PAD.left} y1={PAD.top + PI_INNER_H / 2}
-        x2={PAD.left + INNER_W} y2={PAD.top + PI_INNER_H / 2}
+        x1={PAD.left}
+        y1={PAD.top + PI_INNER_H / 2}
+        x2={PAD.left + INNER_W}
+        y2={PAD.top + PI_INNER_H / 2}
         stroke="rgba(255,255,255,0.08)"
         strokeWidth="1"
         strokeDasharray="3 3"
       />
       {/* X-axis labels */}
-      <text x={PAD.left} y={PI_H - 4} fill="rgba(255,255,255,0.5)" fontSize="9">t=0</text>
-      <text x={PAD.left + INNER_W} y={PI_H - 4} fill="rgba(255,255,255,0.5)" fontSize="9" textAnchor="end">
+      <text x={PAD.left} y={PI_H - 4} fill="rgba(255,255,255,0.5)" fontSize="9">
+        t=0
+      </text>
+      <text
+        x={PAD.left + INNER_W}
+        y={PI_H - 4}
+        fill="rgba(255,255,255,0.5)"
+        fontSize="9"
+        textAnchor="end"
+      >
         t={T - 1}
       </text>
       {/* Pi polyline */}
-      <polyline points={piPoints} fill="none" stroke="rgb(167, 139, 250)" strokeWidth="1.5" />
+      <polyline
+        points={piPoints}
+        fill="none"
+        stroke="rgb(167, 139, 250)"
+        strokeWidth="1.5"
+      />
       {/* Current timestep cursor */}
       <line
-        x1={cursorX} y1={PAD.top}
-        x2={cursorX} y2={PAD.top + PI_INNER_H}
+        x1={cursorX}
+        y1={PAD.top}
+        x2={cursorX}
+        y2={PAD.top + PI_INNER_H}
         stroke="rgba(255,255,255,0.55)"
         strokeWidth="1"
         strokeDasharray="2 2"
@@ -256,15 +327,25 @@ function EdgeList({ edges }: { edges: AttentionEdge[] }) {
 
   const { topIncoming, topOutgoing } = useMemo(() => {
     const byWeight = (a: AttentionEdge, b: AttentionEdge) =>
-      (b.weight_sequence[currentTimestep] ?? 0) - (a.weight_sequence[currentTimestep] ?? 0);
+      (b.weight_sequence[currentTimestep] ?? 0) -
+      (a.weight_sequence[currentTimestep] ?? 0);
     return {
-      topIncoming: edges.filter((e) => e.direction === "incoming").sort(byWeight).slice(0, 5),
-      topOutgoing: edges.filter((e) => e.direction === "outgoing").sort(byWeight).slice(0, 5),
+      topIncoming: edges
+        .filter((e) => e.direction === "incoming")
+        .sort(byWeight)
+        .slice(0, 5),
+      topOutgoing: edges
+        .filter((e) => e.direction === "outgoing")
+        .sort(byWeight)
+        .slice(0, 5),
     };
   }, [edges, currentTimestep]);
 
   const sorted = [...topIncoming, ...topOutgoing];
-  const maxW = Math.max(...sorted.map((e) => e.weight_sequence[currentTimestep] ?? 0), 0.001);
+  const maxW = Math.max(
+    ...sorted.map((e) => e.weight_sequence[currentTimestep] ?? 0),
+    0.001,
+  );
 
   return (
     <ul className="mt-1 space-y-1">
@@ -366,15 +447,25 @@ export default function NodeInspector() {
 
   return (
     <aside
-      style={{ position: "absolute", top: 16, right: 16, width: 360, zIndex: 10, maxHeight: "calc(100vh - 32px)" }}
+      style={{
+        position: "absolute",
+        top: 16,
+        right: 16,
+        width: 360,
+        zIndex: 10,
+        maxHeight: "calc(100vh - 32px)",
+      }}
       className="rounded-lg border border-white/10 bg-neutral-950/85 p-4 text-xs text-slate-200 shadow-xl backdrop-blur overflow-y-auto"
     >
       {/* Header */}
       <header className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate font-semibold text-sm">{nodeDetail.location_name}</div>
+          <div className="truncate font-semibold text-sm">
+            {nodeDetail.location_name}
+          </div>
           <div className="text-[10px] text-slate-400">
-            id={nodeDetail.id} · lat={nodeDetail.lat.toFixed(4)} · lon={nodeDetail.lon.toFixed(4)}
+            id={nodeDetail.id} · lat={nodeDetail.lat.toFixed(4)} · lon=
+            {nodeDetail.lon.toFixed(4)}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -398,11 +489,15 @@ export default function NodeInspector() {
       {hasImputation ? (
         <>
           <div className="mt-3">
-            <ImpuationChart node={nodeDetail} currentTimestep={currentTimestep} />
+            <ImpuationChart
+              node={nodeDetail}
+              currentTimestep={currentTimestep}
+            />
           </div>
           <div className="mt-2 flex items-center gap-3 text-[10px] text-slate-400">
             <span className="flex items-center gap-1">
-              <span className="inline-block h-0.5 w-3 bg-blue-400" /> Ground truth
+              <span className="inline-block h-0.5 w-3 bg-blue-400" /> Ground
+              truth
             </span>
             <span className="flex items-center gap-1">
               <span className="inline-block h-0.5 w-3 bg-orange-400" /> Imputed
@@ -413,10 +508,14 @@ export default function NodeInspector() {
           </div>
           <dl className="mt-3 grid grid-cols-2 gap-1 text-[11px]">
             <dt className="text-slate-400">t = {currentTimestep}</dt>
-            <dd className="text-right">{currentMasked ? "masked" : "observed"}</dd>
+            <dd className="text-right">
+              {currentMasked ? "masked" : "observed"}
+            </dd>
             <dt className="text-slate-400">ground truth</dt>
             <dd className="text-right">
-              {currentGT === null || currentGT === undefined ? "—" : currentGT.toFixed(2)}
+              {currentGT === null || currentGT === undefined
+                ? "—"
+                : currentGT.toFixed(2)}
             </dd>
             <dt className="text-slate-400">imputed</dt>
             <dd className="text-right">
@@ -433,7 +532,9 @@ export default function NodeInspector() {
                 {currentZINB.pi !== undefined && (
                   <>
                     <dt className="text-slate-400">π (zero-inflation)</dt>
-                    <dd className="text-right text-violet-300">{currentZINB.pi.toFixed(3)}</dd>
+                    <dd className="text-right text-violet-300">
+                      {currentZINB.pi.toFixed(3)}
+                    </dd>
                   </>
                 )}
               </>
@@ -441,7 +542,9 @@ export default function NodeInspector() {
           </dl>
         </>
       ) : (
-        <div className="mt-3 text-slate-400">Imputation data unavailable in this payload.</div>
+        <div className="mt-3 text-slate-400">
+          Imputation data unavailable in this payload.
+        </div>
       )}
 
       {/* ── MNAR Ghosting Timeline (π over time) ── */}
@@ -449,8 +552,8 @@ export default function NodeInspector() {
         <div className="mt-4 border-t border-white/10 pt-3">
           <div className="mb-1 flex items-center justify-between text-[10px] text-slate-400">
             <span>
-              <span className="font-medium text-violet-300">π</span>
-              {" "}zero-inflation probability
+              <span className="font-medium text-violet-300">π</span>{" "}
+              zero-inflation probability
             </span>
             <span className="text-rose-400/70">red = masked</span>
           </div>
@@ -462,7 +565,9 @@ export default function NodeInspector() {
       {hasEgoEdges && (
         <div className="mt-4 border-t border-white/10 pt-3">
           <div className="mb-1 flex items-center justify-between text-[10px]">
-            <span className="font-medium text-slate-300">Top Attention Edges</span>
+            <span className="font-medium text-slate-300">
+              Top Attention Edges
+            </span>
             <span className="text-slate-500">
               <span className="text-blue-400">←</span> in{" "}
               <span className="text-amber-400">→</span> out
@@ -471,7 +576,6 @@ export default function NodeInspector() {
           <EdgeList edges={nodeDetail.ego_graph_edges!} />
         </div>
       )}
-
     </aside>
   );
 }
