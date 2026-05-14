@@ -24,7 +24,8 @@ class ResilientIoTPipeline(nn.Module):
                  seq_len: int,
                  embedding_dim: int = 32,
                  hidden_dim: int = 64,
-                 sparsity_threshold: float = 0.5):
+                 sparsity_threshold: float = 0.5,
+                 num_layers: int = 2):
         super(ResilientIoTPipeline, self).__init__()
 
         # 1. Topology Inference
@@ -40,9 +41,10 @@ class ResilientIoTPipeline(nn.Module):
             num_nodes=num_nodes,
             seq_len=seq_len,
             time_series_dim=time_series_dim,
-            hidden_dim=hidden_dim
+            hidden_dim=hidden_dim,
+            num_layers=num_layers
         )
-        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
+        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
 
         # 3. Multi-Task Decoders
         self.decoders = DecoupledDecoders(
@@ -193,7 +195,8 @@ if __name__ == "__main__":
         num_nodes=num_nodes,
         static_feat_dim=static_feat_dim,
         time_series_dim=time_series_dim,
-        seq_len=seq_len
+        seq_len=seq_len,
+        num_layers=2
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)

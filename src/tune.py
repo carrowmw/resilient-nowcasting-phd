@@ -27,6 +27,7 @@ _PARAM_PATH: dict[str, tuple[str, str]] = {
     "w_impute": ("loss", "w_impute"),
     "sparsity_threshold": ("model", "sparsity_threshold"),
     "mask_prob": ("data", "mask_prob"),
+    "num_layers": ("model", "num_layers"),
     "embedding_dim": ("model", "embedding_dim"),
     "hidden_dim": ("model", "hidden_dim"),
     "batch_size": ("training", "batch_size"),

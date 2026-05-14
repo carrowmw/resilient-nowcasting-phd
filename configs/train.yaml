@@ -13,6 +13,7 @@ model:
   embedding_dim: 32
   hidden_dim: 64
   sparsity_threshold: 0.5
+  num_layers: 2
 
 training:
   epochs: 25

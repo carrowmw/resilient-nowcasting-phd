@@ -200,6 +200,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
         embedding_dim=model_cfg["embedding_dim"],
         hidden_dim=model_cfg["hidden_dim"],
         sparsity_threshold=model_cfg["sparsity_threshold"],
+        num_layers=model_cfg.get("num_layers", 2),
     ).to(device)
 
     logger.info(
@@ -207,7 +208,8 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
         f"static_feat_dim={train_dataset.static_feat_dim}, "
         f"time_series_dim={train_dataset.time_series_dim}, "
         f"embedding_dim={model_cfg['embedding_dim']}, "
-        f"hidden_dim={model_cfg['hidden_dim']}"
+        f"hidden_dim={model_cfg['hidden_dim']}, "
+        f"num_layers={model_cfg.get('num_layers', 2)}"
     )
 
     # Optimizer
