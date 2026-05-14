@@ -55,3 +55,27 @@ The bridge between the PyTorch Backend and Next.js Frontend is the `export_ui_pa
 
 - **The Visual Holdout Set (No Data Leakage):** The data used to generate the UI payload must be strictly quarantined from the training and validation loops. Visualizing training data in the frontend displays memorization, not predictive inference.
 - **Artifact Twinning:** Every generated `ui_payload.json` must be injected with metadata identifying exactly how it was created. This includes the `wandb_run_id`, `git_commit_hash`, and a copy of the `train.yaml` hyperparameters. This ensures a 1-to-1 traceability between a visual frontend artifact and the backend model that generated it.
+
+## 6. AI Agent Orchestration & Roles
+
+Development in this repository is assisted by AI Agents. To maintain code quality and prevent degradation, agents are divided into three distinct roles. Do not allow agents to break character or cross responsibilities.
+
+- **The Interrogator (@interrogator):** Read-only scout. Responsible for searching the codebase, reading files, analyzing logs, and providing context. Never writes code.
+- **The Architect (@architect):** System designer. Responsible for cross-referencing requirements with `NSTAR` documents, creating step-by-step plans in `plan.md`, and performing mathematical "Desk Checks" before any code is written. Does not write execution code.
+- **The Implementer (@implementer):** The executor. Writes the code based _only_ on the Architect's plan. Operates strictly within the Dockerized environment.
+
+## 7. Environment & Dependency Isolation
+
+This project operates on a strict **Zero Host Download** policy.
+
+- **No Local Environments:** The creation of local virtual environments (e.g., `python -m venv`) is strictly prohibited.
+- **Docker Execution:** All code execution, testing, and linting MUST take place inside the designated Docker containers using `docker compose exec [container_name] [command]`.
+- **The "Sync or Sink" Rule:** Any Python dependency installed inside the container (`pip install <package>`) MUST be immediately and manually added to `requirements.txt`. Failure to do so will result in container rebuild failures and is considered a critical development violation.
+- **Node Modules Quarantine:** Frontend dependencies are handled via Docker anonymous volumes. Do not attempt to read or modify the host's `node_modules` directory.
+
+## 8. The Experiment Ledger
+
+No task, experiment, or significant bug fix is considered complete until it is logged in `EXPERIMENTS.md`.
+
+- Every entry must contain: Date, Git Branch, Objective/Hypothesis, and Outcome/Result.
+- AI Agents are instructed to halt workflows and refuse to close out tasks until this ledger is updated.
