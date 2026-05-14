@@ -22,9 +22,14 @@ DEFAULT_TRAIN_CONFIG = os.path.join(
 
 # Mapping from sweep.yaml parameter names to their nested location in train.yaml
 _PARAM_PATH: dict[str, tuple[str, str]] = {
-    "lr":         ("training", "lr"),
-    "w_forecast": ("loss",     "w_forecast"),
-    "w_impute":   ("loss",     "w_impute"),
+    "lr": ("training", "lr"),
+    "w_forecast": ("loss", "w_forecast"),
+    "w_impute": ("loss", "w_impute"),
+    "sparsity_threshold": ("model", "sparsity_threshold"),
+    "mask_prob": ("data", "mask_prob"),
+    "embedding_dim": ("model", "embedding_dim"),
+    "hidden_dim": ("model", "hidden_dim"),
+    "batch_size": ("training", "batch_size"),
 }
 
 
@@ -58,8 +63,11 @@ def make_objective(base_config: dict, use_mock_data: bool):
                     param_config["min"],
                     param_config["max"],
                 )
+            elif "values" in param_config:
+                # Categorical / discrete choices
+                val = trial.suggest_categorical(param_name, param_config["values"])
             else:
-                raise ValueError(f"Unsupported distribution: {dist} for parameter {param_name}")
+                raise ValueError(f"Unsupported distribution or missing 'values': {param_name}")
 
             section, key = _PARAM_PATH[param_name]
             config[section][key] = val

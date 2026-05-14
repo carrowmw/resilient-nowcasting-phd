@@ -49,6 +49,7 @@ def create_mock_dataloader(
     time_series_dim: int,
     static_feat_dim: int,
     dataset_size: int,
+    mask_prob: float = 0.15,
 ):
     """
     Creates a mock DataLoader yielding batches that match the pipeline's
@@ -66,7 +67,7 @@ def create_mock_dataloader(
 
         def __getitem__(self, idx: int) -> dict:
             dyn = torch.randn(num_nodes, seq_len, time_series_dim)
-            mask = torch.rand_like(dyn) < 0.15
+            mask = torch.rand_like(dyn) < mask_prob
             dyn_masked = dyn.clone()
             dyn_masked[mask] = float("nan")
             return {
@@ -128,6 +129,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             time_series_dim=model_cfg["time_series_dim"],
             static_feat_dim=model_cfg["static_feat_dim"],
             dataset_size=20,
+            mask_prob=data_cfg.get("mask_prob", 0.15),
         )
         val_loader, _ = create_mock_dataloader(
             batch_size=train_cfg["batch_size"],
@@ -136,6 +138,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             time_series_dim=model_cfg["time_series_dim"],
             static_feat_dim=model_cfg["static_feat_dim"],
             dataset_size=8,
+            mask_prob=data_cfg.get("mask_prob", 0.15),
         )
     else:
         logger.info(f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}")
@@ -146,6 +149,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
                 data_cfg["start_date"],
                 data_cfg["end_date"],
                 seq_len=data_cfg["seq_len"],
+                mask_prob=data_cfg.get("mask_prob", 0.15),
                 target_veh_class=data_cfg["target_veh_class"],
                 target_dir=data_cfg["target_dir"],
             )

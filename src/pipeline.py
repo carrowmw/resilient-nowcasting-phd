@@ -152,14 +152,15 @@ if __name__ == "__main__":
 
     # We'll create a custom mock Dataset specifically for testing the pipeline requirements.
     class MockPipelineDataset(torch.utils.data.Dataset):
-        def __init__(self, size):
+        def __init__(self, size, mask_prob=0.15):
             self.size = size
+            self.mask_prob = mask_prob
         def __len__(self):
             return self.size
         def __getitem__(self, idx):
             # dynamic: [N, T, D]
             dyn = torch.randn(num_nodes, seq_len, time_series_dim)
-            mask = torch.rand_like(dyn) < 0.15
+            mask = torch.rand_like(dyn) < self.mask_prob
             dyn_masked = dyn.clone()
             dyn_masked[mask] = float('nan')
 
