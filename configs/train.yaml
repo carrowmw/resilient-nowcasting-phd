@@ -14,11 +14,19 @@ model:
   hidden_dim: 64
   sparsity_threshold: 0.5
   num_layers: 2
+  num_heads: 4
+  dropout: 0.1
+  dim_feedforward: 256
+  zinb_eps: 1.0e-6
 
 training:
   epochs: 25
   batch_size: 128
   lr: 0.001
+  grad_clip_max_norm: 1.0
+  random_seed: 42
+  early_stop_patience: 5
+  early_stop_min_delta: 0.001
 
 loss:
   w_forecast: 1.0

@@ -7,7 +7,7 @@ class DecoupledDecoders(nn.Module):
     """
     DecoupledDecoders: Multi-task heads for imputation and uncertainty-aware forecasting.
     """
-    def __init__(self, hidden_dim: int, time_series_dim: int):
+    def __init__(self, hidden_dim: int, time_series_dim: int, dropout: float = 0.1, zinb_eps: float = 1e-6):
         super(DecoupledDecoders, self).__init__()
 
         # Reproducibility
@@ -15,6 +15,7 @@ class DecoupledDecoders(nn.Module):
 
         self.hidden_dim = hidden_dim
         self.time_series_dim = time_series_dim
+        self.zinb_eps = zinb_eps
 
         # Imputation Decoder: Reconstructs the entire sequence.
         # Deepened to a 2-layer MLP to give the model enough capacity to recover
@@ -22,7 +23,7 @@ class DecoupledDecoders(nn.Module):
         self.impute_layer = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, time_series_dim)
         )
 
@@ -31,7 +32,7 @@ class DecoupledDecoders(nn.Module):
         self.forecast_layer = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, 3)
         )
 
@@ -61,10 +62,9 @@ class DecoupledDecoders(nn.Module):
         pi_logits = forecast_logits[:, :, 2]
 
         # Apply ZINB constraints (Tripwires from NSTAR_BACKEND_ARCHITECTURE.md)
-        eps = 1e-6
         pi = torch.sigmoid(pi_logits)
-        mu = F.softplus(mu_logits) + eps
-        theta = F.softplus(theta_logits) + eps
+        mu = F.softplus(mu_logits) + self.zinb_eps
+        theta = F.softplus(theta_logits) + self.zinb_eps
 
         return imputed_features, mu, theta, pi
 

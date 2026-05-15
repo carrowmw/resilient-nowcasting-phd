@@ -25,7 +25,11 @@ class ResilientIoTPipeline(nn.Module):
                  embedding_dim: int = 32,
                  hidden_dim: int = 64,
                  sparsity_threshold: float = 0.5,
-                 num_layers: int = 2):
+                 num_layers: int = 2,
+                 num_heads: int = 4,
+                 dropout: float = 0.1,
+                 dim_feedforward: int = 256,
+                 zinb_eps: float = 1e-6):
         super(ResilientIoTPipeline, self).__init__()
 
         # 1. Topology Inference
@@ -42,16 +46,21 @@ class ResilientIoTPipeline(nn.Module):
             seq_len=seq_len,
             time_series_dim=time_series_dim,
             hidden_dim=hidden_dim,
-            num_layers=num_layers
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            dim_feedforward=dim_feedforward
         )
-        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
+        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, num_heads={num_heads}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
 
         # 3. Multi-Task Decoders
         self.decoders = DecoupledDecoders(
             hidden_dim=hidden_dim,
-            time_series_dim=time_series_dim
+            time_series_dim=time_series_dim,
+            dropout=dropout,
+            zinb_eps=zinb_eps
         )
-        logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
+        logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, dropout={dropout}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
 
     def forward(
         self,

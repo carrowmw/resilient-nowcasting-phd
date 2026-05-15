@@ -19,7 +19,8 @@ class MaskedSpatiotemporalEncoder(nn.Module):
                  hidden_dim: int = 64, 
                  num_heads: int = 4, 
                  num_layers: int = 2,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1,
+                 dim_feedforward: int = 256):
         super(MaskedSpatiotemporalEncoder, self).__init__()
         
         # Reproducibility at initialization
@@ -45,7 +46,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
+            dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=False # Standard Transformer [Seq, Batch, Dim]
         )

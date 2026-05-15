@@ -1,7 +1,10 @@
+#!/usr/bin/env python3
 import argparse
 import copy
 import logging
 import os
+import subprocess
+import functools
 
 import optuna
 import yaml
@@ -20,19 +23,20 @@ DEFAULT_TRAIN_CONFIG = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "configs", "train.yaml"
 )
 
-# Mapping from sweep.yaml parameter names to their nested location in train.yaml
-_PARAM_PATH: dict[str, tuple[str, str]] = {
-    "lr": ("training", "lr"),
-    "w_forecast": ("loss", "w_forecast"),
-    "w_impute": ("loss", "w_impute"),
-    "sparsity_threshold": ("model", "sparsity_threshold"),
-    "mask_prob": ("data", "mask_prob"),
-    "num_layers": ("model", "num_layers"),
-    "embedding_dim": ("model", "embedding_dim"),
-    "hidden_dim": ("model", "hidden_dim"),
-    "batch_size": ("training", "batch_size"),
-}
+def set_nested_value(d: dict, keys: list, value):
+    """Recursively sets a value in a nested dictionary."""
+    for key in keys[:-1]:
+        d = d.setdefault(key, {})
+    d[keys[-1]] = value
 
+def get_git_metadata():
+    """Retrieves current Git commit hash and branch name."""
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+        return commit, branch
+    except subprocess.CalledProcessError:
+        return "unknown", "unknown"
 
 def make_objective(base_config: dict, use_mock_data: bool):
     """
@@ -70,8 +74,28 @@ def make_objective(base_config: dict, use_mock_data: bool):
             else:
                 raise ValueError(f"Unsupported distribution or missing 'values': {param_name}")
 
-            section, key = _PARAM_PATH[param_name]
-            config[section][key] = val
+            # Use dot-notation to set the nested configuration parameter
+            keys = param_name.split('.')
+            if len(keys) == 1:
+                # Fallback for old parameters not using dot notation, try to map them or just set at root
+                # This should ideally not happen if sweep.yaml is updated, but for backward compat:
+                if param_name in ["lr", "batch_size"]:
+                    set_nested_value(config, ["training", param_name], val)
+                elif param_name in ["w_forecast", "w_impute"]:
+                    set_nested_value(config, ["loss", param_name], val)
+                elif param_name in ["sparsity_threshold", "num_layers", "embedding_dim", "hidden_dim"]:
+                    set_nested_value(config, ["model", param_name], val)
+                elif param_name == "mask_prob":
+                    set_nested_value(config, ["data", param_name], val)
+                else:
+                    config[param_name] = val
+            else:
+                set_nested_value(config, keys, val)
+
+        # Stamp the trial with Git metadata
+        commit, branch = get_git_metadata()
+        trial.set_user_attr("git_commit", commit)
+        trial.set_user_attr("branch", branch)
 
         # Execute training loop.
         # init_wandb=False prevents train.py from spawning a separate W&B run;
@@ -80,6 +104,71 @@ def make_objective(base_config: dict, use_mock_data: bool):
 
     return objective
 
+def interactive_setup():
+    """Handles interactive prompts for storage and study name."""
+    storage = None
+    study_name = None
+
+    # Find local DBs
+    local_dbs = [f for f in os.listdir('.') if f.endswith('.db')]
+    
+    if local_dbs:
+        print("\nFound existing Optuna databases in current directory:")
+        for i, db in enumerate(local_dbs):
+            print(f"[{i+1}] {db}")
+        print(f"[{len(local_dbs)+1}] Create new database")
+        
+        while True:
+            try:
+                choice = input(f"Select storage [1-{len(local_dbs)+1}]: ")
+                idx = int(choice) - 1
+                if 0 <= idx < len(local_dbs):
+                    storage = f"sqlite:///{local_dbs[idx]}"
+                    break
+                elif idx == len(local_dbs):
+                    new_db = input("Enter new database name (e.g., optuna.db): ")
+                    if not new_db.endswith('.db'):
+                        new_db += '.db'
+                    storage = f"sqlite:///{new_db}"
+                    break
+            except ValueError:
+                pass
+            print("Invalid selection.")
+    else:
+        new_db = input("\nNo existing databases found. Enter new database name (e.g., optuna.db): ")
+        if not new_db.endswith('.db'):
+            new_db += '.db'
+        storage = f"sqlite:///{new_db}"
+
+    # Study selection
+    try:
+        summaries = optuna.get_all_study_summaries(storage)
+        if summaries:
+            print(f"\nExisting studies in {storage}:")
+            for i, s in enumerate(summaries):
+                print(f"[{i+1}] {s.study_name} (Trials: {s.n_trials})")
+            print(f"[{len(summaries)+1}] Create new study")
+            
+            while True:
+                try:
+                    choice = input(f"Select study [1-{len(summaries)+1}]: ")
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(summaries):
+                        study_name = summaries[idx].study_name
+                        break
+                    elif idx == len(summaries):
+                        study_name = input("Enter new study name: ")
+                        break
+                except ValueError:
+                    pass
+                print("Invalid selection.")
+        else:
+            study_name = input(f"\nNo existing studies in {storage}. Enter new study name: ")
+    except Exception as e:
+        print(f"Could not load summaries from {storage}. Error: {e}")
+        study_name = input("\nEnter new study name: ")
+
+    return storage, study_name
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Optuna hyperparameter sweep")
@@ -94,7 +183,9 @@ if __name__ == "__main__":
         action="store_true",
         help="Use synthetic mock data instead of real parquet data (for local CPU integration tests)",
     )
-    parser.add_argument("--n_trials", type=int, default=2, help="Number of Optuna trials")
+    parser.add_argument("--n-trials", type=int, default=2, help="Number of Optuna trials")
+    parser.add_argument("--study-name", type=str, help="Name of the Optuna study")
+    parser.add_argument("--storage", type=str, help="SQLite database connection string (e.g., sqlite:///optuna.db)")
     cli_args = parser.parse_args()
 
     logger = setup_logger("optuna_sweep")
@@ -105,14 +196,28 @@ if __name__ == "__main__":
     base_config = load_config(cli_args.config)
     logger.info(f"Base config loaded from: {cli_args.config}")
 
+    storage = cli_args.storage
+    study_name = cli_args.study_name
+
+    if storage is None or study_name is None:
+        storage, study_name = interactive_setup()
+
+    logger.info(f"Using storage: {storage}")
+    logger.info(f"Using study name: {study_name}")
+
     # Initialize the W&B Callback for Optuna
     wandbc = WeightsAndBiasesCallback(
         metric_name="val_loss_total",
         wandb_kwargs={"project": "resilient-iot-sweeps"},
     )
 
-    # Create study
-    study = optuna.create_study(direction="minimize")
+    # Create or load study
+    study = optuna.create_study(
+        study_name=study_name,
+        storage=storage,
+        load_if_exists=True,
+        direction="minimize"
+    )
 
     # Execute study
     study.optimize(
@@ -122,6 +227,12 @@ if __name__ == "__main__":
     )
 
     logger.info("Sweep complete. Best hyperparameters:")
-    for key, value in study.best_params.items():
-        logger.info(f"    {key}: {value}")
-    logger.info(f"Best validation loss: {study.best_value}")
+    if len(study.trials) > 0:
+        try:
+            for key, value in study.best_params.items():
+                logger.info(f"    {key}: {value}")
+            logger.info(f"Best validation loss: {study.best_value}")
+        except ValueError:
+            logger.warning("No best trial available yet (e.g., all trials failed).")
+    else:
+        logger.warning("No trials completed.")

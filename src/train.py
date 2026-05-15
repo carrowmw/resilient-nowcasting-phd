@@ -201,6 +201,10 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
         hidden_dim=model_cfg["hidden_dim"],
         sparsity_threshold=model_cfg["sparsity_threshold"],
         num_layers=model_cfg.get("num_layers", 2),
+        num_heads=model_cfg.get("num_heads", 4),
+        dropout=model_cfg.get("dropout", 0.1),
+        dim_feedforward=model_cfg.get("dim_feedforward", 256),
+        zinb_eps=model_cfg.get("zinb_eps", 1e-6)
     ).to(device)
 
     logger.info(
@@ -209,7 +213,8 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
         f"time_series_dim={train_dataset.time_series_dim}, "
         f"embedding_dim={model_cfg['embedding_dim']}, "
         f"hidden_dim={model_cfg['hidden_dim']}, "
-        f"num_layers={model_cfg.get('num_layers', 2)}"
+        f"num_layers={model_cfg.get('num_layers', 2)}, "
+        f"num_heads={model_cfg.get('num_heads', 4)}"
     )
 
     # Optimizer
@@ -221,6 +226,11 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
     os.makedirs("models", exist_ok=True)
 
     epochs = train_cfg["epochs"]
+    grad_clip_max_norm = train_cfg.get("grad_clip_max_norm", 1.0)
+    early_stop_patience = train_cfg.get("early_stop_patience", 5)
+    early_stop_min_delta = train_cfg.get("early_stop_min_delta", 0.001)
+    epochs_no_improve = 0
+
     for epoch in range(epochs):
         model.train()
 
@@ -236,7 +246,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             loss.backward()
 
             # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
 
             optimizer.step()
 
@@ -293,14 +303,18 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             f"ImputeMSE: {val_impute_mse:.4f})"
         )
 
-        # Checkpointing
-        if avg_val_loss < best_val_loss:
+        # Checkpointing and Early Stopping
+        if avg_val_loss < (best_val_loss - early_stop_min_delta):
             best_val_loss = avg_val_loss
+            epochs_no_improve = 0
             checkpoint_path = "models/best_pipeline.pt"
             torch.save(model.state_dict(), checkpoint_path)
             logger.info(
                 f"New best model saved to {checkpoint_path} with val_loss: {best_val_loss:.4f}"
             )
+        else:
+            epochs_no_improve += 1
+            logger.info(f"Early stopping counter: {epochs_no_improve} out of {early_stop_patience}")
 
         # W&B Logging
         if init_wandb or (wandb.run is not None):
@@ -319,6 +333,10 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
                     "epoch": epoch + 1,
                 }
             )
+            
+        if epochs_no_improve >= early_stop_patience:
+            logger.info(f"Early stopping triggered after {epoch + 1} epochs.")
+            break
 
     logger.info("Training complete.")
     if init_wandb:
