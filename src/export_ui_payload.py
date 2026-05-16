@@ -89,10 +89,10 @@ def parse_args() -> argparse.Namespace:
         description="Generate ui_payload.json for the Geospatial Digital Twin"
     )
     # Load two days so we have seq_len context for day 2 predictions
-    parser.add_argument("--start_date", type=str, default="2024-05-09",
+    parser.add_argument("--start_date", type=str, default="2025-05-10",
                         help="Dataset start date (YYYY-MM-DD).  Load one day earlier than "
                              "the target day to supply seq_len look-back context.")
-    parser.add_argument("--end_date", type=str, default="2024-05-11",
+    parser.add_argument("--end_date", type=str, default="2025-05-12",
                         help="Dataset end date (YYYY-MM-DD, exclusive).")
     parser.add_argument("--veh_class", type=str, default="person",
                         help="Vehicle class filter used during training.")

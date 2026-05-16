@@ -32,6 +32,14 @@ def set_nested_value(d: dict, keys: list, value):
 def get_git_metadata():
     """Retrieves current Git commit hash and branch name."""
     try:
+        # Check if repository is dirty
+        status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+        if status:
+            print("\n[!] ERROR: Repository is dirty (uncommitted changes).")
+            print("To ensure 'Artifact Twinning' traceability, you must commit your changes before running a sweep.")
+            print("Dirty files:\n" + status)
+            exit(1)
+
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
         return commit, branch
@@ -100,7 +108,13 @@ def make_objective(base_config: dict, use_mock_data: bool):
         # Execute training loop.
         # init_wandb=False prevents train.py from spawning a separate W&B run;
         # the WeightsAndBiasesCallback manages the run at the study level.
-        return run_training(config=config, init_wandb=False, use_mock_data=use_mock_data)
+        logger = logging.getLogger("optuna_sweep")
+        logger.info(f"Trial {trial.number} parameters: {trial.params}")
+        
+        val_loss = run_training(config=config, init_wandb=False, use_mock_data=use_mock_data, study_name=trial.study.study_name)
+        
+        logger.info(f"Trial {trial.number} finished with val_loss: {val_loss}")
+        return val_loss
 
     return objective
 

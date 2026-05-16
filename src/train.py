@@ -2,6 +2,7 @@ import argparse
 import copy
 import logging
 import os
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -92,7 +93,7 @@ def create_mock_dataloader(
     return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate), dataset
 
 
-def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = False) -> float:
+def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = False, study_name: str = None) -> float:
     """
     Core execution logic for a single training run.
     Accepts a fully-specified config dictionary (see configs/train.yaml).
@@ -112,6 +113,27 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
     # hyperparameters (data / model / training / loss) are logged together.
     if init_wandb:
         wandb.init(project="resilient-iot", config=config)
+
+    # ------------------------------------------------------------------ #
+    # Directory Namespacing Strategy (Robust Model Versioning)           #
+    # ------------------------------------------------------------------ #
+    if study_name:
+        # Sweep Namespace: models/resilient-iot-sweeps/{study_name}/
+        project = "resilient-iot-sweeps"
+        run_name = study_name
+    elif wandb.run is not None:
+        # Production Namespace: models/{project}/{run_name}/
+        project = wandb.run.project
+        run_name = wandb.run.name
+    else:
+        # Local Namespace: models/local/{timestamp}/
+        project = "local"
+        run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    checkpoint_dir = os.path.join("models", project, run_name)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir, "best_model.pt")
+    logger.info(f"Checkpointing enabled: {checkpoint_path}")
 
     # ------------------------------------------------------------------ #
     # Data loading                                                         #
@@ -223,7 +245,6 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
     logger.info("Starting training loop...")
 
     best_val_loss = float("inf")
-    os.makedirs("models", exist_ok=True)
 
     epochs = train_cfg["epochs"]
     grad_clip_max_norm = train_cfg.get("grad_clip_max_norm", 1.0)
@@ -307,7 +328,6 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
         if avg_val_loss < (best_val_loss - early_stop_min_delta):
             best_val_loss = avg_val_loss
             epochs_no_improve = 0
-            checkpoint_path = "models/best_pipeline.pt"
             torch.save(model.state_dict(), checkpoint_path)
             logger.info(
                 f"New best model saved to {checkpoint_path} with val_loss: {best_val_loss:.4f}"

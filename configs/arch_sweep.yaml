@@ -1,0 +1,9 @@
+parameters:
+  num_layers:
+    values: [2, 3, 4, 6]
+  embedding_dim:
+    values: [16, 32, 64, 128]
+  hidden_dim:
+    values: [32, 64, 128, 256, 512]
+  batch_size:
+    values: [64, 128, 256]
