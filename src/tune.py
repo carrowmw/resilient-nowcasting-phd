@@ -14,9 +14,9 @@ from logger import setup_logger
 from train import load_config, run_training
 
 # Load sweep configuration globally so the objective function can access it
-SWEEP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs", "sweep.yaml")
-with open(SWEEP_CONFIG_PATH, "r") as f:
-    SWEEP_CONFIG = yaml.safe_load(f)
+DEFAULT_SWEEP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs", "sweep.yaml")
+with open(DEFAULT_SWEEP_CONFIG_PATH, "r") as f:
+    DEFAULT_SWEEP_CONFIG = yaml.safe_load(f)
 
 # Default base config path — can be overridden via --config CLI flag
 DEFAULT_TRAIN_CONFIG = os.path.join(
@@ -60,7 +60,7 @@ def make_objective(base_config: dict, use_mock_data: bool):
         """
         config = copy.deepcopy(base_config)
 
-        for param_name, param_config in SWEEP_CONFIG.get("parameters", {}).items():
+        for param_name, param_config in DEFAULT_SWEEP_CONFIG.get("parameters", {}).items():
             dist = param_config.get("distribution")
 
             if dist == "log_uniform_values":
@@ -110,9 +110,9 @@ def make_objective(base_config: dict, use_mock_data: bool):
         # the WeightsAndBiasesCallback manages the run at the study level.
         logger = logging.getLogger("optuna_sweep")
         logger.info(f"Trial {trial.number} parameters: {trial.params}")
-        
+
         val_loss = run_training(config=config, init_wandb=False, use_mock_data=use_mock_data, study_name=trial.study.study_name)
-        
+
         logger.info(f"Trial {trial.number} finished with val_loss: {val_loss}")
         return val_loss
 
@@ -125,13 +125,13 @@ def interactive_setup():
 
     # Find local DBs
     local_dbs = [f for f in os.listdir('.') if f.endswith('.db')]
-    
+
     if local_dbs:
         print("\nFound existing Optuna databases in current directory:")
         for i, db in enumerate(local_dbs):
             print(f"[{i+1}] {db}")
         print(f"[{len(local_dbs)+1}] Create new database")
-        
+
         while True:
             try:
                 choice = input(f"Select storage [1-{len(local_dbs)+1}]: ")
@@ -162,7 +162,7 @@ def interactive_setup():
             for i, s in enumerate(summaries):
                 print(f"[{i+1}] {s.study_name} (Trials: {s.n_trials})")
             print(f"[{len(summaries)+1}] Create new study")
-            
+
             while True:
                 try:
                     choice = input(f"Select study [1-{len(summaries)+1}]: ")
@@ -191,6 +191,12 @@ if __name__ == "__main__":
         type=str,
         default=DEFAULT_TRAIN_CONFIG,
         help="Path to base YAML config (train.yaml). Optuna suggestions overwrite specific keys.",
+    )
+    parser.add_argument(
+        "--sweep-config",
+        type=str,
+        default=DEFAULT_SWEEP_CONFIG,
+        help="Path to YAML config (sweep.yaml). Defines hyperparameter search space.",
     )
     parser.add_argument(
         "--use_mock_data",
