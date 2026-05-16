@@ -28,9 +28,13 @@ class ResilientIoTPipeline(nn.Module):
                  num_layers: int = 2,
                  num_heads: int = 4,
                  dropout: float = 0.1,
-                 dim_feedforward: int = 256,
-                 zinb_eps: float = 1e-6):
+                 dim_feedforward: int = None,
+                 zinb_eps: float = 1.0e-6):
         super(ResilientIoTPipeline, self).__init__()
+
+        # Default dim_feedforward to 4x hidden_dim if not specified or invalid
+        if dim_feedforward is None or dim_feedforward <= 0:
+            dim_feedforward = hidden_dim * 4
 
         # 1. Topology Inference
         self.graph_learner = DynamicGraphLearner(

@@ -35,6 +35,7 @@ from scipy.special import betainc
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dataset import RealIoTDataset
+from features import StaticFeatureLoader
 from pipeline import ResilientIoTPipeline
 
 # ---------------------------------------------------------------------------
@@ -57,11 +58,11 @@ SENSORS_PATH = "data/traffic_sensors.json"
 PARQUET_PATH = "data/processed/master_dataset_15T.parquet"
 MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
 NODES_DIR = "frontend/public/data/nodes"
-PLACES_CACHE_PATH = "data/external/places_cache_test.json"
+PLACES_CACHE_PATH = "data/external/places_cache.json"
 PLACES_TEMPLATE_PATH = "data/external/google_places_template.csv"
 
-HIDDEN_DIM = 64
-EMBEDDING_DIM = 32
+HIDDEN_DIM = 32
+EMBEDDING_DIM = 16
 
 # Newcastle city bounding box (WGS84) for simulated node placement
 NCL_LAT_MIN, NCL_LAT_MAX = 54.968, 55.012
@@ -102,6 +103,8 @@ def parse_args() -> argparse.Namespace:
                         help="Sequence length (must match trained model).")
     parser.add_argument("--num_simulated", type=int, default=5,
                         help="Number of synthetic zero-shot nodes to inject.")
+    parser.add_argument("--checkpoint", type=str, default=CHECKPOINT_PATH,
+                        help=f"Path to the trained model checkpoint (default: {CHECKPOINT_PATH})")
     return parser.parse_args()
 
 
@@ -190,7 +193,7 @@ def extract_timestep_attention(
 # ---------------------------------------------------------------------------
 
 def load_semantic_tags(
-    locations: List[str],
+    nodes_meta: List[Dict],
     places_cache_path: str = PLACES_CACHE_PATH,
     template_path: str = PLACES_TEMPLATE_PATH,
 ) -> Dict[str, List[str]]:
@@ -198,38 +201,56 @@ def load_semantic_tags(
     Build a {location_name: [tag, ...]} mapping from two Places data sources.
 
     Sources:
-      1. places_cache_test.json — live API features: commercial_density,
-         is_school_zone, highway_proximity.
+      1. StaticFeatureLoader (Places API) — live API features for simulated
+         nodes + cached features for real nodes.
       2. google_places_template.csv — zone_type, nearby_poi_count.
-
-    Simulated nodes are not in either source and receive an empty list.
     """
-    tags: Dict[str, List[str]] = {loc: [] for loc in locations}
+    tags: Dict[str, List[str]] = {m["location_name"]: [] for m in nodes_meta}
 
-    # Source 1: Live Places API cache
-    if Path(places_cache_path).exists():
-        with open(places_cache_path) as f:
-            cache: Dict[str, Dict] = json.load(f)
-        for loc, feats in cache.items():
-            if loc not in tags:
-                continue
-            t = tags[loc]
-            cd = int(feats.get("commercial_density", 0))
-            if cd >= 15:
-                t.append("high_commercial_density")
-            elif cd >= 5:
-                t.append("medium_commercial_density")
-            elif cd > 0:
-                t.append("low_commercial_density")
-            if feats.get("is_school_zone"):
-                t.append("school_zone")
-            hp = int(feats.get("highway_proximity", 0))
-            if hp >= 15:
-                t.append("high_transit_density")
-            elif hp >= 5:
-                t.append("medium_transit_density")
-            elif hp > 0:
-                t.append("low_transit_density")
+    # Source 1: Places API (augmented with StaticFeatureLoader)
+    try:
+        loader = StaticFeatureLoader(cache_path=places_cache_path)
+
+        # Live Query for simulated nodes missing from cache
+        for meta in nodes_meta:
+            loc = meta["location_name"]
+            if meta["is_simulated"] and loc not in loader.cache:
+                logger.info(f"Fetching live data for simulated node: {loc}")
+                try:
+                    # Note: Using private method as requested in Task 3.2
+                    loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
+                    loader._save_cache()
+                except Exception as ex:
+                    logger.error(f"Failed to fetch data for simulated node {loc}: {ex}")
+
+        cache = loader.cache
+    except (ValueError, RuntimeError) as e:
+        logger.warning(f"StaticFeatureLoader unavailable: {e}. Falling back to manual cache read.")
+        cache = {}
+        if Path(places_cache_path).exists():
+            with open(places_cache_path) as f:
+                cache = json.load(f)
+
+    for loc, feats in cache.items():
+        if loc not in tags:
+            continue
+        t = tags[loc]
+        cd = int(feats.get("commercial_density", 0))
+        if cd >= 15:
+            t.append("high_commercial_density")
+        elif cd >= 5:
+            t.append("medium_commercial_density")
+        elif cd > 0:
+            t.append("low_commercial_density")
+        if feats.get("is_school_zone"):
+            t.append("school_zone")
+        hp = int(feats.get("highway_proximity", 0))
+        if hp >= 15:
+            t.append("high_transit_density")
+        elif hp >= 5:
+            t.append("medium_transit_density")
+        elif hp > 0:
+            t.append("low_transit_density")
 
     # Source 2: Template CSV (zone_type, nearby_poi_count)
     if Path(template_path).exists():
@@ -664,7 +685,7 @@ def main() -> None:
     #    embeddings exist in the architecture), so we can safely
     #    initialise with num_nodes_total and load the checkpoint weights.
     # ------------------------------------------------------------------
-    logger.info("Initialising ResilientIoTPipeline …")
+    logger.info(f"Initialising ResilientIoTPipeline …")
     model = ResilientIoTPipeline(
         num_nodes=num_nodes_total,
         static_feat_dim=static_feat_dim,
@@ -674,8 +695,8 @@ def main() -> None:
         hidden_dim=HIDDEN_DIM,
     ).to(device)
 
-    logger.info(f"Loading checkpoint from {CHECKPOINT_PATH}")
-    state_dict = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=True)
+    logger.info(f"Loading checkpoint from {args.checkpoint}")
+    state_dict = torch.load(args.checkpoint, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
     model.eval()
     logger.info("Model loaded and set to eval mode.")
@@ -898,7 +919,7 @@ def main() -> None:
     # 8. Load semantic tags from Places cache + template CSV
     # ------------------------------------------------------------------
     logger.info("Loading semantic tags …")
-    semantic_tags = load_semantic_tags(real_location_names)
+    semantic_tags = load_semantic_tags(nodes_meta)
     tagged_count = sum(1 for v in semantic_tags.values() if v)
     logger.info(f"  {tagged_count}/{len(real_location_names)} sensors have semantic tags")
 
