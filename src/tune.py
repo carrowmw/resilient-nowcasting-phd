@@ -14,15 +14,6 @@ from optuna.integration.wandb import WeightsAndBiasesCallback
 from logger import setup_logger
 from train import load_config, run_training
 
-# Load sweep configuration globally so the objective function can access it
-DEFAULT_SWEEP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs", "sweep.yaml")
-with open(DEFAULT_SWEEP_CONFIG_PATH, "r") as f:
-    DEFAULT_SWEEP_CONFIG = yaml.safe_load(f)
-
-# Default base config path — can be overridden via --config CLI flag
-DEFAULT_TRAIN_CONFIG = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "configs", "train.yaml"
-)
 
 def set_nested_value(d: dict, keys: list, value):
     """Recursively sets a value in a nested dictionary."""
@@ -47,7 +38,7 @@ def get_git_metadata():
     except subprocess.CalledProcessError:
         return "unknown", "unknown"
 
-def make_objective(base_config: dict, use_mock_data: bool):
+def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool):
     """
     Factory that returns an Optuna objective bound to a deep-copy of
     base_config so each trial starts from the same YAML defaults and Optuna
@@ -56,12 +47,12 @@ def make_objective(base_config: dict, use_mock_data: bool):
     def objective(trial):
         """
         Optuna objective function for hyperparameter tuning.
-        Dynamically generates suggestions based on configs/sweep.yaml and
+        Dynamically generates suggestions based on sweep_config and
         merges them into a fresh copy of the base config dict.
         """
         config = copy.deepcopy(base_config)
 
-        for param_name, param_config in DEFAULT_SWEEP_CONFIG.get("parameters", {}).items():
+        for param_name, param_config in sweep_config.get("parameters", {}).items():
             dist = param_config.get("distribution")
 
             if dist == "log_uniform_values":
@@ -119,66 +110,116 @@ def make_objective(base_config: dict, use_mock_data: bool):
 
     return objective
 
-def interactive_setup():
-    """Handles interactive prompts for storage and study name."""
-    storage = None
-    study_name = None
+def interactive_setup(storage=None, study_name=None, config_path=None, sweep_config_path=None):
+    """Selectively handles interactive prompts for storage, study name, and configuration files."""
 
-    # Find local DBs
-    local_dbs = [f for f in os.listdir('.') if f.endswith('.db')]
-
-    if local_dbs:
-        print("\nFound existing Optuna databases in current directory:")
-        for i, db in enumerate(local_dbs):
-            print(f"[{i+1}] {db}")
-        print(f"[{len(local_dbs)+1}] Create new database")
-
+    # 1. Storage Selection (only if not provided)
+    if storage is None:
+        local_dbs = [f for f in os.listdir('.') if f.endswith('.db')]
+        if local_dbs:
+            print("\nFound existing Optuna databases in current directory:")
+            for i, db in enumerate(local_dbs):
+                print(f"[{i+1}] {db}")
+            print(f"[{len(local_dbs)+1}] Create new database")
+            while True:
+                choice = input(f"Select storage [1-{len(local_dbs)+1}]: ").strip()
+                idx = int(choice) - 1
+                if 0 <= idx < len(local_dbs):
+                    storage = f"sqlite:///{local_dbs[idx]}"
+                    break
+                elif idx == len(local_dbs):
+                    new_db = input("Enter new database name (e.g., optuna.db): ").strip()
+                    if not new_db.endswith('.db'):
+                        new_db += '.db'
+                    storage = f"sqlite:///{new_db}"
+                    break
+        else:
+            new_db = input("\nNo existing databases found. Enter new database name (e.g., optuna.db): ").strip()
+            if not new_db.endswith('.db'):
+                new_db += '.db'
+            storage = f"sqlite:///{new_db}"
+    # 2. Study Selection (only if not provided)
+    if study_name is None:
+        summaries = optuna.get_all_study_summaries(storage)
+        if summaries:
+            print(f"\nExisting studies in {storage}:")
+            for i, s in enumerate(summaries):
+                print(f"[{i+1}] {s.study_name} (Trials: {s.n_trials})")
+            print(f"[{len(summaries)+1}] Create new study")
+            while True:
+                choice = input(f"Select study [1-{len(summaries)+1}]: ").strip()
+                idx = int(choice) - 1
+                if 0 <= idx < len(summaries):
+                    study_name = summaries[idx].study_name
+                    break
+                elif idx == len(summaries):
+                    study_name = input("Enter new study name (leave blank to auto-generate via WandB): ").strip()
+                    if study_name == "":
+                        study_name = None
+                    break
+        else:
+            study_name = input(f"\nNo existing studies in {storage}. Enter new study name (leave blank to auto-generate via WandB): ").strip()
+            if study_name == "":
+                study_name = None
+    # Load list of available configuration files
+    configs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs")
+    train_dir = os.path.join(configs_dir, "train")
+    sweeps_dir = os.path.join(configs_dir, "sweeps")
+    train_yaml_files = sorted([os.path.join(train_dir, f) for f in os.listdir(train_dir) if f.endswith(('.yaml', '.yml'))])
+    sweep_yaml_files = sorted([os.path.join(sweeps_dir, f) for f in os.listdir(sweeps_dir) if f.endswith(('.yaml', '.yml'))])
+    # 3. Base Config Selection (only if not provided)
+    if config_path is None:
+        default_train = "configs/train/train.yaml"
+        if default_train not in train_yaml_files and train_yaml_files:
+            default_train = train_yaml_files[0]
+        print("\nAvailable Base Configurations:")
+        for i, yf in enumerate(train_yaml_files):
+            is_default = " (default)" if yf == default_train else ""
+            print(f"[{i+1}] {yf}{is_default}")
+        print(f"[{len(train_yaml_files)+1}] Enter custom path")
         while True:
-            choice = input(f"Select storage [1-{len(local_dbs)+1}]: ")
-            idx = int(choice) - 1
-            if 0 <= idx < len(local_dbs):
-                storage = f"sqlite:///{local_dbs[idx]}"
+            choice = input(f"Select base config [1-{len(train_yaml_files)+1}]: ").strip()
+            if choice == "":
+                config_path = default_train
                 break
-            elif idx == len(local_dbs):
-                new_db = input("Enter new database name (e.g., optuna.db): ")
-                if not new_db.endswith('.db'):
-                    new_db += '.db'
-                storage = f"sqlite:///{new_db}"
-                break
-    else:
-        new_db = input("\nNo existing databases found. Enter new database name (e.g., optuna.db): ")
-        if not new_db.endswith('.db'):
-            new_db += '.db'
-        storage = f"sqlite:///{new_db}"
-
-    # Study selection
-    summaries = optuna.get_all_study_summaries(storage)
-    if summaries:
-        print(f"\nExisting studies in {storage}:")
-        for i, s in enumerate(summaries):
-            print(f"[{i+1}] {s.study_name} (Trials: {s.n_trials})")
-        print(f"[{len(summaries)+1}] Create new study")
-
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(train_yaml_files):
+                    config_path = train_yaml_files[idx]
+                    break
+                elif idx == len(train_yaml_files):
+                    config_path = input("Enter custom config path: ").strip()
+                    break
+            except ValueError:
+                pass
+            print("Invalid selection.")
+    # 4. Sweep Config Selection (only if not provided)
+    if sweep_config_path is None:
+        default_sweep = "configs/sweeps/sweep.yaml"
+        if default_sweep not in sweep_yaml_files and sweep_yaml_files:
+            default_sweep = sweep_yaml_files[0]
+        print("\nAvailable Sweep Configurations:")
+        for i, yf in enumerate(sweep_yaml_files):
+            is_default = " (default)" if yf == default_sweep else ""
+            print(f"[{i+1}] {yf}{is_default}")
+        print(f"[{len(sweep_yaml_files)+1}] Enter custom path")
         while True:
-            choice = input(f"Select study [1-{len(summaries)+1}]: ")
-            idx = int(choice) - 1
-            if 0 <= idx < len(summaries):
-                # 1. User selected an EXISTING study
-                study_name = summaries[idx].study_name
+            choice = input(f"Select sweep config [1-{len(sweep_yaml_files)+1}]: ").strip()
+            if choice == "":
+                sweep_config_path = default_sweep
                 break
-                # 2. User creates a NEW study (allow empty string for WandB auto-name)
-            elif idx == len(summaries):
-                study_name = input("Enter new study name (leave blank to auto-generate via WandB): ")
-                if study_name == "":
-                    study_name = None  # Triggers auto-naming in the main block
-                break
-    else:
-        # 3. No studies exist in the DB (allow empty string for WandB auto-name)
-        study_name = input(f"\nNo existing studies in {storage}. Enter new study name (leave blank to auto-generate via WandB): ").strip()
-        if study_name == "":
-            study_name = None  # Triggers auto-naming in the main block
-
-    return storage, study_name
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(sweep_yaml_files):
+                    sweep_config_path = sweep_yaml_files[idx]
+                    break
+                elif idx == len(sweep_yaml_files):
+                    sweep_config_path = input("Enter custom sweep config path: ").strip()
+                    break
+            except ValueError:
+                pass
+            print("Invalid selection.")
+    return storage, study_name, config_path, sweep_config_path
 
 if __name__ == "__main__":
 
@@ -186,13 +227,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default=DEFAULT_TRAIN_CONFIG,
+        default=None,
         help="Path to base YAML config (train.yaml). Optuna suggestions overwrite specific keys.",
     )
     parser.add_argument(
         "--sweep-config",
         type=str,
-        default=DEFAULT_SWEEP_CONFIG,
+        default=None,
         help="Path to YAML config (sweep.yaml). Defines hyperparameter search space.",
     )
     parser.add_argument(
@@ -210,14 +251,22 @@ if __name__ == "__main__":
     if cli_args.use_mock_data:
         logger.info("Mode: MOCK DATA (local integration test)")
 
-    base_config = load_config(cli_args.config)
-    logger.info(f"Base config loaded from: {cli_args.config}")
-
     storage = cli_args.storage
     study_name = cli_args.study_name
+    config_path = cli_args.config
+    sweep_config_path = cli_args.sweep_config
 
-    if storage is None or study_name is None:
-        storage, study_name = interactive_setup()
+    # Trigger interactive setup for any values not explicitly provided via CLI flags
+    if storage is None or study_name is None or config_path is None or sweep_config_path is None:
+        storage, study_name, config_path, sweep_config_path = interactive_setup(
+            storage, study_name, config_path, sweep_config_path
+        )
+
+    # Dynamically load the chosen configuration files
+    base_config = load_config(config_path)
+    logger.info(f"Base config loaded from: {config_path}")
+    sweep_config = load_config(sweep_config_path)
+    logger.info(f"Sweep config loaded from: {sweep_config_path}")
 
     logger.info("Initializing WandB run...")
     wandb_run = wandb.init(
@@ -251,7 +300,7 @@ if __name__ == "__main__":
 
     # Execute study
     study.optimize(
-        make_objective(base_config, cli_args.use_mock_data),
+        make_objective(base_config, sweep_config, cli_args.use_mock_data),
         n_trials=cli_args.n_trials,
         callbacks=[wandbc],
     )
