@@ -6,6 +6,7 @@ import os
 import subprocess
 import functools
 
+import wandb
 import optuna
 import yaml
 from optuna.integration.wandb import WeightsAndBiasesCallback
@@ -133,21 +134,17 @@ def interactive_setup():
         print(f"[{len(local_dbs)+1}] Create new database")
 
         while True:
-            try:
-                choice = input(f"Select storage [1-{len(local_dbs)+1}]: ")
-                idx = int(choice) - 1
-                if 0 <= idx < len(local_dbs):
-                    storage = f"sqlite:///{local_dbs[idx]}"
-                    break
-                elif idx == len(local_dbs):
-                    new_db = input("Enter new database name (e.g., optuna.db): ")
-                    if not new_db.endswith('.db'):
-                        new_db += '.db'
-                    storage = f"sqlite:///{new_db}"
-                    break
-            except ValueError:
-                pass
-            print("Invalid selection.")
+            choice = input(f"Select storage [1-{len(local_dbs)+1}]: ")
+            idx = int(choice) - 1
+            if 0 <= idx < len(local_dbs):
+                storage = f"sqlite:///{local_dbs[idx]}"
+                break
+            elif idx == len(local_dbs):
+                new_db = input("Enter new database name (e.g., optuna.db): ")
+                if not new_db.endswith('.db'):
+                    new_db += '.db'
+                storage = f"sqlite:///{new_db}"
+                break
     else:
         new_db = input("\nNo existing databases found. Enter new database name (e.g., optuna.db): ")
         if not new_db.endswith('.db'):
@@ -155,36 +152,36 @@ def interactive_setup():
         storage = f"sqlite:///{new_db}"
 
     # Study selection
-    try:
-        summaries = optuna.get_all_study_summaries(storage)
-        if summaries:
-            print(f"\nExisting studies in {storage}:")
-            for i, s in enumerate(summaries):
-                print(f"[{i+1}] {s.study_name} (Trials: {s.n_trials})")
-            print(f"[{len(summaries)+1}] Create new study")
+    summaries = optuna.get_all_study_summaries(storage)
+    if summaries:
+        print(f"\nExisting studies in {storage}:")
+        for i, s in enumerate(summaries):
+            print(f"[{i+1}] {s.study_name} (Trials: {s.n_trials})")
+        print(f"[{len(summaries)+1}] Create new study")
 
-            while True:
-                try:
-                    choice = input(f"Select study [1-{len(summaries)+1}]: ")
-                    idx = int(choice) - 1
-                    if 0 <= idx < len(summaries):
-                        study_name = summaries[idx].study_name
-                        break
-                    elif idx == len(summaries):
-                        study_name = input("Enter new study name: ")
-                        break
-                except ValueError:
-                    pass
-                print("Invalid selection.")
-        else:
-            study_name = input(f"\nNo existing studies in {storage}. Enter new study name: ")
-    except Exception as e:
-        print(f"Could not load summaries from {storage}. Error: {e}")
-        study_name = input("\nEnter new study name: ")
+        while True:
+            choice = input(f"Select study [1-{len(summaries)+1}]: ")
+            idx = int(choice) - 1
+            if 0 <= idx < len(summaries):
+                # 1. User selected an EXISTING study
+                study_name = summaries[idx].study_name
+                break
+                # 2. User creates a NEW study (allow empty string for WandB auto-name)
+            elif idx == len(summaries):
+                study_name = input("Enter new study name (leave blank to auto-generate via WandB): ")
+                if study_name == "":
+                    study_name = None  # Triggers auto-naming in the main block
+                break
+    else:
+        # 3. No studies exist in the DB (allow empty string for WandB auto-name)
+        study_name = input(f"\nNo existing studies in {storage}. Enter new study name (leave blank to auto-generate via WandB): ").strip()
+        if study_name == "":
+            study_name = None  # Triggers auto-naming in the main block
 
     return storage, study_name
 
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser(description="Run Optuna hyperparameter sweep")
     parser.add_argument(
         "--config",
@@ -199,7 +196,7 @@ if __name__ == "__main__":
         help="Path to YAML config (sweep.yaml). Defines hyperparameter search space.",
     )
     parser.add_argument(
-        "--use_mock_data",
+        "--use-mock-data",
         action="store_true",
         help="Use synthetic mock data instead of real parquet data (for local CPU integration tests)",
     )
@@ -221,6 +218,19 @@ if __name__ == "__main__":
 
     if storage is None or study_name is None:
         storage, study_name = interactive_setup()
+
+    logger.info("Initializing WandB run...")
+    wandb_run = wandb.init(
+        project="resilient-iot-sweeps",
+        name=study_name,
+        reinit=True
+    )
+
+    if study_name is None:
+        study_name = wandb_run.name
+        logger.info(f"Aligned Optuna study name with auto-generated WandB run name: '{study_name}'")
+    else:
+        logger.info(f"Aligned WandB run name with specified study name: '{study_name}'")
 
     logger.info(f"Using storage: {storage}")
     logger.info(f"Using study name: {study_name}")
