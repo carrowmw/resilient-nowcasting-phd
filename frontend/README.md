@@ -14,6 +14,18 @@ pnpm dev
 bun dev
 ```
 
+## Dockerized Local Development (Recommended)
+
+To run the Next.js server locally on Mac within the isolated Docker container environment (adhering to the project's **Zero Host Download** policy):
+
+### 1. Run using Docker Compose Up (Standard)
+
+This starts the service and automatically forwards and publishes port `3000` to your host Mac browser:
+
+```bash
+docker compose up frontend-dev
+```
+
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.

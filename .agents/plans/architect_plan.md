@@ -11,8 +11,9 @@
 - **Implementation**: Use `trial.set_user_attr` within the Optuna objective function.
 - **Guard**: `src/tune.py` should exit if the repository is "dirty" to ensure reproducible experiments.
 
-## 3. Tiered Model Storage
-- Move away from `models/best_pipeline.pt`.
-- **Structure**: `models/{project}/{run_name}/best_model.pt`.
-- This ensures that every run (Sweep, Production, Local) has its own unique, non-overwritable artifact path.
-- **Downstream Impact**: All scripts that load models (e.g., `src/export_ui_payload.py`) must be updated to support dynamic path selection.
+## 4. Database-Driven Hyperparameter Analysis
+- **Goal**: Deprecate `src/analyze_sweep.py` in favor of a strictly database-driven analysis tool.
+- **Requirement**: Use the Optuna SQLite API for all result retrieval. No log parsing.
+- **Traceability Verification**: The analyzer must verify `git_commit` and `branch` from trial metadata to ensure "Artifact Twinning".
+- **Workflow Integration**: Support a `promote` command that updates `configs/train.yaml` with the best parameters from a selected study.
+- **Documentation**: See `docs/optuna_analysis_transition.md` for detailed behavioral comparison and implementation blueprint.

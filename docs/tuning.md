@@ -68,16 +68,21 @@ You can view these stamps in two ways:
 
 ## 5. High-Resolution Analysis
 
-To analyze the hyperparameter importance and correlations for a specific study, use the `analyze_sweep.py` script. You must point it to the correct SQLite database and study name:
+To analyze the hyperparameter importance and correlations for a specific study, use the `src/analysis.py` script. You must point it to the correct SQLite database and study name:
 
 ```bash
-python src/analyze_sweep.py --storage sqlite:///optuna.db --study-name my-experiment
+# List all studies in the database
+python src/analysis.py --storage sqlite:///optuna.db list
+
+# Perform detailed analysis of a specific study
+python src/analysis.py --storage sqlite:///optuna.db analyze my-experiment
+
+# Promote best parameters to a config file
+python src/analysis.py --storage sqlite:///optuna.db promote my-experiment --config configs/train/train.yaml
 ```
 
-### Interpreting the Output
+### Key Features of Analysis
 
-*   **Hyperparameter Importance (Random Forest)**: This shows how much each parameter contributed to the variance in the validation loss. Higher values mean the parameter is more critical to model performance.
-*   **Parameter Correlation (Spearman)**:
-    *   *Negative value*: Increasing the parameter *decreases* the loss (improves the model).
-    *   *Positive value*: Increasing the parameter *increases* the loss (degrades the model).
-    *   *Note*: The Spearman correlation checks for monotonic relationships, meaning it detects consistent trends even if they aren't perfectly linear.
+*   **Artifact Twinning Verification**: The script verifies that each trial is linked to a specific Git commit and branch.
+*   **Hyperparameter Importance**: Uses Optuna's built-in importance algorithms to identify which parameters most influence the validation loss.
+*   **Parameter Promotion**: Automatically updates your base `train.yaml` with the winning hyperparameters, ensuring a seamless transition from tuning to production training.
