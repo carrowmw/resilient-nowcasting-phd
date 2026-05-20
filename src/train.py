@@ -135,6 +135,15 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
     checkpoint_path = os.path.join(checkpoint_dir, "best_model.pt")
     logger.info(f"Checkpointing enabled: {checkpoint_path}")
 
+    # --- ARCHITECT TWINNING: Co-locate Config copy ---
+    config_save_path = os.path.join(checkpoint_dir, "config.yaml")
+    try:
+        with open(config_save_path, "w") as f:
+            yaml.safe_dump(config, f, default_flow_style=False)
+        logger.info(f"Co-located training configuration saved to: {config_save_path}")
+    except Exception as e:
+        logger.error(f"Failed to save co-located configuration: {e}")
+
     # ------------------------------------------------------------------ #
     # Data loading                                                         #
     # ------------------------------------------------------------------ #
@@ -359,8 +368,40 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             break
 
     logger.info("Training complete.")
+
+    # ------------------------------------------------------------------ #
+    # W&B Artifact Upload (Phase 1)                                      #
+    # ------------------------------------------------------------------ #
+    if (init_wandb or (wandb.run is not None)) and os.path.exists(checkpoint_path):
+        logger.info(f"Uploading model artifact to W&B from {checkpoint_path}")
+        try:
+            artifact = wandb.Artifact(
+                name="resilient-iot-model",
+                type="model",
+                description=f"Best model from run {wandb.run.name if wandb.run else 'unknown'}",
+                metadata=config
+            )
+            artifact.add_file(checkpoint_path, name="best_model.pt")
+            if os.path.exists(config_save_path):
+                artifact.add_file(config_save_path, name="config.yaml")
+            
+            wandb.log_artifact(artifact)
+            logger.info("Model artifact successfully logged to W&B.")
+        except Exception as e:
+            logger.error(f"Failed to upload W&B artifact: {e}")
+
     if init_wandb:
         wandb.finish()
+
+    # Force Python to release GPU memory held by local variables
+    del model
+    del optimizer
+    del train_loader
+    del val_loader
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return avg_val_loss
 

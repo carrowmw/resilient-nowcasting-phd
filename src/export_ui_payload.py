@@ -24,11 +24,13 @@ import logging
 import math
 import os
 import sys
+import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+import wandb
 from scipy.special import betainc
 
 # Allow direct execution from repo root or from src/
@@ -60,9 +62,6 @@ MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
 NODES_DIR = "frontend/public/data/nodes"
 PLACES_CACHE_PATH = "data/external/places_cache.json"
 PLACES_TEMPLATE_PATH = "data/external/google_places_template.csv"
-
-HIDDEN_DIM = 32
-EMBEDDING_DIM = 16
 
 # Newcastle city bounding box (WGS84) for simulated node placement
 NCL_LAT_MIN, NCL_LAT_MAX = 54.968, 55.012
@@ -105,6 +104,9 @@ def parse_args() -> argparse.Namespace:
                         help="Number of synthetic zero-shot nodes to inject.")
     parser.add_argument("--checkpoint", type=str, default=CHECKPOINT_PATH,
                         help=f"Path to the trained model checkpoint (default: {CHECKPOINT_PATH})")
+    parser.add_argument("--artifact", type=str, default=None,
+                        help="W&B artifact name (e.g., 'entity/project/name:latest'). "
+                             "If provided, overrides --checkpoint.")
     return parser.parse_args()
 
 
@@ -117,6 +119,30 @@ def load_sensor_coords(path: str) -> Dict[str, Dict[str, float]]:
     with open(path, "r") as fh:
         raw = json.load(fh)
     return {entry["location"]: {"lat": entry["lat"], "lon": entry["lon"]} for entry in raw}
+
+
+def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
+    """
+    Downloads a model artifact from W&B.
+    Returns (checkpoint_path, config_path, wandb_run_id).
+    """
+    api = wandb.Api()
+    logger.info(f"PHASE 2: Fetching artifact {artifact_name} from W&B...")
+    artifact = api.artifact(artifact_name)
+    artifact_dir = artifact.download()
+    
+    checkpoint_path = os.path.join(artifact_dir, "best_model.pt")
+    config_path = os.path.join(artifact_dir, "config.yaml")
+    
+    # Try to get the run ID from the artifact's producer
+    wandb_run_id = "unknown"
+    try:
+        if artifact.producer:
+            wandb_run_id = artifact.producer.id
+    except Exception:
+        pass
+        
+    return checkpoint_path, config_path, wandb_run_id
 
 
 def build_simulated_static(
@@ -679,24 +705,80 @@ def main() -> None:
         })
 
     # ------------------------------------------------------------------
-    # 5. Initialise model
-    #
-    #    Parameters are shape-independent of num_nodes (no per-node
-    #    embeddings exist in the architecture), so we can safely
-    #    initialise with num_nodes_total and load the checkpoint weights.
+    # 5. Load Co-Located Configuration and Initialise Model
     # ------------------------------------------------------------------
-    logger.info(f"Initialising ResilientIoTPipeline …")
+    wandb_run_id = "unknown"
+    loaded_config_data = {}
+    checkpoint_path = args.checkpoint
+
+    if args.artifact:
+        checkpoint_path, config_path, wandb_run_id = load_model_from_wandb(args.artifact)
+    else:
+        checkpoint_dir = os.path.dirname(checkpoint_path)
+        config_path = os.path.join(checkpoint_dir, "config.yaml")
+
+    # Defaults in case no config.yaml is found (backward-compatibility fallback)
+    model_cfg = {
+        "embedding_dim": 16,
+        "hidden_dim": 32,
+        "sparsity_threshold": 0.5,
+        "num_layers": 2,
+        "num_heads": 4,
+        "dropout": 0.1,
+        "dim_feedforward": None,
+        "zinb_eps": 1e-6
+    }
+
+    if os.path.exists(config_path):
+        logger.info(f"ARCHITECT TWINNING: Resolving adjacent configuration from: {config_path}")
+        try:
+            with open(config_path, "r") as f:
+                loaded_config_data = yaml.safe_load(f)
+            if "model" in loaded_config_data:
+                model_cfg.update(loaded_config_data["model"])
+                logger.info(f"Loaded model hyperparameters: {model_cfg}")
+
+            # Infer W&B Run ID from folder namespace if not already set by artifact
+            if wandb_run_id == "unknown":
+                checkpoint_dir = os.path.dirname(checkpoint_path)
+                folder_parts = [p for p in checkpoint_dir.split(os.sep) if p]
+                if len(folder_parts) >= 1:
+                    wandb_run_id = folder_parts[-1]
+        except Exception as e:
+            logger.error(f"Failed to parse co-located configuration: {e}. Falling back to default architecture...")
+    else:
+        logger.warning(f"No co-located config found at {config_path}! Using defaults. WARNING: Potential shape mismatch risk.")
+
+    # Get Git metadata dynamically
+    git_commit_hash = "unknown"
+    try:
+        import subprocess
+        git_commit_hash = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL
+        ).strip()
+    except Exception:
+        pass
+
+    logger.info(f"Initialising ResilientIoTPipeline ...")
     model = ResilientIoTPipeline(
         num_nodes=num_nodes_total,
         static_feat_dim=static_feat_dim,
         time_series_dim=time_series_dim,
         seq_len=args.seq_len,
-        embedding_dim=EMBEDDING_DIM,
-        hidden_dim=HIDDEN_DIM,
+        embedding_dim=model_cfg["embedding_dim"],
+        hidden_dim=model_cfg["hidden_dim"],
+        sparsity_threshold=model_cfg["sparsity_threshold"],
+        num_layers=model_cfg["num_layers"],
+        num_heads=model_cfg["num_heads"],
+        dropout=model_cfg["dropout"],
+        dim_feedforward=model_cfg["dim_feedforward"],
+        zinb_eps=model_cfg["zinb_eps"]
     ).to(device)
 
-    logger.info(f"Loading checkpoint from {args.checkpoint}")
-    state_dict = torch.load(args.checkpoint, map_location=device, weights_only=True)
+    logger.info(f"Loading checkpoint from {checkpoint_path}")
+    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
     model.eval()
     logger.info("Model loaded and set to eval mode.")
@@ -980,6 +1062,10 @@ def main() -> None:
             "dir": args.dir,
             "start_date": args.start_date,
             "end_date": args.end_date,
+            # --- ARTIFACT TWINNING INJECTION ---
+            "wandb_run_id": wandb_run_id,
+            "git_commit_hash": git_commit_hash,
+            "hyperparameters": loaded_config_data
         },
         "nodes": master_nodes,
         "edges": edges_payload,

@@ -60,3 +60,4 @@ services:
     # We explicitly pass the WANDB_API_KEY from the server's .env file
     environment:
       - WANDB_API_KEY=${WANDB_API_KEY}
+      - GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}

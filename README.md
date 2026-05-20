@@ -125,3 +125,12 @@ docker compose run --rm cpu-runner python src/tune.py --help
 ### Troubleshooting: Empty Data Window / Filter Errors
 
 If your selected `--start_date`, `--end_date`, `--veh_class`, or `--dir` produces no rows, tuning will fail fast with a clear error explaining which filter removed all rows and which values were available in the loaded data. Adjust the date window or stream arguments and rerun.
+
+## W&B Local Storage Management
+
+When using Weights & Biases Artifacts for model storage, W&B will download models to a local cache (usually `~/.cache/wandb/artifacts/`) when they are requested by inference or export scripts. To ensure your local environment doesn't run out of space over time, you can periodically run the following command to delete older cached models (this will *not* delete them from the cloud):
+
+```Bash
+# Keep only the last 5GB of downloaded artifacts locally
+wandb artifact cache cleanup 5GB
+```

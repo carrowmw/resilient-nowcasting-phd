@@ -20,6 +20,10 @@ export interface PayloadMetadata {
   dir: string;
   start_date: string;
   end_date: string;
+  // --- ARTIFACT TWINNING ---
+  wandb_run_id?: string;
+  git_commit_hash?: string;
+  hyperparameters?: any;
 }
 
 export interface EdgeEntry {

@@ -194,4 +194,17 @@ describe('UIPayload schema', () => {
       expect(isNaN(node.lon)).toBe(false);
     }
   });
+
+  it('contains Artifact Twinning metadata fields', () => {
+    const p = makeMockPayload(5, 2, 96);
+    // Inject the fields into the mock for testing
+    p.metadata.wandb_run_id = 'test-run';
+    p.metadata.git_commit_hash = 'abcdef123456';
+    p.metadata.hyperparameters = { model: { hidden_dim: 32 } };
+
+    expect(p.metadata).toHaveProperty('wandb_run_id');
+    expect(p.metadata).toHaveProperty('git_commit_hash');
+    expect(p.metadata).toHaveProperty('hyperparameters');
+    expect(p.metadata.wandb_run_id).toBe('test-run');
+  });
 });
