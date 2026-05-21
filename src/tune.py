@@ -103,7 +103,16 @@ def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool):
         logger = logging.getLogger("optuna_sweep")
         logger.info(f"Trial {trial.number} parameters: {trial.params}")
 
-        val_loss = run_training(config=config, init_wandb=False, use_mock_data=use_mock_data, study_name=trial.study.study_name)
+        import torch
+        import gc
+        try:
+            val_loss = run_training(config=config, init_wandb=False, use_mock_data=use_mock_data, study_name=trial.study.study_name)
+        except torch.cuda.OutOfMemoryError:
+            logger.warning(f"Trial {trial.number} failed with CUDA OutOfMemoryError. Pruning trial.")
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise optuna.TrialPruned()
 
         logger.info(f"Trial {trial.number} finished with val_loss: {val_loss}")
         return val_loss
