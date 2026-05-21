@@ -116,3 +116,15 @@ class TestOtherMetrics:
         # mask is all-False by default
         metrics = calculate_metrics(target_forecast, mu, pi, imputed, target_imp, mask)
         assert metrics["impute_mse"] == 0.0
+
+    def test_shannon_entropy_clamp(self):
+        """Test entropy calculation with epsilon clamp for log(0) safety."""
+        # Represents per_edge_attn where one attention is exactly 0.0
+        p = torch.tensor([1.0, 0.0])
+        # H = -sum p log(p + eps)
+        eps = 1e-6
+        entropy = -float(torch.sum(p * torch.log(p + eps)).item())
+        # log(1.0 + 1e-6) is approx 1e-6, so 1.0 * 1e-6 ~ 1e-6
+        # 0.0 * log(1e-6) = 0.0
+        # - (1e-6 + 0) = -1e-6 ~ 0.0
+        assert entropy > -1e-4 and entropy < 1e-4

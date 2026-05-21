@@ -54,8 +54,9 @@ def test_resilient_iot_pipeline():
 
     for batch in dataloader:
         optimizer.zero_grad()
-        loss, _, _, _, _, _, _ = model(batch)
+        loss, _, _, _, _, _, _, tripwires = model(batch)
         assert not torch.isnan(loss).any()
+        assert isinstance(tripwires, list)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()

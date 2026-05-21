@@ -36,7 +36,7 @@ class DecoupledDecoders(nn.Module):
             nn.Linear(hidden_dim * 2, 3)
         )
 
-    def forward(self, latent_embeddings: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, latent_embeddings: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list]:
         """
         Args:
             latent_embeddings: [batch_size, num_nodes, seq_len, hidden_dim]
@@ -45,6 +45,7 @@ class DecoupledDecoders(nn.Module):
             mu: [batch_size, num_nodes]
             theta: [batch_size, num_nodes]
             pi: [batch_size, num_nodes]
+            tripwire_logs: list of dicts {'node_id', 'event_type'}
         """
         assert latent_embeddings.dim() == 4, f"Expected 4D embeddings, got {latent_embeddings.shape}"
         batch_size, num_nodes, seq_len, hidden_dim = latent_embeddings.shape
@@ -66,7 +67,22 @@ class DecoupledDecoders(nn.Module):
         mu = F.softplus(mu_logits) + self.zinb_eps
         theta = F.softplus(theta_logits) + self.zinb_eps
 
-        return imputed_features, mu, theta, pi
+        # Detect Offesive Programming safeguard activations
+        tripwire_logs = []
+        pi_clamp = (pi < self.zinb_eps * 10) | (pi > 1.0 - self.zinb_eps * 10)
+        mu_clamp = (F.softplus(mu_logits) < self.zinb_eps * 10)
+        theta_clamp = (F.softplus(theta_logits) < self.zinb_eps * 10)
+
+        for b in range(batch_size):
+            for n in range(num_nodes):
+                if pi_clamp[b, n]:
+                    tripwire_logs.append({'node_id': n, 'event_type': 'PI_CLAMP'})
+                if mu_clamp[b, n]:
+                    tripwire_logs.append({'node_id': n, 'event_type': 'MU_CLAMP'})
+                if theta_clamp[b, n]:
+                    tripwire_logs.append({'node_id': n, 'event_type': 'THETA_CLAMP'})
+
+        return imputed_features, mu, theta, pi, tripwire_logs
 
 def compute_zinb_nll(y_true: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
     """

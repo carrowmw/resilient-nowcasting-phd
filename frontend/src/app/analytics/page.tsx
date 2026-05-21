@@ -448,8 +448,8 @@ export default function AnalyticsPage() {
             }}
           >
             <Tab label="Forecast Variance" value={0} />
-            <Tab label="Network Influence" value={1} disabled />
-            <Tab label="Self-Healing Log" value={2} disabled />
+            <Tab label="Network Influence" value={1} />
+            <Tab label="Self-Healing Log" value={2} />
             <Tab label="ZINB Calibration" value={3} />
           </Tabs>
         </Box>
@@ -563,6 +563,96 @@ export default function AnalyticsPage() {
                 </ComposedChart>
               </ResponsiveContainer>
             )}
+          </Box>
+        )}
+
+        {/* Tab 1 — Network Influence */}
+        {activeTab === 1 && (
+          <Box sx={{ flex: 1, display: "flex", gap: 2, overflow: "hidden", flexDirection: { xs: "column", md: "row" } }}>
+            <Box sx={{ flex: 1, minWidth: 300, display: "flex", flexDirection: "column" }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: "#94a3b8" }}>
+                Alpha-Node Leaderboard
+              </Typography>
+              <Box sx={{ flex: 1, minHeight: 0 }}>
+                <DataGrid
+                  rows={(masterIndex?.alpha_node_leaderboard || []).map((r, i) => ({ id: r.node_id, ...r }))}
+                  columns={[
+                    { field: "node_id", headerName: "ID", width: 60 },
+                    { field: "location_name", headerName: "Location", flex: 1 },
+                    { field: "total_outgoing_attention", headerName: "Outgoing Attention", width: 150, valueFormatter: (value: number) => value.toFixed(3) }
+                  ]}
+                  density="compact"
+                  hideFooter
+                  sx={{
+                    bgcolor: "rgba(255,255,255,0.02)", color: "#cbd5e1",
+                    "& .MuiDataGrid-columnHeaders": { bgcolor: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)" },
+                    "& .MuiDataGrid-cell": { borderBottom: "1px solid rgba(255,255,255,0.03)" },
+                  }}
+                />
+              </Box>
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 300 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: "#94a3b8" }}>
+                Spatial Over-Smoothing Index (Attention Entropy)
+              </Typography>
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={(masterIndex?.attention_entropy_series || []).map((v, i) => ({ t: i, entropy: v }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                  <XAxis dataKey="t" stroke="#1e293b" tick={{ fill: "#334155" }} />
+                  <YAxis stroke="#1e293b" tick={{ fill: "#334155" }} />
+                  <Tooltip contentStyle={{ background: "rgba(10,10,10,0.9)", borderColor: "#334155" }} />
+                  <Line type="monotone" dataKey="entropy" stroke="#a78bfa" dot={false} strokeWidth={2} name="Shannon Entropy" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Box>
+          </Box>
+        )}
+
+        {/* Tab 2 — Self-Healing Log */}
+        {activeTab === 2 && (
+          <Box sx={{ flex: 1, display: "flex", gap: 2, overflow: "hidden", flexDirection: { xs: "column", md: "row" } }}>
+            <Box sx={{ flex: 1, minWidth: 300 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: "#94a3b8" }}>
+                Global Imputation Burden vs. Healing Quality
+              </Typography>
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={(masterIndex?.global_imputation_burden || []).map((b, i) => ({
+                    t: i,
+                    burden: b * 100,
+                    mse: masterIndex?.global_healing_quality?.[i] || 0
+                  }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                  <XAxis dataKey="t" stroke="#1e293b" tick={{ fill: "#334155" }} />
+                  <YAxis yAxisId="left" stroke="#f87171" tick={{ fill: "#f87171" }} orientation="left" />
+                  <YAxis yAxisId="right" stroke="#60a5fa" tick={{ fill: "#60a5fa" }} orientation="right" />
+                  <Tooltip contentStyle={{ background: "rgba(10,10,10,0.9)", borderColor: "#334155" }} />
+                  <Legend />
+                  <Area yAxisId="left" type="step" dataKey="burden" fill="#f87171" stroke="#ef4444" fillOpacity={0.2} name="% Sensors Offline" />
+                  <Line yAxisId="right" type="monotone" dataKey="mse" stroke="#60a5fa" dot={false} strokeWidth={2} name="Global Imputation MSE" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 300, display: "flex", flexDirection: "column" }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: "#94a3b8" }}>
+                Tripwire Audit Trail
+              </Typography>
+              <Box sx={{ flex: 1, minHeight: 0 }}>
+                <DataGrid
+                  rows={(masterIndex?.tripwire_audit_trail || []).map((r, i) => ({ id: i, ...r }))}
+                  columns={[
+                    { field: "timestep", headerName: "Time", width: 60 },
+                    { field: "node_id", headerName: "Node ID", width: 80 },
+                    { field: "event_type", headerName: "Safeguard Triggered", flex: 1 }
+                  ]}
+                  density="compact"
+                  sx={{
+                    bgcolor: "rgba(255,255,255,0.02)", color: "#cbd5e1",
+                    "& .MuiDataGrid-columnHeaders": { bgcolor: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)" },
+                    "& .MuiDataGrid-cell": { borderBottom: "1px solid rgba(255,255,255,0.03)" },
+                  }}
+                />
+              </Box>
+            </Box>
           </Box>
         )}
 

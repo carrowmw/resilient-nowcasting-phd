@@ -78,6 +78,11 @@ export interface MasterIndex {
   edges: EdgeEntry[];
   pit_histogram?: PITBin[];                          // absent in pre-Iteration-4 payloads
   zero_inflation_reliability?: ZeroInflationBin[];   // absent in pre-Iteration-4 payloads
+  global_imputation_burden?: number[];
+  global_healing_quality?: number[];
+  attention_entropy_series?: number[];
+  tripwire_audit_trail?: Record<string, any>[];
+  alpha_node_leaderboard?: Record<string, any>[];
 }
 
 // Backward-compat alias used by MapVisualizer / NodeInspector

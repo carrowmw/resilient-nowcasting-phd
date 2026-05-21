@@ -14,7 +14,9 @@ Usage:
     python src/export_ui_payload.py \
         [--start_date 2024-05-09] [--end_date 2024-05-11] \
         [--veh_class person] [--dir all] \
-        [--seq_len 12] [--num_simulated 5]
+        [--seq_len 12] [--num_simulated 5] \
+        [--checkpoint models/best_pipeline.pt] \
+        [--artifact entity/project/model:latest]
 """
 
 import argparse
@@ -806,9 +808,13 @@ def main() -> None:
     mask_series: List[List[bool]] = [[] for _ in range(num_nodes_total)]
     theta_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
     pi_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
-    # edge_attention_data: filled once edge topology is known
     edge_attention_data: Dict[Tuple[int, int], List[float]] = {}
     edge_index_cached: torch.Tensor | None = None
+
+    global_imputation_burden: List[float] = []
+    global_healing_quality: List[float] = []
+    attention_entropy_series: List[float] = []
+    tripwire_audit_trail: List[Dict] = []
 
     logger.info(f"Starting 24-hour inference loop ({num_timesteps} timesteps) …")
 
@@ -848,6 +854,12 @@ def main() -> None:
 
             # Forward pass (analysis mode: returns graph + ZINB params + imputation, no loss)
             result = model(batch, return_analysis=True)
+
+            # Record tripwire logs
+            for tw in result.get("tripwire_logs", []):
+                tw_copy = dict(tw)
+                tw_copy["timestep"] = t
+                tripwire_audit_trail.append(tw_copy)
 
             # -------- ZINB parameters --------
             # mu, theta: [1, num_nodes_total]  (batch_size=1)
@@ -915,6 +927,15 @@ def main() -> None:
                 f"t={t}: gt_index={gt_index} out of bounds"
             real_gt = dataset.unscaled_traffic[gt_index]  # numpy [num_nodes_real]
 
+            mask_np = real_mask_last.cpu().numpy().astype(bool)
+            imputed_np = imputed_last_raw[:num_nodes_real].cpu().numpy()
+            if mask_np.any():
+                mse = np.mean((imputed_np[mask_np] - real_gt[mask_np])**2)
+            else:
+                mse = 0.0
+            global_imputation_burden.append(round(float(mask_np.mean()), 4))
+            global_healing_quality.append(round(float(mse), 4))
+
             for node_id in range(num_nodes_real):
                 imputed_series[node_id].append(
                     round(float(imputed_last_raw[node_id]), 4)
@@ -954,6 +975,9 @@ def main() -> None:
             # Average attention across heads for the last step in the sequence
             per_edge_attn = extract_timestep_attention(alpha, num_edges, args.seq_len)  # [E]
             assert not torch.isnan(per_edge_attn).any(), f"t={t}: NaN in attention weights"
+
+            entropy = -float(torch.sum(per_edge_attn * torch.log(per_edge_attn + 1e-6)).item())
+            attention_entropy_series.append(round(entropy, 4))
 
             for e in range(num_edges):
                 src = int(edge_index_cached[0, e])
@@ -1028,6 +1052,24 @@ def main() -> None:
         })
 
     # ------------------------------------------------------------------
+    # 9b. Compute Alpha-Node Leaderboard
+    # ------------------------------------------------------------------
+    logger.info("Computing Alpha-Node Leaderboard …")
+    node_out_influence = {i: 0.0 for i in range(num_nodes_total)}
+    for (src, tgt), attn_seq in edge_attention_data.items():
+        node_out_influence[src] += sum(attn_seq)
+    
+    alpha_node_leaderboard = [
+        {
+            "node_id": node_id,
+            "total_outgoing_attention": round(total_attn, 4),
+            "location_name": nodes_meta[node_id]["location_name"] if node_id < len(nodes_meta) else f"Node {node_id}"
+        }
+        for node_id, total_attn in node_out_influence.items()
+    ]
+    alpha_node_leaderboard.sort(key=lambda x: x["total_outgoing_attention"], reverse=True)
+
+    # ------------------------------------------------------------------
     # 10. Build and write master_index.json
     #     (lightweight: timeseries + semantic_tags only, no imputation arrays)
     # ------------------------------------------------------------------
@@ -1071,6 +1113,11 @@ def main() -> None:
         "edges": edges_payload,
         "pit_histogram": pit_histogram,
         "zero_inflation_reliability": zero_inflation_reliability,
+        "global_imputation_burden": global_imputation_burden,
+        "global_healing_quality": global_healing_quality,
+        "attention_entropy_series": attention_entropy_series,
+        "tripwire_audit_trail": tripwire_audit_trail,
+        "alpha_node_leaderboard": alpha_node_leaderboard,
     }
 
     # Schema assertions before write

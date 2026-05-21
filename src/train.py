@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/train.yaml",
+        default="configs/train/train.yaml",
         help="Path to YAML config file",
     )
     parser.add_argument(
@@ -362,7 +362,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
                     "epoch": epoch + 1,
                 }
             )
-            
+
         if epochs_no_improve >= early_stop_patience:
             logger.info(f"Early stopping triggered after {epoch + 1} epochs.")
             break
@@ -384,7 +384,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             artifact.add_file(checkpoint_path, name="best_model.pt")
             if os.path.exists(config_save_path):
                 artifact.add_file(config_save_path, name="config.yaml")
-            
+
             wandb.log_artifact(artifact)
             logger.info("Model artifact successfully logged to W&B.")
         except Exception as e:

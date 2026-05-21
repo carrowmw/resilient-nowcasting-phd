@@ -84,9 +84,9 @@ class ResilientIoTPipeline(nn.Module):
                 structure, attention weights, and ZINB distribution parameters for
                 post-hoc interpretability and UI payload generation.
         Returns:
-            Normal mode: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi)
+            Normal mode: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi, tripwire_logs)
             Analysis mode: {'edge_index', 'edge_weight', 'attention_weights',
-                            'imputed_features', 'mu', 'theta', 'pi'}
+                            'imputed_features', 'mu', 'theta', 'pi', 'tripwire_logs'}
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
@@ -106,7 +106,7 @@ class ResilientIoTPipeline(nn.Module):
             )
 
             # 3. Decoders (complete the full pass to get ZINB parameters)
-            imputed_features, mu, theta, pi = self.decoders(latent_embeddings)
+            imputed_features, mu, theta, pi, tripwires = self.decoders(latent_embeddings)
 
             return {
                 'edge_index': edge_index,
@@ -116,6 +116,7 @@ class ResilientIoTPipeline(nn.Module):
                 'mu': mu,
                 'theta': theta,
                 'pi': pi,
+                'tripwire_logs': tripwires
             }
 
         # Normal training mode — need loss targets
@@ -125,7 +126,7 @@ class ResilientIoTPipeline(nn.Module):
         latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_weight)
 
         # 3. Decoders
-        imputed_features, mu, theta, pi = self.decoders(latent_embeddings)
+        imputed_features, mu, theta, pi, tripwires = self.decoders(latent_embeddings)
 
         # 4. Compute Joint Loss
         loss, loss_impute, loss_forecast = compute_loss(
@@ -140,7 +141,7 @@ class ResilientIoTPipeline(nn.Module):
         # CRITICAL SAFEGUARD
         assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
 
-        return loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi
+        return loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi, tripwires
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -222,7 +223,7 @@ if __name__ == "__main__":
             optimizer.zero_grad()
 
             # Forward Pass
-            loss, _, _, _, _, _, _ = model(batch)
+            loss, _, _, _, _, _, _, _ = model(batch)
 
             # Backward Pass
             loss.backward()

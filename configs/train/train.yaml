@@ -20,8 +20,8 @@ model:
   zinb_eps: 1.0e-6
 
 training:
-  epochs: 25
-  batch_size: 128
+  epochs: 50
+  batch_size: 32
   lr: 0.001
   grad_clip_max_norm: 1.0
   random_seed: 42
