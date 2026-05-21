@@ -272,7 +272,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
 
             optimizer.zero_grad()
-            loss, loss_impute, loss_forecast, _, _, _, _ = model(batch)
+            loss, loss_impute, loss_forecast, _, _, _, _, _ = model(batch)
             loss.backward()
 
             # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
@@ -298,7 +298,7 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
         with torch.no_grad():
             for batch in val_loader:
                 batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
-                loss, _, _, imputed_features, mu, _, pi = model(batch)
+                loss, _, _, imputed_features, mu, _, pi, _ = model(batch)
                 val_loss_total += loss.item()
 
                 batch_metrics = calculate_metrics(
