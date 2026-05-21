@@ -410,6 +410,15 @@ def main():
     logger = setup_logger("train_pipeline")
     args = parse_args()
     config = load_config(args.config)
+
+    if not args.use_mock_data:
+        from gpu_selector import select_gpus
+        selected_gpus = select_gpus()
+        if selected_gpus:
+            import os
+            os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
+            logger.info(f"Isolated training execution to GPU(s): {selected_gpus}")
+
     run_training(config, init_wandb=True, use_mock_data=args.use_mock_data)
 
 

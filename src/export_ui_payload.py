@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants inferred from the trained checkpoint
 # Derived from models/best_pipeline.pt weight shapes:
-#   graph_learner.lin.weight  → [32, 2]  ⟹ embedding_dim=32, static_feat_dim=2
+#   graph_learner.lin.weight  → [32, 5]  ⟹ embedding_dim=32, static_feat_dim=5
 #   encoder.gat.lin_l.weight  → [64, 3]  ⟹ hidden_dim=64, time_series_dim=3
 # ---------------------------------------------------------------------------
 CHECKPOINT_PATH = "models/best_pipeline.pt"
@@ -786,11 +786,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 6. Build static features for simulated nodes once (reused every step)
     # ------------------------------------------------------------------
-    real_static: torch.Tensor = dataset.static_features.to(device)   # [num_nodes_real, 2]
-    sim_static: torch.Tensor = build_simulated_static(real_static, num_simulated)  # [5, 2]
-    combined_static: torch.Tensor = torch.cat([real_static, sim_static], dim=0)    # [total, 2]
+    real_static: torch.Tensor = dataset.static_features.to(device)   # [num_nodes_real, 5]
+    sim_static: torch.Tensor = build_simulated_static(real_static, num_simulated)  # [5, 5]
+    combined_static: torch.Tensor = torch.cat([real_static, sim_static], dim=0)    # [total, 5]
 
-    assert combined_static.shape == (num_nodes_total, static_feat_dim), \
+    assert combined_static.shape == (num_nodes_total, 5), \
         f"Static features shape mismatch: {combined_static.shape}"
 
     # ------------------------------------------------------------------

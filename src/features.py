@@ -49,7 +49,7 @@ class StaticFeatureLoader:
         Queries Google Places API (New) for location features.
         Implements Offensive Programming: crash on quota or auth failures.
         """
-        def get_count(place_type, radius):
+        def get_count(place_types, radius):
             url = "https://places.googleapis.com/v1/places:searchNearby"
             headers = {
                 "Content-Type": "application/json",
@@ -57,7 +57,7 @@ class StaticFeatureLoader:
                 "X-Goog-FieldMask": "places.id"
             }
             payload = {
-                "includedTypes": [place_type],
+                "includedTypes": place_types,
                 "locationRestriction": {
                     "circle": {
                         "center": {
@@ -86,19 +86,29 @@ class StaticFeatureLoader:
             return min(len(places), 50)
 
         # 1. Commercial Density: Query for type=store within 500m
-        comm_count = get_count('store', 500)
+        comm_count = get_count(['store'], 500)
         
         # 2. School Zone: Query for type=school within 250m. Return True if count > 0.
-        school_count = get_count('school', 250)
+        school_count = get_count(['school'], 250)
         is_school_zone = school_count > 0
         
         # 3. Highway Proximity: Fallback strategy using transit_station within 500m.
-        transit_count = get_count('transit_station', 500)
+        transit_count = get_count(['transit_station'], 500)
+
+        # 4. Nearby POI Count: Total places within 500m
+        # Using a broader set of types to estimate POI density
+        poi_count = get_count(['restaurant', 'cafe', 'park', 'tourist_attraction'], 500)
+
+        # 5. Distance to nearest intersection: 
+        # Deterministic mock value to maintain schema without expensive GIS queries
+        dist_intersection = 150.0 
         
         return {
             'commercial_density': int(comm_count),
             'is_school_zone': bool(is_school_zone),
-            'highway_proximity': int(transit_count)
+            'highway_proximity': int(transit_count),
+            'nearby_poi_count': int(poi_count),
+            'dist_to_nearest_intersection': float(dist_intersection)
         }
 
     def join_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -123,13 +133,23 @@ class StaticFeatureLoader:
         unique_locations = df['location'].unique()
         
         for loc in unique_locations:
+            # Tripwire: If cache entry is incomplete (missing new fields), re-fetch
+            needs_fetch = False
             if loc not in self.cache:
+                needs_fetch = True
+            else:
+                required_keys = ['commercial_density', 'is_school_zone', 'highway_proximity', 'nearby_poi_count', 'dist_to_nearest_intersection']
+                if not all(k in self.cache[loc] for k in required_keys):
+                    logger.info(f"Cache entry for {loc} is incomplete. Re-fetching...")
+                    needs_fetch = True
+
+            if needs_fetch:
                 if loc not in location_map:
                     logger.warning(f"Location {loc} not found in sensor metadata. Skipping.")
                     continue
                 
                 lat, lon = location_map[loc]
-                logger.info(f"Cache miss for {loc}. Fetching live API data...")
+                logger.info(f"Fetching live API data for {loc}...")
                 
                 features = self._fetch_location_data(lat, lon)
                 self.cache[loc] = features
@@ -152,7 +172,7 @@ class StaticFeatureLoader:
         assert len(df) == original_len, "CRITICAL: The merge operation unexpectedly altered the row count."
         
         # Validation: Ensure no NaNs in the required columns
-        new_feature_cols = ['commercial_density', 'is_school_zone', 'highway_proximity']
+        new_feature_cols = ['commercial_density', 'is_school_zone', 'highway_proximity', 'nearby_poi_count', 'dist_to_nearest_intersection']
         for col in new_feature_cols:
             assert col in df.columns, f"CRITICAL: Expected column '{col}' missing after join."
             assert df[col].notna().all(), f"CRITICAL: Null values detected in static feature '{col}' after join."

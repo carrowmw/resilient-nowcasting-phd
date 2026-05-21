@@ -257,6 +257,13 @@ if __name__ == "__main__":
 
     logger = setup_logger("optuna_sweep")
     logger.info("Starting Optuna Hyperparameter Sweep...")
+    if not cli_args.use_mock_data:
+        from gpu_selector import select_gpus
+        selected_gpus = select_gpus()
+        if selected_gpus:
+            os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
+            logger.info(f"Isolated sweep execution to GPU(s): {selected_gpus}")
+
     if cli_args.use_mock_data:
         logger.info("Mode: MOCK DATA (local integration test)")
 

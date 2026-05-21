@@ -39,7 +39,12 @@ class RealIoTDataset(Dataset):
                 ('dt', '>=', start_dt), 
                 ('dt', '<', end_dt)
             ],
-            columns=['dt', 'location', 'value', 'Humidity', 'Solar Radiation', 'nearby_poi_count', 'dist_to_nearest_intersection', 'veh_class', 'dir']
+            columns=[
+                'dt', 'location', 'value', 'Humidity', 'Solar Radiation', 
+                'nearby_poi_count', 'dist_to_nearest_intersection', 
+                'commercial_density', 'is_school_zone', 'highway_proximity',
+                'veh_class', 'dir'
+            ]
         )
         
         if df.empty:
@@ -63,7 +68,10 @@ class RealIoTDataset(Dataset):
                 'Humidity': 'first',
                 'Solar Radiation': 'first',
                 'nearby_poi_count': 'first',
-                'dist_to_nearest_intersection': 'first'
+                'dist_to_nearest_intersection': 'first',
+                'commercial_density': 'first',
+                'is_school_zone': 'first',
+                'highway_proximity': 'first'
             }
             df = df.groupby(['dt', 'location'], as_index=False).agg(agg_funcs)
         else:
@@ -119,7 +127,15 @@ class RealIoTDataset(Dataset):
         logger.info(f"Dynamic features scaled: mean≈0, std≈1 over {num_times * num_nodes_d} samples.")
 
         # Static features
-        stat_df = df[['nearby_poi_count', 'dist_to_nearest_intersection']].groupby('location').first()
+        stat_cols = [
+            'nearby_poi_count', 
+            'dist_to_nearest_intersection', 
+            'commercial_density', 
+            'is_school_zone', 
+            'highway_proximity'
+        ]
+        stat_df = df[stat_cols].groupby('location').first()
+        stat_df['is_school_zone'] = stat_df['is_school_zone'].astype(float).fillna(0.0)
         stat_df = stat_df.reindex(locations_idx).fillna(0.0)
 
         # Scale static features so DynamicGraphLearner receives normalised coordinates/metadata.
