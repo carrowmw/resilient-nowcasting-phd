@@ -257,12 +257,16 @@ if __name__ == "__main__":
 
     logger = setup_logger("optuna_sweep")
     logger.info("Starting Optuna Hyperparameter Sweep...")
-    
+
     selected_gpus = ""
     if not cli_args.use_mock_data:
-        from gpu_selector import select_gpus
-        selected_gpus = select_gpus()
-        
+        if os.environ.get("IS_CHILD_WORKER") == "true":
+            selected_gpus = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+            logger.info(f"Worker process detected. Pinned to GPU(s): {selected_gpus}")
+        else:
+            from gpu_selector import select_gpus
+            selected_gpus = select_gpus()
+
     storage = cli_args.storage
     study_name = cli_args.study_name
     config_path = cli_args.config
@@ -271,13 +275,13 @@ if __name__ == "__main__":
     gpu_list = [g.strip() for g in selected_gpus.split(",")] if selected_gpus else []
     if len(gpu_list) > 1:
         logger.info(f"Spawning {len(gpu_list)} parallel sweep workers on GPUs: {gpu_list}")
-        
+
         # Resolve interactive inputs first
         if storage is None or study_name is None or config_path is None or sweep_config_path is None:
             storage, study_name, config_path, sweep_config_path = interactive_setup(
                 storage, study_name, config_path, sweep_config_path
             )
-            
+
         if study_name is None:
             logger.info("Initializing a temporary WandB run to generate a stable study name...")
             wandb_run = wandb.init(
@@ -287,10 +291,10 @@ if __name__ == "__main__":
             study_name = wandb_run.name
             wandb_run.finish()
             logger.info(f"Generated stable study name: '{study_name}'")
-            
+
         import math
         trials_per_worker = math.ceil(cli_args.n_trials / len(gpu_list))
-        
+
         processes = []
         import sys
         for gpu in gpu_list:
@@ -304,19 +308,20 @@ if __name__ == "__main__":
             ]
             if cli_args.use_mock_data:
                 cmd.append("--use-mock-data")
-                
+
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = gpu
-            
+            env["IS_CHILD_WORKER"] = "true"
+
             logger.info(f"Launching worker on GPU {gpu} (runs {trials_per_worker} trials)...")
             p = subprocess.Popen(cmd, env=env)
             processes.append(p)
-            
+
         for p in processes:
             p.wait()
-            
+
         logger.info("All parallel sweep workers have finished.")
-        
+
         try:
             study = optuna.load_study(study_name=study_name, storage=storage)
             logger.info("Sweep complete. Best hyperparameters:")
@@ -328,7 +333,7 @@ if __name__ == "__main__":
                 logger.warning("No trials completed successfully.")
         except Exception as e:
             logger.error(f"Error loading final study results: {e}")
-            
+
         sys.exit(0)
 
     # Single-GPU or CPU Execution Path
