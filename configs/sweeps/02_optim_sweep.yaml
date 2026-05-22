@@ -1,0 +1,9 @@
+parameters:
+  lr:
+    distribution: loguniform
+    min: 1e-5
+    max: 1e-2
+  batch_size:
+    values: [32, 64, 128, 256]
+  optimizer:
+    values: ["AdamW", "Adam"]
