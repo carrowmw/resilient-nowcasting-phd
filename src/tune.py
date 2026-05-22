@@ -13,6 +13,7 @@ from optuna.integration.wandb import WeightsAndBiasesCallback
 
 from logger import setup_logger
 from train import load_config, run_training
+from dataset import RealIoTDataset
 
 
 def set_nested_value(d: dict, keys: list, value):
@@ -26,7 +27,7 @@ def get_git_metadata():
     try:
         # Check if repository is dirty
         status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
-        if status:
+        if status and os.environ.get("SKIP_GIT_CHECK") != "true":
             print("\n[!] ERROR: Repository is dirty (uncommitted changes).")
             print("To ensure 'Artifact Twinning' traceability, you must commit your changes before running a sweep.")
             print("Dirty files:\n" + status)
@@ -38,7 +39,7 @@ def get_git_metadata():
     except subprocess.CalledProcessError:
         return "unknown", "unknown"
 
-def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool):
+def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool, full_dataset=None):
     """
     Factory that returns an Optuna objective bound to a deep-copy of
     base_config so each trial starts from the same YAML defaults and Optuna
@@ -106,15 +107,34 @@ def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool):
         import torch
         import gc
         try:
-            val_loss = run_training(config=config, init_wandb=False, use_mock_data=use_mock_data, study_name=trial.study.study_name)
+            val_loss = run_training(
+                config=config, 
+                init_wandb=False, 
+                use_mock_data=use_mock_data, 
+                study_name=trial.study.study_name,
+                full_dataset=full_dataset,
+                trial_number=trial.number
+            )
         except torch.cuda.OutOfMemoryError:
             logger.warning(f"Trial {trial.number} failed with CUDA OutOfMemoryError. Pruning trial.")
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             raise optuna.TrialPruned()
+        except Exception as e:
+            logger.error(f"Trial {trial.number} failed with error: {e}")
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise
 
         logger.info(f"Trial {trial.number} finished with val_loss: {val_loss}")
+        
+        # Explicit garbage collection after each trial
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         return val_loss
 
     return objective
@@ -253,17 +273,18 @@ if __name__ == "__main__":
     parser.add_argument("--n-trials", type=int, default=2, help="Number of Optuna trials")
     parser.add_argument("--study-name", type=str, help="Name of the Optuna study")
     parser.add_argument("--storage", type=str, help="SQLite database connection string (e.g., sqlite:///optuna.db)")
+    parser.add_argument("--worker-id", type=str, default=None, help="Unique ID for this worker process")
     cli_args = parser.parse_args()
 
     logger = setup_logger("optuna_sweep")
     logger.info("Starting Optuna Hyperparameter Sweep...")
 
-    selected_gpus = ""
+    selected_gpus = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if not cli_args.use_mock_data:
         if os.environ.get("IS_CHILD_WORKER") == "true":
             selected_gpus = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
             logger.info(f"Worker process detected. Pinned to GPU(s): {selected_gpus}")
-        else:
+        elif not selected_gpus:
             from gpu_selector import select_gpus
             selected_gpus = select_gpus()
 
@@ -305,6 +326,7 @@ if __name__ == "__main__":
                 "--storage", storage,
                 "--study-name", study_name,
                 "--n-trials", str(trials_per_worker),
+                "--worker-id", f"gpu_{gpu}",
             ]
             if cli_args.use_mock_data:
                 cmd.append("--use-mock-data")
@@ -357,9 +379,13 @@ if __name__ == "__main__":
     logger.info(f"Sweep config loaded from: {sweep_config_path}")
 
     logger.info("Initializing WandB run...")
+    run_name = study_name
+    if cli_args.worker_id:
+        run_name = f"{study_name}_{cli_args.worker_id}"
+
     wandb_run = wandb.init(
         project="resilient-iot-sweeps",
-        name=study_name,
+        name=run_name,
         reinit=True
     )
 
@@ -375,7 +401,11 @@ if __name__ == "__main__":
     # Initialize the W&B Callback for Optuna
     wandbc = WeightsAndBiasesCallback(
         metric_name="val_loss_total",
-        wandb_kwargs={"project": "resilient-iot-sweeps"},
+        wandb_kwargs={
+            "project": "resilient-iot-sweeps",
+            "name": run_name,
+            "reinit": True
+        },
     )
 
     # Create or load study
@@ -386,9 +416,24 @@ if __name__ == "__main__":
         direction="minimize"
     )
 
+    full_dataset = None
+    if not cli_args.use_mock_data:
+        data_cfg = base_config["data"]
+        parquet_path = "data/processed/master_dataset_15T.parquet"
+        logger.info(f"Worker level: Pre-loading RealIoTDataset once...")
+        full_dataset = RealIoTDataset(
+            parquet_path,
+            data_cfg["start_date"],
+            data_cfg["end_date"],
+            seq_len=data_cfg["seq_len"],
+            mask_prob=data_cfg.get("mask_prob", 0.15),
+            target_veh_class=data_cfg["target_veh_class"],
+            target_dir=data_cfg["target_dir"],
+        )
+
     # Execute study
     study.optimize(
-        make_objective(base_config, sweep_config, cli_args.use_mock_data),
+        make_objective(base_config, sweep_config, cli_args.use_mock_data, full_dataset=full_dataset),
         n_trials=cli_args.n_trials,
         callbacks=[wandbc],
     )

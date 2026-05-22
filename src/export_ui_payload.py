@@ -12,7 +12,7 @@ Output: data/processed/ui_payload.json
 
 Usage:
     python src/export_ui_payload.py \
-        [--start_date 2024-05-09] [--end_date 2024-05-11] \
+        [--start_date 2026-05-09] [--end_date 2026-05-11] \
         [--veh_class person] [--dir all] \
         [--seq_len 12] [--num_simulated 5] \
         [--checkpoint models/best_pipeline.pt] \
@@ -132,10 +132,10 @@ def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
     logger.info(f"PHASE 2: Fetching artifact {artifact_name} from W&B...")
     artifact = api.artifact(artifact_name)
     artifact_dir = artifact.download()
-    
+
     checkpoint_path = os.path.join(artifact_dir, "best_model.pt")
     config_path = os.path.join(artifact_dir, "config.yaml")
-    
+
     # Try to get the run ID from the artifact's producer
     wandb_run_id = "unknown"
     try:
@@ -143,7 +143,7 @@ def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
             wandb_run_id = artifact.producer.id
     except Exception:
         pass
-        
+
     return checkpoint_path, config_path, wandb_run_id
 
 
@@ -1058,7 +1058,7 @@ def main() -> None:
     node_out_influence = {i: 0.0 for i in range(num_nodes_total)}
     for (src, tgt), attn_seq in edge_attention_data.items():
         node_out_influence[src] += sum(attn_seq)
-    
+
     alpha_node_leaderboard = [
         {
             "node_id": node_id,

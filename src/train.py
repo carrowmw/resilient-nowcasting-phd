@@ -93,7 +93,16 @@ def create_mock_dataloader(
     return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate), dataset
 
 
-def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = False, study_name: str = None) -> float:
+def run_training(
+    config: dict, 
+    init_wandb: bool = True, 
+    use_mock_data: bool = False, 
+    study_name: str = None,
+    train_loader: DataLoader = None,
+    val_loader: DataLoader = None,
+    full_dataset: RealIoTDataset = None,
+    trial_number: int = None
+) -> float:
     """
     Core execution logic for a single training run.
     Accepts a fully-specified config dictionary (see configs/train.yaml).
@@ -120,7 +129,10 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
     if study_name:
         # Sweep Namespace: models/resilient-iot-sweeps/{study_name}/
         project = "resilient-iot-sweeps"
-        run_name = study_name
+        if trial_number is not None:
+            run_name = f"{study_name}_trial_{trial_number}"
+        else:
+            run_name = study_name
     elif wandb.run is not None:
         # Production Namespace: models/{project}/{run_name}/
         project = wandb.run.project
@@ -151,7 +163,34 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
     model_cfg = config["model"]
     train_cfg = config["training"]
 
-    if use_mock_data:
+    if train_loader is not None and val_loader is not None:
+        logger.info("Using provided data loaders.")
+        train_dataset = train_loader.dataset
+    elif full_dataset is not None:
+        logger.info("Using provided full_dataset.")
+        train_size = int(0.8 * len(full_dataset))
+        val_size = len(full_dataset) - train_size
+        
+        train_dataset, val_dataset = torch.utils.data.random_split(
+            full_dataset, [train_size, val_size]
+        )
+        # Propagate dataset-level attributes
+        train_dataset.num_nodes = full_dataset.num_nodes
+        train_dataset.static_feat_dim = full_dataset.static_feat_dim
+        train_dataset.time_series_dim = full_dataset.time_series_dim
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=train_cfg["batch_size"],
+            collate_fn=custom_collate_real,
+            shuffle=True,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=train_cfg["batch_size"],
+            collate_fn=custom_collate_real,
+        )
+    elif use_mock_data:
         logger.info("Using mock dataloader.")
         train_loader, train_dataset = create_mock_dataloader(
             batch_size=train_cfg["batch_size"],
@@ -261,7 +300,19 @@ def run_training(config: dict, init_wandb: bool = True, use_mock_data: bool = Fa
     early_stop_min_delta = train_cfg.get("early_stop_min_delta", 0.001)
     epochs_no_improve = 0
 
+    import psutil
+    memory_threshold_percent = 10.0 # Exit if < 10% RAM available
+
     for epoch in range(epochs):
+        # Soft Memory Limit Check
+        mem = psutil.virtual_memory()
+        if mem.percent > (100.0 - memory_threshold_percent):
+            logger.warning(
+                f"Soft memory limit hit (Available: {mem.available / (1024**3):.2f} GB, "
+                f"{mem.percent}% used). Terminating training early to prevent OOM crash."
+            )
+            break
+
         model.train()
 
         epoch_loss_total = 0.0
