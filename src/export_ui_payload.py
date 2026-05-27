@@ -57,13 +57,13 @@ logger = logging.getLogger(__name__)
 #   graph_learner.lin.weight  → [32, 5]  ⟹ embedding_dim=32, static_feat_dim=5
 #   encoder.gat.lin_l.weight  → [64, 3]  ⟹ hidden_dim=64, time_series_dim=3
 # ---------------------------------------------------------------------------
-CHECKPOINT_PATH = "models/best_pipeline.pt"
+CHECKPOINT_PATH = "models/resilient-iot/feasible-capybara-22/best_model.pt"
 SENSORS_PATH = "data/traffic_sensors.json"
 PARQUET_PATH = "data/processed/master_dataset_15T.parquet"
 MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
 NODES_DIR = "frontend/public/data/nodes"
 PLACES_CACHE_PATH = "data/external/places_cache.json"
-PLACES_TEMPLATE_PATH = "data/external/google_places_template.csv"
+# PLACES_TEMPLATE_PATH = "data/external/google_places_template.csv"
 
 # Newcastle city bounding box (WGS84) for simulated node placement
 NCL_LAT_MIN, NCL_LAT_MAX = 54.968, 55.012
