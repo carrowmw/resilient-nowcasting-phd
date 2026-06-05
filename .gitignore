@@ -1,4 +1,4 @@
-data/
+/data/
 wandb/
 models/
 digest.txt
