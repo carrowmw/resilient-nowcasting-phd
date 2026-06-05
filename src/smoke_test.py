@@ -35,21 +35,11 @@ def run_smoke_test():
     with open('data/weather_sensors.json', 'r') as f:
         weather_sensors = json.load(f)
 
-    # 2. Populate the Google Places Template
-    unique_locs = sample_traffic['location'].unique()
-    metadata_df = pd.DataFrame({
-        'location_id': unique_locs,
-        'nearby_poi_count': [5] * len(unique_locs),
-        'zone_type': ['Residential'] * len(unique_locs),
-        'dist_to_nearest_intersection': [150.0] * len(unique_locs)
-    })
-    metadata_df.to_csv('data/external/google_places_template.csv', index=False)
-
-    # 3. Initialize Pipeline
+    # 2. Initialize Pipeline
     pipeline = PreprocessingPipeline(frequency='15min')
     feature_loader = StaticFeatureLoader()
 
-    # 4. Execution
+    # 3. Execution
     logger.info(f"Shape BEFORE reindexing: {sample_traffic.shape}")
     resampled_df = pipeline.resample_traffic(sample_traffic)
     logger.info(f"Shape AFTER reindexing: {resampled_df.shape}")
@@ -58,7 +48,7 @@ def run_smoke_test():
     joined_df = pipeline.spatial_join(imputed_df, traffic_sensors, weather_sensors)
     final_df = feature_loader.join_features(joined_df)
 
-    # 5. Validation
+    # 4. Validation
     logger.info("--- THE BURN TEST: MANUAL INSPECTION ---")
     
     nan_samples = final_df[final_df['value'].isna()]

@@ -20,7 +20,7 @@ Usage:
 """
 
 import argparse
-import csv
+
 import json
 import logging
 import math
@@ -63,7 +63,7 @@ PARQUET_PATH = "data/processed/master_dataset_15T.parquet"
 MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
 NODES_DIR = "frontend/public/data/nodes"
 PLACES_CACHE_PATH = "data/external/places_cache.json"
-# PLACES_TEMPLATE_PATH = "data/external/google_places_template.csv"
+
 
 # Newcastle city bounding box (WGS84) for simulated node placement
 NCL_LAT_MIN, NCL_LAT_MAX = 54.968, 55.012
@@ -136,13 +136,10 @@ def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
     checkpoint_path = os.path.join(artifact_dir, "best_model.pt")
     config_path = os.path.join(artifact_dir, "config.yaml")
 
-    # Try to get the run ID from the artifact's producer
+    # Get the run ID from the artifact's producer
     wandb_run_id = "unknown"
-    try:
-        if artifact.producer:
-            wandb_run_id = artifact.producer.id
-    except Exception:
-        pass
+    if artifact.producer:
+        wandb_run_id = artifact.producer.id
 
     return checkpoint_path, config_path, wandb_run_id
 
@@ -223,46 +220,37 @@ def extract_timestep_attention(
 def load_semantic_tags(
     nodes_meta: List[Dict],
     places_cache_path: str = PLACES_CACHE_PATH,
-    template_path: str = PLACES_TEMPLATE_PATH,
 ) -> Dict[str, List[str]]:
     """
-    Build a {location_name: [tag, ...]} mapping from two Places data sources.
+    Build a {location_name: [tag, ...]} mapping from the Places cache.
 
-    Sources:
+    Source:
       1. StaticFeatureLoader (Places API) — live API features for simulated
          nodes + cached features for real nodes.
-      2. google_places_template.csv — zone_type, nearby_poi_count.
     """
     tags: Dict[str, List[str]] = {m["location_name"]: [] for m in nodes_meta}
 
-    # Source 1: Places API (augmented with StaticFeatureLoader)
-    try:
-        loader = StaticFeatureLoader(cache_path=places_cache_path)
+    # Initialize loader; will raise ValueError/RuntimeError on auth/quota/missing key issues
+    loader = StaticFeatureLoader(cache_path=places_cache_path)
 
-        # Live Query for simulated nodes missing from cache
-        for meta in nodes_meta:
-            loc = meta["location_name"]
-            if meta["is_simulated"] and loc not in loader.cache:
-                logger.info(f"Fetching live data for simulated node: {loc}")
-                try:
-                    # Note: Using private method as requested in Task 3.2
-                    loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
-                    loader._save_cache()
-                except Exception as ex:
-                    logger.error(f"Failed to fetch data for simulated node {loc}: {ex}")
+    # Live Query for simulated nodes missing from cache
+    for meta in nodes_meta:
+        loc = meta["location_name"]
+        if meta["is_simulated"] and loc not in loader.cache:
+            logger.info(f"Fetching live data for simulated node: {loc}")
+            # Note: Using private method as requested in Task 3.2
+            loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
+            loader._save_cache()
 
-        cache = loader.cache
-    except (ValueError, RuntimeError) as e:
-        logger.warning(f"StaticFeatureLoader unavailable: {e}. Falling back to manual cache read.")
-        cache = {}
-        if Path(places_cache_path).exists():
-            with open(places_cache_path) as f:
-                cache = json.load(f)
+    cache = loader.cache
 
+    # Process features and append tags from Cache
     for loc, feats in cache.items():
         if loc not in tags:
             continue
         t = tags[loc]
+
+        # Commercial density
         cd = int(feats.get("commercial_density", 0))
         if cd >= 15:
             t.append("high_commercial_density")
@@ -270,8 +258,12 @@ def load_semantic_tags(
             t.append("medium_commercial_density")
         elif cd > 0:
             t.append("low_commercial_density")
+
+        # School zone
         if feats.get("is_school_zone"):
             t.append("school_zone")
+
+        # Transit density
         hp = int(feats.get("highway_proximity", 0))
         if hp >= 15:
             t.append("high_transit_density")
@@ -280,28 +272,14 @@ def load_semantic_tags(
         elif hp > 0:
             t.append("low_transit_density")
 
-    # Source 2: Template CSV (zone_type, nearby_poi_count)
-    if Path(template_path).exists():
-        with open(template_path, newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                loc = row.get("location_id", "").strip()
-                if loc not in tags:
-                    continue
-                t = tags[loc]
-                zone = row.get("zone_type", "").strip()
-                if zone:
-                    t.append(zone.lower().replace(" ", "_") + "_zone")
-                try:
-                    poi = int(row.get("nearby_poi_count", 0) or 0)
-                except ValueError:
-                    poi = 0
-                if poi >= 20:
-                    t.append("high_poi_density")
-                elif poi >= 8:
-                    t.append("medium_poi_density")
-                elif poi >= 1:
-                    t.append("low_poi_density")
+        # POI density (migrated from template CSV to live cache)
+        poi = int(feats.get("nearby_poi_count", 0))
+        if poi >= 20:
+            t.append("high_poi_density")
+        elif poi >= 8:
+            t.append("medium_poi_density")
+        elif poi >= 1:
+            t.append("low_poi_density")
 
     return tags
 
@@ -733,21 +711,18 @@ def main() -> None:
 
     if os.path.exists(config_path):
         logger.info(f"ARCHITECT TWINNING: Resolving adjacent configuration from: {config_path}")
-        try:
-            with open(config_path, "r") as f:
-                loaded_config_data = yaml.safe_load(f)
-            if "model" in loaded_config_data:
-                model_cfg.update(loaded_config_data["model"])
-                logger.info(f"Loaded model hyperparameters: {model_cfg}")
+        with open(config_path, "r") as f:
+            loaded_config_data = yaml.safe_load(f)
+        if "model" in loaded_config_data:
+            model_cfg.update(loaded_config_data["model"])
+            logger.info(f"Loaded model hyperparameters: {model_cfg}")
 
-            # Infer W&B Run ID from folder namespace if not already set by artifact
-            if wandb_run_id == "unknown":
-                checkpoint_dir = os.path.dirname(checkpoint_path)
-                folder_parts = [p for p in checkpoint_dir.split(os.sep) if p]
-                if len(folder_parts) >= 1:
-                    wandb_run_id = folder_parts[-1]
-        except Exception as e:
-            logger.error(f"Failed to parse co-located configuration: {e}. Falling back to default architecture...")
+        # Infer W&B Run ID from folder namespace if not already set by artifact
+        if wandb_run_id == "unknown":
+            checkpoint_dir = os.path.dirname(checkpoint_path)
+            folder_parts = [p for p in checkpoint_dir.split(os.sep) if p]
+            if len(folder_parts) >= 1:
+                wandb_run_id = folder_parts[-1]
     else:
         logger.warning(f"No co-located config found at {config_path}! Using defaults. WARNING: Potential shape mismatch risk.")
 
@@ -1022,7 +997,7 @@ def main() -> None:
     logger.info("  Two-Extremes computed for all nodes.")
 
     # ------------------------------------------------------------------
-    # 8. Load semantic tags from Places cache + template CSV
+    # 8. Load semantic tags from Places cache
     # ------------------------------------------------------------------
     logger.info("Loading semantic tags …")
     semantic_tags = load_semantic_tags(nodes_meta)
