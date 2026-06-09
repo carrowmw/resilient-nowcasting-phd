@@ -1,0 +1,127 @@
+graph TD
+    subgraph Logical Data Pipeline
+        subgraph Data Ingestion
+            SENSORS[traffic_sensors.json: lat, lon, r=250m]
+            PLACES[Google Places API]
+            DYN_READINGS[Dynamic Time-Series Readings]
+            TARGETS[Target Variables: Raw Vehicle Counts]
+        end
+
+        subgraph Feature Engineering
+            STATIC_FEAT[Static Features: POI, Commercial Density]
+            NOTE_LEAK[Note: Coordinates excluded to prevent spatial leakage] -.-> STATIC_FEAT
+        end
+
+        subgraph Preprocessing
+            SCALER_STATIC[Standard Scaler: Static]
+            MASKING[Artificial Masking]
+            SCALER_DYN[Standard Scaler: Dynamic]
+        end
+
+        subgraph Model Integration
+            LOADER[PyTorch Dataset Loader]
+            BATCH[Batch Dictionary: static, dynamic_masked, targets]
+        end
+
+        SENSORS --> PLACES
+        PLACES --> STATIC_FEAT
+        STATIC_FEAT --> SCALER_STATIC
+        SCALER_STATIC --> LOADER
+
+        DYN_READINGS --> MASKING
+        MASKING --> SCALER_DYN
+        SCALER_DYN --> LOADER
+
+        TARGETS --> LOADER
+        LOADER --> BATCH
+    end
+
+    subgraph ResilientIoTPipeline Model
+        BATCH --> GL_IN[Static Features]
+        BATCH --> ENC_IN[Masked Dynamic Features]
+        
+        subgraph Dynamic Graph Learner
+            GL_IN --> GL_PROJ[Linear Projection]
+            GL_PROJ --> GL_SIM[Pairwise Similarity Adjacency]
+            GL_SIM --> GL_SPARSE[ReLU & Sparsity Threshold]
+            GL_SPARSE --> GL_OUT[edge_index & edge_weight]
+        end
+
+        subgraph Masked Spatiotemporal Encoder
+            ENC_IN --> ENC_SPATIAL[Spatial: GATv2Conv layers]
+            GL_OUT --> ENC_SPATIAL
+            ENC_SPATIAL --> ENC_FLAT[Flatten Spatial Output]
+            ENC_FLAT --> ENC_TEMP[Temporal: TransformerEncoder]
+            ENC_TEMP --> LATENT[Latent Embeddings]
+        end
+
+        subgraph Decoupled Decoders
+            LATENT --> DEC_IMP[Imputation Decoder MLP]
+            LATENT --> DEC_FOR[Forecasting Decoder MLP]
+            
+            DEC_IMP --> OUT_IMP[Reconstructed Masked Data]
+            DEC_FOR --> OUT_ZINB[ZINB Parameters: mu, theta, pi]
+        end
+    end
+
+    subgraph Loss & Optimization
+        LOSS_IMP[MSE Imputation Loss]
+        LOSS_FORE[ZINB NLL Loss]
+        JOINT_LOSS[Joint Training Loss]
+        TRAIN[train.py: Orchestrator]
+        TUNE[tune.py: Optuna sweeps]
+        WANDB[Weights & Biases]
+
+        OUT_IMP --> LOSS_IMP
+        OUT_ZINB --> LOSS_FORE
+        LOSS_IMP --> JOINT_LOSS
+        LOSS_FORE --> JOINT_LOSS
+        TRAIN -->|optimizer.step| GL_PROJ
+        TRAIN -->|optimizer.step| ENC_SPATIAL
+        TRAIN -->|optimizer.step| DEC_IMP
+        TRAIN -->|optimizer.step| DEC_FOR
+        TUNE -->|config override| TRAIN
+        TRAIN -->|log metrics| WANDB
+    end
+
+    subgraph Static Data Bridge
+        HOLDOUT[Visual Holdout Set]
+        EXPORTER[export_ui_payload.py]
+        INDEX_JSON[master_index.json / ui_payload.json]
+        NODE_SHARDS[nodes/node_*.json details]
+        META[Artifact Twinning: git hash, W&B run ID, YAML config]
+
+        HOLDOUT --> EXPORTER
+        TRAIN -->|trained model checkpoint| EXPORTER
+        EXPORTER --> META
+        EXPORTER --> INDEX_JSON
+        EXPORTER --> NODE_SHARDS
+    end
+
+    subgraph Frontend Geospatial Twin
+        NEXTJS[Next.js App]
+        ZUSTAND[Zustand Store: useTimeStore]
+        DECKGL[Deck.gl over MapLibre GL JS]
+        SCATTER_REAL[nodes-real: ScatterplotLayer]
+        SCATTER_SIM[nodes-simulated: ScatterplotLayer]
+        ARC_GLOBAL[topology-layer: ArcLayer]
+        ARC_EGO[ego-graph-layer: ArcLayer]
+        MAP[MapVisualizer]
+        INSPECTOR[NodeInspector]
+        CONTROLS[AttentionControls]
+        SLIDER[TimeSlider]
+
+        INDEX_JSON --> NEXTJS
+        NODE_SHARDS --> NEXTJS
+        NEXTJS --> ZUSTAND
+        NEXTJS --> MAP
+        NEXTJS --> INSPECTOR
+        NEXTJS --> CONTROLS
+        NEXTJS --> SLIDER
+        ZUSTAND -->|timestep & threshold filtering| DECKGL
+        MAP --> DECKGL
+        DECKGL --> SCATTER_REAL
+        DECKGL --> SCATTER_SIM
+        DECKGL --> ARC_GLOBAL
+        DECKGL --> ARC_EGO
+    end

@@ -10,7 +10,7 @@
     "start_date": "2025-05-10",
     "end_date": "2025-05-12",
     "wandb_run_id": "feasible-capybara-22",
-    "git_commit_hash": "9ff086f2caa32a3a600204eae359c83d0e5ee231",
+    "git_commit_hash": "261533a001352cd1346b2457a5a953562cf92cf2",
     "hyperparameters": {
       "data": {
         "end_date": "2026-04-02",
@@ -30590,8 +30590,8 @@
     {
       "id": 61,
       "location_name": "Simulated_Node_0",
-      "lat": 54.975,
-      "lon": -1.645,
+      "lat": 54.978,
+      "lon": -1.595,
       "is_simulated": true,
       "timeseries": [
         {
@@ -31090,8 +31090,8 @@
     {
       "id": 62,
       "location_name": "Simulated_Node_1",
-      "lat": 54.985,
-      "lon": -1.63,
+      "lat": 55.005,
+      "lon": -1.58,
       "is_simulated": true,
       "timeseries": [
         {
@@ -31590,8 +31590,8 @@
     {
       "id": 63,
       "location_name": "Simulated_Node_2",
-      "lat": 54.99,
-      "lon": -1.61,
+      "lat": 54.977851,
+      "lon": -1.612579,
       "is_simulated": true,
       "timeseries": [
         {
@@ -32090,8 +32090,8 @@
     {
       "id": 64,
       "location_name": "Simulated_Node_3",
-      "lat": 54.978,
-      "lon": -1.595,
+      "lat": 54.976248,
+      "lon": -1.610691,
       "is_simulated": true,
       "timeseries": [
         {
@@ -32589,8 +32589,8 @@
     {
       "id": 65,
       "location_name": "Simulated_Node_4",
-      "lat": 55.005,
-      "lon": -1.58,
+      "lat": 54.973199,
+      "lon": -1.611128,
       "is_simulated": true,
       "timeseries": [
         {

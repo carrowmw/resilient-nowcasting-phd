@@ -1,162 +1,113 @@
-# Context for Architect: Removing Places Template and Code Cleanup
+# Context for Architect: Expanded Static Spatial Features
 
-This document contains the gathered codebase context, relevant file paths, high-level logic summaries, and ASTs to guide the `@architect` in formulating a robust plan for removing the `places_template` path dependency and eliminating defensive programming antipatterns in [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py).
+## 1. Problem Statement
 
----
+The model's spatial understanding is severely degraded because the current static features are **hitting the Google Places API (New) Nearby Search hard ceiling of 20 results per request**. This means 81 of 94 cached locations show `commercial_density = 20` and 60 show `nearby_poi_count = 20`. The `DynamicGraphLearner` receives these near-identical inputs and cannot differentiate between a quiet suburban street and the city centre. This directly explains why the model underpredicts high-volume nodes (e.g., Barras Bridge Civic Centre, RMSE=36.05 despite r=0.98).
 
-## 1. Identified References & Antipatterns
+Additionally, `dist_to_nearest_intersection` is hardcoded to `150.0` for all locations — a mock value that provides zero information.
 
-### A. places_template References
-*   **File:** [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py)
-    *   **Line 23:** `import csv`
-    *   **Line 66:** `# PLACES_TEMPLATE_PATH = "data/external/google_places_template.csv"`
-    *   **Lines 223–227:** `load_semantic_tags` function signature utilizes `PLACES_TEMPLATE_PATH`.
-    *   **Lines 283–305:** Code block parsing the CSV template to assign `zone_type` and `nearby_poi_count` tags (Source 2).
-    *   **Line 1025:** Comment referencing `# 8. Load semantic tags from Places cache + template CSV`.
-*   **File:** [smoke_test.py](file:///Users/administrator/Code/ml-agent-workspace/src/smoke_test.py)
-    *   **Lines 38–46:** Mock metadata generation and file export block writing `google_places_template.csv`.
+## 2. Current Static Feature Pipeline
 
-### B. Defensive try-except Antipatterns in `export_ui_payload.py`
+### Entry Point: `src/process_all.py`
+- `process_full_dataset()` (line 48) instantiates `StaticFeatureLoader()` and calls `feature_loader.join_features(joined_df)` per location chunk (line 103).
+- The enriched parquet is written to `data/processed/master_dataset_15T.parquet`.
 
-> [!CRITICAL]
-> **Defensive Coding Violations (Offensive Programming Paradigm):**
-> Multiple try-except blocks in `export_ui_payload.py` catch general exceptions or specific errors to fall back silently or log a warning rather than letting the script crash. Under the project's **Fail Fast / Fail Hard** mandate, these must be eliminated.
+### Feature Loader: `src/features.py`
+- `StaticFeatureLoader` class.
+- Cache path: `data/external/places_cache.json` (94 entries, 18KB).
+- API: Google Places API (New) — `POST https://places.googleapis.com/v1/places:searchNearby`.
+- Auth: `GOOGLE_PLACES_API_KEY` env var. Header `X-Goog-Api-Key`.
+- Field mask: `places.id` (minimal — only counts place IDs).
 
-1.  **Silent Fallback to Cache Manual Read (Lines 255-261):**
-    ```python
-    except (ValueError, RuntimeError) as e:
-        logger.warning(f"StaticFeatureLoader unavailable: {e}. Falling back to manual cache read.")
-        cache = {}
-        if Path(places_cache_path).exists():
-            with open(places_cache_path) as f:
-                cache = json.load(f)
-    ```
-    *   **Why it's an antipattern:** If `StaticFeatureLoader` fails to initialize (e.g. because `GOOGLE_PLACES_API_KEY` is missing or invalid), catching this exception and falling back to a direct file read hides critical configuration issues in development and production environments.
-    *   **Correction:** Remove the entire `try/except` block. Allow `StaticFeatureLoader` initialization to raise exceptions directly, causing the script to crash immediately.
+#### Current Features Extracted (line 88–111):
+| Feature | API Call | Radius | Types | Issue |
+|---------|---------|--------|-------|-------|
+| `commercial_density` | Nearby Search | 500m | `['store']` | Capped at 20 (81/94 = 20) |
+| `is_school_zone` | Nearby Search | 250m | `['school']` | Boolean, OK |
+| `nearby_poi_count` | Nearby Search | 500m | `['restaurant', 'cafe', 'park', 'tourist_attraction']` | Capped at 20 (60/94 = 20) |
+| `highway_proximity` | Nearby Search | 500m | `['transit_station']` | Capped at 20 (62/94 = 20) |
+| `dist_to_nearest_intersection` | None | N/A | N/A | **Hardcoded 150.0** |
 
-2.  **Silent Ignored Exception in Simulated Node Live Fetch (Lines 247-252):**
-    ```python
-    try:
-        # Note: Using private method as requested in Task 3.2
-        loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
-        loader._save_cache()
-    except Exception as ex:
-        logger.error(f"Failed to fetch data for simulated node {loc}: {ex}")
-    ```
-    *   **Why it's an antipattern:** If fetching live data from Google Places API fails during generation (due to network drops, quota, or authentication failures), it logs an error but silently continues with an incomplete cache/metadata.
-    *   **Correction:** Remove the `try/except` block. If the live query fails, the script must fail hard so that engineers are immediately alerted of API/network failures.
+#### `get_count()` helper (line 52–86):
+- Single POST request, returns `min(len(places), 50)`.
+- **No pagination** — just reads `data.get('places', [])` from first response.
+- Nearby Search (New) has a **hard max of 20 results per request, no pagination token support**.
 
-3.  **Silent Bare Exception in W&B Metadata Retrieval (Lines 141-145):**
-    ```python
-    try:
-        if artifact.producer:
-            wandb_run_id = artifact.producer.id
-    except Exception:
-        pass
-    ```
-    *   **Why it's an antipattern:** Silently suppresses all exceptions with a bare `except Exception: pass`.
-    *   **Correction:** While obtaining optional metadata, if it fails, it should either raise or be handled explicitly, rather than using bare swallow patterns.
+### Cache Structure (`data/external/places_cache.json`):
+- Some entries have 3 keys (older, simulated nodes): `commercial_density`, `is_school_zone`, `highway_proximity`.
+- Some entries have 5 keys (newer, real nodes): adds `nearby_poi_count`, `dist_to_nearest_intersection`.
+- `join_features()` checks for missing keys and re-fetches if incomplete (line 136–144).
 
-4.  **Silent Config Parsing Fallback (Lines 749-750):**
-    ```python
-    except Exception as e:
-        logger.error(f"Failed to parse co-located configuration: {e}. Falling back to default architecture...")
-    ```
-    *   **Why it's an antipattern:** Silently absorbs configuration parsing errors and substitutes defaults, increasing the risk of subtle shape mismatches during downstream loading.
-    *   **Correction:** Crash immediately on failing to parse configuration files.
+## 3. Downstream Consumers
 
----
+### Dataset: `src/dataset.py`
+- `RealIoTDataset.__init__()` reads static feature columns from parquet (line 42–47):
+  ```
+  'nearby_poi_count', 'dist_to_nearest_intersection', 
+  'commercial_density', 'is_school_zone', 'highway_proximity'
+  ```
+- Static features are extracted per-location (line 130–136), scaled via `StandardScaler` (line 143–144), and stored as `self.static_features` tensor `[num_nodes, static_feat_dim]`.
+- Currently `static_feat_dim = 5`.
 
-## 2. Decoupling & Cleanup Strategy
+### Graph Learner: `src/graph_learner.py`
+- `DynamicGraphLearner.__init__()` takes `static_feat_dim` as input (line 17).
+- Linear projection: `nn.Linear(static_feat_dim, embedding_dim)` where `embedding_dim=32`.
+- Pairwise dot-product → ReLU → sparsity threshold → `dense_to_sparse`.
+- **Impact**: More informative static features → better adjacency matrix → better message passing.
 
-### A. Semantic Tag Extraction Migration
-*   **Remove CSV template dependency entirely:** `google_places_template.csv` is redundant.
-*   **Migrate POI Density Tags:** Transfer POI density tag assignment (`high_poi_density`, `medium_poi_density`, `low_poi_density`) to use the cached value (`nearby_poi_count` from `places_cache.json`) inside the cache loop.
-*   **Discard `zone_type` Tags:** Since `zone_type` is a mock field only present in the template CSV, discontinue these tags.
+### Pipeline: `src/pipeline.py`
+- `ResilientIoTPipeline.__init__()` passes `static_feat_dim` to `DynamicGraphLearner` (line 41).
+- Forward pass feeds `batch['static_features']` to graph learner (line 99).
 
-### B. Code Execution Without Try-Except Block
-By removing the `try/except` block in `load_semantic_tags`, the code becomes incredibly clean and strictly adheres to the offensive programming guidelines:
+### Export UI Payload: `src/export_ui_payload.py`
+- Constants (line 57): `graph_learner.lin.weight → [32, 5]` ⟹ `static_feat_dim=5`.
+- **Changing static_feat_dim requires retraining the model** — the checkpoint weights are locked to 5-dim input.
 
-```python
-def load_semantic_tags(
-    nodes_meta: List[Dict],
-    places_cache_path: str = PLACES_CACHE_PATH,
-) -> Dict[str, List[str]]:
-    """
-    Build a {location_name: [tag, ...]} mapping from the Places cache.
+### Train/Tune: `src/train.py`, `src/tune.py`
+- Both read `static_feat_dim` from the dataset: `dataset.static_feat_dim`.
+- Passed to `ResilientIoTPipeline(static_feat_dim=dataset.static_feat_dim, ...)`.
 
-    Source:
-      1. StaticFeatureLoader (Places API) — live API features for simulated
-         nodes + cached features for real nodes.
-    """
-    tags: Dict[str, List[str]] = {m["location_name"]: [] for m in nodes_meta}
+## 4. Google Places API (New) Capabilities
 
-    # Initialize loader; will raise ValueError/RuntimeError and crash on auth/quota/missing key issues
-    loader = StaticFeatureLoader(cache_path=places_cache_path)
+### Nearby Search (New)
+- **Max 20 results per request. NO pagination support.**
+- Good for: "Are there schools within 250m?" (boolean/low-count queries).
+- Not suitable for density estimation.
 
-    # Live Query for simulated nodes missing from cache
-    for meta in nodes_meta:
-        loc = meta["location_name"]
-        if meta["is_simulated"] and loc not in loader.cache:
-            logger.info(f"Fetching live data for simulated node: {loc}")
-            # Note: Using private method as requested in Task 3.2
-            loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
-            loader._save_cache()
+### Text Search (New)
+- **Max 60 results across 3 pages** (20 per page, with `nextPageToken`).
+- Supports `locationBias` (circle with center + radius) for geographic restriction.
+- Supports `includedType` (singular) for type filtering.
+- Better for density estimation when combined with category-specific queries.
 
-    cache = loader.cache
-    
-    # Process features and append tags from Cache
-    for loc, feats in cache.items():
-        if loc not in tags:
-            continue
-        t = tags[loc]
-        
-        # Commercial density
-        cd = int(feats.get("commercial_density", 0))
-        if cd >= 15:
-            t.append("high_commercial_density")
-        elif cd >= 5:
-            t.append("medium_commercial_density")
-        elif cd > 0:
-            t.append("low_commercial_density")
-            
-        # School zone
-        if feats.get("is_school_zone"):
-            t.append("school_zone")
-            
-        # Transit density
-        hp = int(feats.get("highway_proximity", 0))
-        if hp >= 15:
-            t.append("high_transit_density")
-        elif hp >= 5:
-            t.append("medium_transit_density")
-        elif hp > 0:
-            t.append("low_transit_density")
+### Strategy for True Density
+To get counts > 20, we must issue **multiple targeted queries per category** and/or use **concentric radius rings** (e.g., 100m, 250m, 500m) to build a density profile.
 
-        # POI density (Transferred from template CSV to live cache)
-        poi = int(feats.get("nearby_poi_count", 0))
-        if poi >= 20:
-            t.append("high_poi_density")
-        elif poi >= 8:
-            t.append("medium_poi_density")
-        elif poi >= 1:
-            t.append("low_poi_density")
+## 5. Sensor Metadata
 
-    return tags
-```
+- `data/traffic_sensors.json`: 89 real sensors with `lat`, `lon`, `location` fields.
+- All sensors are in the Newcastle upon Tyne metropolitan area (lat ≈ 54.97–55.01, lon ≈ -1.57 to -1.66).
+- Sensor locations range from city centre (Quayside, Grey St) to suburban (Heaton, Gosforth) to rural periphery (Norham Rd, Castle Farm).
 
----
+## 6. Tripwires and Constraints
 
-## 3. AST / File Changes Checklist
+- **Offensive Programming**: `features.py` crashes on 403/429 API errors (line 75–76).
+- **Cache-first**: Always checks cache before API call. Saves after each fetch.
+- **Assertions in dataset.py**: `assert df[col].notna().all()` for all static feature columns (line 178).
+- **Model retraining required**: Any change to `static_feat_dim` invalidates the current `best_pipeline.pt` checkpoint.
+- **NSTAR_PHASES.md**: Currently in Phase 2 (Backend Ablation Studies). Static feature enrichment aligns with this phase.
+- **NSTAR_BACKEND_ARCHITECTURE.md**: Static node features feed the Dynamic Graph Learner. The architecture doc mentions "coordinates, sensor types" as examples — expanding to richer features is fully aligned.
 
-### [MODIFY] [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py)
-*   [ ] Remove `import csv` on line 23.
-*   [ ] Remove commented `PLACES_TEMPLATE_PATH` constant.
-*   [ ] Remove `template_path: str = PLACES_TEMPLATE_PATH` from `load_semantic_tags` signature.
-*   [ ] Remove try-except blocks from `load_semantic_tags` and allow exceptions to bubble up naturally.
-*   [ ] Migrate `nearby_poi_count` logic into the cache iteration block.
-*   [ ] Remove Source 2 parsing block.
-*   [ ] Remove try-except block when resolving `loaded_config_data` (line 749), letting it fail hard on syntax/file errors.
+## 7. Files That Must Change
 
-### [MODIFY] [smoke_test.py](file:///Users/administrator/Code/ml-agent-workspace/src/smoke_test.py)
-*   [ ] Remove Section 2 (`Populate the Google Places Template`) completely.
+| File | Change Required |
+|------|----------------|
+| `src/features.py` | Major rewrite: new API strategy, categorised queries, pagination, new feature schema |
+| `data/external/places_cache.json` | Will be regenerated with new schema |
+| `src/dataset.py` | Update `stat_cols` list (line 130–136) and parquet column list (line 42–47) |
+| `src/pipeline.py` | `static_feat_dim` auto-adapts from dataset — no code change needed |
+| `src/graph_learner.py` | `static_feat_dim` auto-adapts — no code change needed |
+| `src/process_all.py` | May need updates if `join_features()` signature changes |
+| `src/export_ui_payload.py` | Checkpoint constant comments (line 57) — update after retraining |
+| `src/train.py` / `src/tune.py` | Auto-adapt via `dataset.static_feat_dim` — no code change needed |
+| `data/processed/master_dataset_15T.parquet` | Must be regenerated |

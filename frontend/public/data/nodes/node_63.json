@@ -1,8 +1,8 @@
 {
   "id": 63,
   "location_name": "Simulated_Node_2",
-  "lat": 54.99,
-  "lon": -1.61,
+  "lat": 54.977851,
+  "lon": -1.612579,
   "is_simulated": true,
   "zinb_series": [
     {
@@ -14645,8 +14645,8 @@
       ],
       "source_lat": 54.977,
       "source_lon": -1.58006,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 42,
@@ -14752,8 +14752,8 @@
       ],
       "source_lat": 54.977,
       "source_lon": -1.58149,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 46,
@@ -14859,8 +14859,8 @@
       ],
       "source_lat": 54.9775,
       "source_lon": -1.57837,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 13,
@@ -14966,8 +14966,8 @@
       ],
       "source_lat": 54.979,
       "source_lon": -1.58531,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 24,
@@ -15073,8 +15073,8 @@
       ],
       "source_lat": 54.984,
       "source_lon": -1.57904,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 21,
@@ -15180,8 +15180,8 @@
       ],
       "source_lat": 54.9769,
       "source_lon": -1.61074,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 23,
@@ -15287,8 +15287,8 @@
       ],
       "source_lat": 54.9792,
       "source_lon": -1.59024,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 41,
@@ -15394,8 +15394,8 @@
       ],
       "source_lat": 54.9772,
       "source_lon": -1.58078,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 48,
@@ -15501,8 +15501,8 @@
       ],
       "source_lat": 54.9695,
       "source_lon": -1.61071,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 22,
@@ -15608,8 +15608,8 @@
       ],
       "source_lat": 54.9877,
       "source_lon": -1.6549,
-      "target_lat": 54.99,
-      "target_lon": -1.61
+      "target_lat": 54.977851,
+      "target_lon": -1.612579
     },
     {
       "source_id": 63,
@@ -15713,8 +15713,8 @@
         0.01506,
         0.013225
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9791,
       "target_lon": -1.61266
     },
@@ -15820,8 +15820,8 @@
         0.013102,
         0.01107
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9675,
       "target_lon": -1.6097
     },
@@ -15927,8 +15927,8 @@
         0.01506,
         0.013225
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9761,
       "target_lon": -1.60409
     },
@@ -16034,8 +16034,8 @@
         0.015852,
         0.011214
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9681,
       "target_lon": -1.60849
     },
@@ -16141,8 +16141,8 @@
         0.011141,
         0.011582
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9736,
       "target_lon": -1.62332
     },
@@ -16248,8 +16248,8 @@
         0.018949,
         0.017818
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9715,
       "target_lon": -1.58961
     },
@@ -16355,8 +16355,8 @@
         0.017822,
         0.0168
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.979,
       "target_lon": -1.61759
     },
@@ -16462,8 +16462,8 @@
         0.018898,
         0.017781
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9952,
       "target_lon": -1.56704
     },
@@ -16569,8 +16569,8 @@
         0.018951,
         0.017818
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9698,
       "target_lon": -1.60168
     },
@@ -16676,8 +16676,8 @@
         0.018951,
         0.011216
       ],
-      "source_lat": 54.99,
-      "source_lon": -1.61,
+      "source_lat": 54.977851,
+      "source_lon": -1.612579,
       "target_lat": 54.9686,
       "target_lon": -1.60656
     }

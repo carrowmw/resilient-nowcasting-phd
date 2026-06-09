@@ -71,11 +71,11 @@ NCL_LON_MIN, NCL_LON_MAX = -1.660, -1.576
 
 # Five deterministic simulated node positions within the bounding box
 SIMULATED_NODE_COORDS: List[Tuple[float, float]] = [
-    (54.975, -1.645),
-    (54.985, -1.630),
-    (54.990, -1.610),
     (54.978, -1.595),
     (55.005, -1.580),
+    (54.977851, -1.612579), # Saint Marys Place
+    (54.976248, -1.610691), # John Dobson Street Bottom
+    (54.973199, -1.611128), # Pilgrim Street / Market Street
 ]
 
 NUM_TIMESTEPS_TARGET = 96  # 24 h × 4 per hour

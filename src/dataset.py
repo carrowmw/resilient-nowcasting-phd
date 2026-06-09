@@ -36,13 +36,15 @@ class RealIoTDataset(Dataset):
         df = pd.read_parquet(
             parquet_path,
             filters=[
-                ('dt', '>=', start_dt), 
+                ('dt', '>=', start_dt),
                 ('dt', '<', end_dt)
             ],
             columns=[
-                'dt', 'location', 'value', 'Humidity', 'Solar Radiation', 
-                'nearby_poi_count', 'dist_to_nearest_intersection', 
-                'commercial_density', 'is_school_zone', 'highway_proximity',
+                'dt', 'location', 'value', 'Humidity', 'Solar Radiation',
+                'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
+                'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
+                'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
+                'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking',
                 'veh_class', 'dir'
             ]
         )
@@ -67,11 +69,21 @@ class RealIoTDataset(Dataset):
                 'value': 'sum',
                 'Humidity': 'first',
                 'Solar Radiation': 'first',
-                'nearby_poi_count': 'first',
-                'dist_to_nearest_intersection': 'first',
-                'commercial_density': 'first',
+                'transit_count': 'first',
+                'retail_count': 'first',
+                'food_drink_count': 'first',
+                'nightlife_count': 'first',
+                'education_count': 'first',
+                'recreation_count': 'first',
+                'total_poi_count': 'first',
+                'landuse_entropy': 'first',
                 'is_school_zone': 'first',
-                'highway_proximity': 'first'
+                'betweenness_centrality': 'first',
+                'closeness_centrality': 'first',
+                'dist_to_city_centre': 'first',
+                'degree_centrality': 'first',
+                'nearby_bus_stops': 'first',
+                'nearby_parking': 'first',
             }
             df = df.groupby(['dt', 'location'], as_index=False).agg(agg_funcs)
         else:
@@ -128,11 +140,10 @@ class RealIoTDataset(Dataset):
 
         # Static features
         stat_cols = [
-            'nearby_poi_count', 
-            'dist_to_nearest_intersection', 
-            'commercial_density', 
-            'is_school_zone', 
-            'highway_proximity'
+            'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
+            'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
+            'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
+            'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking'
         ]
         stat_df = df[stat_cols].groupby('location').first()
         stat_df['is_school_zone'] = stat_df['is_school_zone'].astype(float).fillna(0.0)

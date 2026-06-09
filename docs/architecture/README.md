@@ -1,0 +1,1 @@
+Files in the this directory are created by the `architecture_diagrams` agentic workflow.

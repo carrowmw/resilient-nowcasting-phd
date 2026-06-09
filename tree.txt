@@ -1,12 +1,17 @@
 .
-├── CLAUDE.md
 ├── configs
-│   ├── sweep.yaml
-│   └── train.yaml
+│   ├── sweeps
+│   │   ├── 01_arch_sweep.yaml
+│   │   ├── 02_optim_sweep.yaml
+│   │   ├── 03_reg_sweep.yaml
+│   │   ├── 04_taskp_sweep.yaml
+│   │   └── sweep.yaml
+│   └── train
+│       └── train.yaml
 ├── data
 │   ├── external
-│   │   ├── google_places_template.csv
-│   │   └── places_cache_test.json
+│   │   ├── places_cache_test.json
+│   │   └── places_cache.json
 │   ├── processed
 │   │   ├── master_dataset_15T.parquet
 │   │   └── ui_payload.json
@@ -21,13 +26,18 @@
 ├── Dockerfile.frontend
 ├── Dockerfile.gpu
 ├── docs
-│   └── summary.md
+│   ├── architecture_diagrams.md
+│   ├── gpu_usage_report.md
+│   ├── summary.md
+│   └── tuning.md
 ├── eda_summary.md
 ├── EXPERIMENTS.md
 ├── frontend
 │   ├── AGENTS.md
 │   ├── CLAUDE.md
 │   ├── eslint.config.mjs
+│   ├── frontend
+│   │   └── package-lock.json
 │   ├── frontend_runtime_errors.log
 │   ├── next-env.d.ts
 │   ├── next.config.ts
@@ -84,7 +94,23 @@
 │   │   │   │   ├── node_48.json
 │   │   │   │   ├── node_49.json
 │   │   │   │   ├── node_5.json
+│   │   │   │   ├── node_50.json
+│   │   │   │   ├── node_51.json
+│   │   │   │   ├── node_52.json
+│   │   │   │   ├── node_53.json
+│   │   │   │   ├── node_54.json
+│   │   │   │   ├── node_55.json
+│   │   │   │   ├── node_56.json
+│   │   │   │   ├── node_57.json
+│   │   │   │   ├── node_58.json
+│   │   │   │   ├── node_59.json
 │   │   │   │   ├── node_6.json
+│   │   │   │   ├── node_60.json
+│   │   │   │   ├── node_61.json
+│   │   │   │   ├── node_62.json
+│   │   │   │   ├── node_63.json
+│   │   │   │   ├── node_64.json
+│   │   │   │   ├── node_65.json
 │   │   │   │   ├── node_7.json
 │   │   │   │   ├── node_8.json
 │   │   │   │   └── node_9.json
@@ -108,6 +134,7 @@
 │   │   │   ├── layout.tsx
 │   │   │   └── page.tsx
 │   │   ├── components
+│   │   │   ├── AttentionControls.tsx
 │   │   │   ├── MapScene.tsx
 │   │   │   ├── MapVisualizer.tsx
 │   │   │   ├── NodeInspector.tsx
@@ -124,46 +151,102 @@
 │   ├── tsconfig.json
 │   ├── tsconfig.tsbuildinfo
 │   └── vitest.config.mts
-├── GEMINI.md
 ├── logs
-│   ├── optuna_sweep_20260416_082745.log
-│   ├── optuna_sweep_20260416_155531.log
+│   ├── optuna_sweep_20260514_154825.log
+│   ├── optuna_sweep_20260518_153218.log
+│   ├── optuna_sweep_20260518_153432.log
+│   ├── optuna_sweep_20260518_153552.log
+│   ├── optuna_sweep_20260518_154827.log
+│   ├── optuna_sweep_20260518_160854.log
+│   ├── optuna_sweep_20260518_160906.log
+│   ├── optuna_sweep_20260518_160922.log
+│   ├── optuna_sweep_20260518_161020.log
+│   ├── optuna_sweep_20260518_161355.log
+│   ├── optuna_sweep_20260518_161635.log
+│   ├── optuna_sweep_20260518_162400.log
+│   ├── optuna_sweep_20260518_162521.log
+│   ├── optuna_sweep_20260522_073150.log
+│   ├── optuna_sweep_20260522_073529.log
+│   ├── optuna_sweep_20260522_073752.log
+│   ├── optuna_sweep_20260522_073754.log
 │   ├── train_pipeline_20260416_085108.log
 │   ├── train_pipeline_20260416_104457.log
 │   ├── train_pipeline_20260416_111832.log
 │   ├── train_pipeline_20260416_164526.log
 │   ├── train_pipeline_20260416_164601.log
 │   ├── train_pipeline_20260416_164919.log
-│   └── train_pipeline_20260421_143924.log
+│   ├── train_pipeline_20260421_143924.log
+│   ├── train_pipeline_20260514_152157.log
+│   ├── train_pipeline_20260516_115729.log
+│   ├── train_pipeline_20260516_120252.log
+│   ├── train_pipeline_20260519_162148.log
+│   ├── train_pipeline_20260519_162156.log
+│   ├── train_pipeline_20260521_114449.log
+│   ├── train_pipeline_20260521_114814.log
+│   ├── train_pipeline_20260521_121745.log
+│   └── train_pipeline_20260521_121842.log
 ├── models
-│   └── best_pipeline.pt
+│   ├── dummy
+│   │   └── dummy-gmimgf2e
+│   │       └── best_model.pt
+│   ├── resilient-iot
+│   │   ├── comfy-dew-19
+│   │   │   ├── best_model.pt
+│   │   │   └── config.yaml
+│   │   ├── feasible-capybara-22
+│   │   │   ├── best_model.pt
+│   │   │   └── config.yaml
+│   │   ├── hopeful-waterfall-17
+│   │   │   └── best_model.pt
+│   │   ├── sparkling-thunder-16
+│   │   │   ├── best_pipeline.pt
+│   │   │   └── config.yaml
+│   │   ├── sunny-capybara-18
+│   │   │   ├── best_model.pt
+│   │   │   └── config.yaml
+│   │   └── wild-monkey-20
+│   │       ├── best_model.pt
+│   │       └── config.yaml
+│   └── resilient-iot-sweeps
+├── notebooks
+│   └── optuna_analysis.ipynb
+├── notes
+│   └── scaling_verification.md
 ├── NSTAR_BACKEND_ARCHITECTURE.md
 ├── NSTAR_FRONTEND_ARCHITECTURE.md
 ├── NSTAR_MLOPS.md
 ├── NSTAR_PHASES.md
+├── optuna.db
 ├── package-lock.json
-├── plan.md
 ├── README.md
 ├── requirements.txt
 ├── src
 │   ├── __pycache__
+│   │   ├── analysis.cpython-311.pyc
 │   │   ├── dataset.cpython-311.pyc
 │   │   ├── decoders.cpython-311.pyc
 │   │   ├── encoder.cpython-311.pyc
+│   │   ├── export_ui_payload.cpython-311.pyc
 │   │   ├── features.cpython-311.pyc
+│   │   ├── gpu_selector.cpython-311.pyc
+│   │   ├── gpu_selector.cpython-313.pyc
 │   │   ├── graph_learner.cpython-311.pyc
 │   │   ├── logger.cpython-311.pyc
 │   │   ├── metrics.cpython-311.pyc
 │   │   ├── pipeline.cpython-311.pyc
 │   │   ├── preprocess.cpython-311.pyc
 │   │   ├── train.cpython-311.pyc
-│   │   └── tune.cpython-311.pyc
+│   │   ├── train.cpython-313.pyc
+│   │   ├── tune.cpython-311.pyc
+│   │   └── tune.cpython-313.pyc
+│   ├── analysis.py
 │   ├── check_gaps.py
 │   ├── dataset.py
 │   ├── decoders.py
 │   ├── encoder.py
 │   ├── export_ui_payload.py
 │   ├── features.py
+│   ├── gpu_selector.py
 │   ├── graph_learner.py
 │   ├── logger.py
 │   ├── metrics.py
@@ -178,114 +261,307 @@
 ├── tests
 │   ├── __pycache__
 │   │   ├── conftest.cpython-311-pytest-9.0.3.pyc
+│   │   ├── test_analysis.cpython-311-pytest-9.0.3.pyc
 │   │   ├── test_decoders.cpython-311-pytest-9.0.3.pyc
 │   │   ├── test_encoder.cpython-311-pytest-9.0.3.pyc
 │   │   ├── test_graph_learner.cpython-311-pytest-9.0.3.pyc
 │   │   ├── test_metrics.cpython-311-pytest-9.0.3.pyc
 │   │   └── test_pipeline.cpython-311-pytest-9.0.3.pyc
 │   ├── conftest.py
+│   ├── test_analysis.py
 │   ├── test_decoders.py
 │   ├── test_encoder.py
 │   ├── test_graph_learner.py
 │   ├── test_metrics.py
-│   └── test_pipeline.py
+│   ├── test_pipeline.py
+│   └── test_places_dataset.py
 ├── tree.txt
 └── wandb
     ├── debug-cli.root.log
-    ├── debug-internal.log -> offline-run-20260421_143924-1q3uy0qy/logs/debug-internal.log
-    ├── debug.log -> offline-run-20260421_143924-1q3uy0qy/logs/debug.log
-    ├── latest-run -> offline-run-20260421_143924-1q3uy0qy
-    ├── offline-run-20260415_144305-6nk1esqf
+    ├── debug-internal.log -> run-20260522_073756-punfghzu/logs/debug-internal.log
+    ├── debug.log -> run-20260522_073756-punfghzu/logs/debug.log
+    ├── latest-run -> run-20260522_073756-punfghzu
+    ├── run-20260416_085108-sywmlisp
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260415_144305.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_085108.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-6nk1esqf.wandb
+    │   ├── run-sywmlisp.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260415_144412-myuxamwy
+    ├── run-20260515_110202-w1q2l25s
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260415_144412.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260515_110202.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-myuxamwy.wandb
+    │   ├── run-w1q2l25s.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260416_081122-dlsgjpnc
+    ├── run-20260515_110236-7ui0fja5
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_081122.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260515_110236.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-dlsgjpnc.wandb
+    │   ├── run-7ui0fja5.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260416_082745-fr5ai7wd
+    ├── run-20260516_115730-20y4a0k0
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_082745.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260516_115730.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-fr5ai7wd.wandb
+    │   ├── run-20y4a0k0.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260416_155531-utknpqvw
+    ├── run-20260518_153448-rft0knz1
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_155531.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260518_153448.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-utknpqvw.wandb
+    │   ├── run-rft0knz1.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260416_164526-etgxcwt0
+    ├── run-20260518_153605-man65ypb
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_164526.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260518_153605.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-etgxcwt0.wandb
+    │   ├── run-man65ypb.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260416_164601-1b6sjhgc
+    ├── run-20260518_161420-mxpdvvda
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_164601.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260518_161420.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-1b6sjhgc.wandb
+    │   ├── run-mxpdvvda.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260416_164919-jt76be0m
+    ├── run-20260518_161638-zrarty3q
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_164919.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260518_161638.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-jt76be0m.wandb
+    │   ├── run-zrarty3q.wandb
     │   └── tmp
     │       └── code
-    ├── offline-run-20260421_143924-1q3uy0qy
+    ├── run-20260518_162427-ouw651ix
     │   ├── files
-    │   │   └── requirements.txt
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
     │   ├── logs
-    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260421_143924.log
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260518_162427.log
     │   │   ├── debug-internal.log
     │   │   └── debug.log
-    │   ├── run-1q3uy0qy.wandb
+    │   ├── run-ouw651ix.wandb
     │   └── tmp
     │       └── code
-    └── run-20260416_085108-sywmlisp
+    ├── run-20260518_162544-xc77e6ds
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260518_162544.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-xc77e6ds.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260519_162156-0qtnx5o2
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260519_162156.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-0qtnx5o2.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260521_114815-wq0y3a6t
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260521_114815.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-wq0y3a6t.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260521_121842-moa7fzex
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260521_121842.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-moa7fzex.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260522_073150-crrh5y9f
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073151.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-crrh5y9f.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260522_073152-yny4dxb2
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073151.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-yny4dxb2.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260522_073530-uchc8zt6
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073530.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-uchc8zt6.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260522_073531-yceypg3h
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073530.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-yceypg3h.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260522_073754-tpyrgqyn
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073754.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-tpyrgqyn.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260522_073754-z5uqrex3
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073754.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-z5uqrex3.wandb
+    │   └── tmp
+    │       └── code
+    ├── run-20260522_073756-punfghzu
+    │   ├── files
+    │   │   ├── config.yaml
+    │   │   ├── output.log
+    │   │   ├── requirements.txt
+    │   │   ├── wandb-metadata.json
+    │   │   └── wandb-summary.json
+    │   ├── logs
+    │   │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073754.log
+    │   │   ├── debug-internal.log
+    │   │   └── debug.log
+    │   ├── run-punfghzu.wandb
+    │   └── tmp
+    │       └── code
+    └── run-20260522_073756-zqzsz397
         ├── files
         │   ├── config.yaml
         │   ├── output.log
@@ -293,11 +569,11 @@
         │   ├── wandb-metadata.json
         │   └── wandb-summary.json
         ├── logs
-        │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260416_085108.log
+        │   ├── debug-core.log -> /root/.cache/wandb/logs/core-debug-20260522_073754.log
         │   ├── debug-internal.log
         │   └── debug.log
-        ├── run-sywmlisp.wandb
+        ├── run-zqzsz397.wandb
         └── tmp
             └── code
 
-77 directories, 224 files
+147 directories, 430 files

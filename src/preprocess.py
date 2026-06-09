@@ -168,29 +168,3 @@ class PreprocessingPipeline:
         logger.info(f"Spatial join complete. Output shape: {traffic_df.shape}")
         return traffic_df
 
-    def enrich_static_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Defines the schema and integrates external static metadata features per sensor location.
-        """
-        logger.info("Starting enrich_static_features.")
-        assert 'location' in df.columns, "Location column missing for static features."
-
-        unique_locs = df['location'].unique()
-        
-        # Schema Definition for Google Places API integration
-        mock_metadata = pd.DataFrame({
-            'location': unique_locs,
-            'highway_proximity': np.nan,  # Float: Distance to nearest major highway
-            'commercial_density': np.nan, # Float: Number of commercial POIs in radius
-            'school_zone': False          # Boolean: Inside/adjacent to a school zone
-        })
-        
-        # Merge static features into the main dataframe
-        df = df.merge(mock_metadata, on='location', how='left')
-        
-        # Assert features were successfully attached
-        for col in ['highway_proximity', 'commercial_density', 'school_zone']:
-            assert col in df.columns, f"Failed to integrate static feature: {col}"
-            
-        logger.info(f"Static feature enrichment complete. Output shape: {df.shape}")
-        return df
