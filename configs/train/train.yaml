@@ -8,7 +8,7 @@ data:
 
 model:
   num_nodes: 81
-  static_feat_dim: 5
+  static_feat_dim: 15
   time_series_dim: 3
   embedding_dim: 16
   hidden_dim: 32

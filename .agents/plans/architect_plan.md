@@ -14,6 +14,7 @@ Currently, 4 of the 5 static features are saturated at their API ceiling of 20, 
 4. **Street network topology**: Use OSMnx (OpenStreetMap) to extract betweenness centrality and distance-to-city-core for each sensor.
 5. **Backward-compatible pipeline**: The existing `StaticFeatureLoader.join_features()` contract is preserved. Downstream consumers (`dataset.py`, `pipeline.py`, `train.py`, `tune.py`) auto-adapt via `dataset.static_feat_dim`.
 
+
 ## Proposed Feature Schema (New)
 
 The new cache will store the following features per location. `static_feat_dim` will increase from **5 → 15**.
