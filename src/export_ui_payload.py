@@ -136,10 +136,9 @@ def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
     checkpoint_path = os.path.join(artifact_dir, "best_model.pt")
     config_path = os.path.join(artifact_dir, "config.yaml")
 
-    # Get the run ID from the artifact's producer
-    wandb_run_id = "unknown"
-    if artifact.producer:
-        wandb_run_id = artifact.producer.id
+    # Get the run ID from the run that logged the artifact
+    producer_run = artifact.logged_by()
+    wandb_run_id = producer_run.id if producer_run is not None else "unknown"
 
     return checkpoint_path, config_path, wandb_run_id
 
@@ -763,11 +762,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 6. Build static features for simulated nodes once (reused every step)
     # ------------------------------------------------------------------
-    real_static: torch.Tensor = dataset.static_features.to(device)   # [num_nodes_real, 5]
-    sim_static: torch.Tensor = build_simulated_static(real_static, num_simulated)  # [5, 5]
-    combined_static: torch.Tensor = torch.cat([real_static, sim_static], dim=0)    # [total, 5]
+    real_static: torch.Tensor = dataset.static_features.to(device)   # [num_nodes_real, static_feat_dim]
+    sim_static: torch.Tensor = build_simulated_static(real_static, num_simulated)  # [num_simulated, static_feat_dim]
+    combined_static: torch.Tensor = torch.cat([real_static, sim_static], dim=0)    # [total, static_feat_dim]
 
-    assert combined_static.shape == (num_nodes_total, 5), \
+    assert combined_static.shape == (num_nodes_total, static_feat_dim), \
         f"Static features shape mismatch: {combined_static.shape}"
 
     # ------------------------------------------------------------------

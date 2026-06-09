@@ -1,113 +1,70 @@
-# Context for Architect: Expanded Static Spatial Features
+# Context for Architect: UI Payload Generation and W&B Model Ingestion
 
-## 1. Problem Statement
+This document details the spatiotemporal IoT prediction pipeline's frontend static payload generation system, its ability to connect to Weights & Biases (W&B) for remote model checkpoints, and execution options.
 
-The model's spatial understanding is severely degraded because the current static features are **hitting the Google Places API (New) Nearby Search hard ceiling of 20 results per request**. This means 81 of 94 cached locations show `commercial_density = 20` and 60 show `nearby_poi_count = 20`. The `DynamicGraphLearner` receives these near-identical inputs and cannot differentiate between a quiet suburban street and the city centre. This directly explains why the model underpredicts high-volume nodes (e.g., Barras Bridge Civic Centre, RMSE=36.05 despite r=0.98).
+---
 
-Additionally, `dist_to_nearest_intersection` is hardcoded to `150.0` for all locations — a mock value that provides zero information.
+## 1. System for Generating the UI Payload
 
-## 2. Current Static Feature Pipeline
+The static data bridge between the PyTorch Backend and the Next.js Frontend is governed by the script [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py).
 
-### Entry Point: `src/process_all.py`
-- `process_full_dataset()` (line 48) instantiates `StaticFeatureLoader()` and calls `feature_loader.join_features(joined_df)` per location chunk (line 103).
-- The enriched parquet is written to `data/processed/master_dataset_15T.parquet`.
+### Output Architecture
+Rather than writing a single massive monolithic file, [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py) shards the data for performance:
+1. **Master Index**: Written to [master_index.json](file:///Users/administrator/Code/ml-agent-workspace/frontend/public/data/master_index.json). It contains top-level metadata, PIT calibration distributions, zero-inflation reliability metrics, and active node arrays.
+2. **Sharded Node Details**: Written to [nodes/node_{id}.json](file:///Users/administrator/Code/ml-agent-workspace/frontend/public/data/nodes/) (one per node ID). Each file contains:
+   - Ground-truth series (length 96)
+   - Imputed series (length 96)
+   - ZINB parameters ($\mu$, $\theta$, $\sigma$, and $\pi$ zero-inflation probability sequence)
+   - Ego-graph directed edge lists ranked by spatial attention.
 
-### Feature Loader: `src/features.py`
-- `StaticFeatureLoader` class.
-- Cache path: `data/external/places_cache.json` (94 entries, 18KB).
-- API: Google Places API (New) — `POST https://places.googleapis.com/v1/places:searchNearby`.
-- Auth: `GOOGLE_PLACES_API_KEY` env var. Header `X-Goog-Api-Key`.
-- Field mask: `places.id` (minimal — only counts place IDs).
+---
 
-#### Current Features Extracted (line 88–111):
-| Feature | API Call | Radius | Types | Issue |
-|---------|---------|--------|-------|-------|
-| `commercial_density` | Nearby Search | 500m | `['store']` | Capped at 20 (81/94 = 20) |
-| `is_school_zone` | Nearby Search | 250m | `['school']` | Boolean, OK |
-| `nearby_poi_count` | Nearby Search | 500m | `['restaurant', 'cafe', 'park', 'tourist_attraction']` | Capped at 20 (60/94 = 20) |
-| `highway_proximity` | Nearby Search | 500m | `['transit_station']` | Capped at 20 (62/94 = 20) |
-| `dist_to_nearest_intersection` | None | N/A | N/A | **Hardcoded 150.0** |
+## 2. Model Loading and W&B Integration
 
-#### `get_count()` helper (line 52–86):
-- Single POST request, returns `min(len(places), 50)`.
-- **No pagination** — just reads `data.get('places', [])` from first response.
-- Nearby Search (New) has a **hard max of 20 results per request, no pagination token support**.
+The exporter script can load model weights from two distinct sources:
+1. **Local Filesystem Checkpoint**: Specified via `--checkpoint` (defaults to `models/resilient-iot/feasible-capybara-22/best_model.pt`).
+2. **W&B Remote Artifact**: Specified via `--artifact`. When provided, this flag overrides the local checkpoint path.
 
-### Cache Structure (`data/external/places_cache.json`):
-- Some entries have 3 keys (older, simulated nodes): `commercial_density`, `is_school_zone`, `highway_proximity`.
-- Some entries have 5 keys (newer, real nodes): adds `nearby_poi_count`, `dist_to_nearest_intersection`.
-- `join_features()` checks for missing keys and re-fetches if incomplete (line 136–144).
+### Execution Command with W&B
+If the desired model is hosted on the W&B server and not available locally, you do **not** need to copy it manually. The script integrates with the W&B API to pull and cache it dynamically.
 
-## 3. Downstream Consumers
+Run the script inside the Docker container using:
+```bash
+docker compose exec agent-workspace python src/export_ui_payload.py --artifact <entity>/<project>/<artifact_name>:<version>
+```
+*Example:*
+```bash
+docker compose exec agent-workspace python src/export_ui_payload.py --artifact my-team/resilient-iot/resilient-iot-model:latest
+```
 
-### Dataset: `src/dataset.py`
-- `RealIoTDataset.__init__()` reads static feature columns from parquet (line 42–47):
-  ```
-  'nearby_poi_count', 'dist_to_nearest_intersection', 
-  'commercial_density', 'is_school_zone', 'highway_proximity'
-  ```
-- Static features are extracted per-location (line 130–136), scaled via `StandardScaler` (line 143–144), and stored as `self.static_features` tensor `[num_nodes, static_feat_dim]`.
-- Currently `static_feat_dim = 5`.
+### High-Level Code Logic: `load_model_from_wandb`
 
-### Graph Learner: `src/graph_learner.py`
-- `DynamicGraphLearner.__init__()` takes `static_feat_dim` as input (line 17).
-- Linear projection: `nn.Linear(static_feat_dim, embedding_dim)` where `embedding_dim=32`.
-- Pairwise dot-product → ReLU → sparsity threshold → `dense_to_sparse`.
-- **Impact**: More informative static features → better adjacency matrix → better message passing.
+The implementation in [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py#L126-L144) is structured as follows:
 
-### Pipeline: `src/pipeline.py`
-- `ResilientIoTPipeline.__init__()` passes `static_feat_dim` to `DynamicGraphLearner` (line 41).
-- Forward pass feeds `batch['static_features']` to graph learner (line 99).
+```python
+def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
+    """
+    Downloads a model artifact from W&B.
+    Returns (checkpoint_path, config_path, wandb_run_id).
+    """
+    api = wandb.Api()
+    logger.info(f"PHASE 2: Fetching artifact {artifact_name} from W&B...")
+    artifact = api.artifact(artifact_name)
+    artifact_dir = artifact.download()
 
-### Export UI Payload: `src/export_ui_payload.py`
-- Constants (line 57): `graph_learner.lin.weight → [32, 5]` ⟹ `static_feat_dim=5`.
-- **Changing static_feat_dim requires retraining the model** — the checkpoint weights are locked to 5-dim input.
+    checkpoint_path = os.path.join(artifact_dir, "best_model.pt")
+    config_path = os.path.join(artifact_dir, "config.yaml")
 
-### Train/Tune: `src/train.py`, `src/tune.py`
-- Both read `static_feat_dim` from the dataset: `dataset.static_feat_dim`.
-- Passed to `ResilientIoTPipeline(static_feat_dim=dataset.static_feat_dim, ...)`.
+    # Get the run ID from the artifact's producer
+    wandb_run_id = "unknown"
+    if artifact.producer:
+        wandb_run_id = artifact.producer.id
 
-## 4. Google Places API (New) Capabilities
+    return checkpoint_path, config_path, wandb_run_id
+```
 
-### Nearby Search (New)
-- **Max 20 results per request. NO pagination support.**
-- Good for: "Are there schools within 250m?" (boolean/low-count queries).
-- Not suitable for density estimation.
-
-### Text Search (New)
-- **Max 60 results across 3 pages** (20 per page, with `nextPageToken`).
-- Supports `locationBias` (circle with center + radius) for geographic restriction.
-- Supports `includedType` (singular) for type filtering.
-- Better for density estimation when combined with category-specific queries.
-
-### Strategy for True Density
-To get counts > 20, we must issue **multiple targeted queries per category** and/or use **concentric radius rings** (e.g., 100m, 250m, 500m) to build a density profile.
-
-## 5. Sensor Metadata
-
-- `data/traffic_sensors.json`: 89 real sensors with `lat`, `lon`, `location` fields.
-- All sensors are in the Newcastle upon Tyne metropolitan area (lat ≈ 54.97–55.01, lon ≈ -1.57 to -1.66).
-- Sensor locations range from city centre (Quayside, Grey St) to suburban (Heaton, Gosforth) to rural periphery (Norham Rd, Castle Farm).
-
-## 6. Tripwires and Constraints
-
-- **Offensive Programming**: `features.py` crashes on 403/429 API errors (line 75–76).
-- **Cache-first**: Always checks cache before API call. Saves after each fetch.
-- **Assertions in dataset.py**: `assert df[col].notna().all()` for all static feature columns (line 178).
-- **Model retraining required**: Any change to `static_feat_dim` invalidates the current `best_pipeline.pt` checkpoint.
-- **NSTAR_PHASES.md**: Currently in Phase 2 (Backend Ablation Studies). Static feature enrichment aligns with this phase.
-- **NSTAR_BACKEND_ARCHITECTURE.md**: Static node features feed the Dynamic Graph Learner. The architecture doc mentions "coordinates, sensor types" as examples — expanding to richer features is fully aligned.
-
-## 7. Files That Must Change
-
-| File | Change Required |
-|------|----------------|
-| `src/features.py` | Major rewrite: new API strategy, categorised queries, pagination, new feature schema |
-| `data/external/places_cache.json` | Will be regenerated with new schema |
-| `src/dataset.py` | Update `stat_cols` list (line 130–136) and parquet column list (line 42–47) |
-| `src/pipeline.py` | `static_feat_dim` auto-adapts from dataset — no code change needed |
-| `src/graph_learner.py` | `static_feat_dim` auto-adapts — no code change needed |
-| `src/process_all.py` | May need updates if `join_features()` signature changes |
-| `src/export_ui_payload.py` | Checkpoint constant comments (line 57) — update after retraining |
-| `src/train.py` / `src/tune.py` | Auto-adapt via `dataset.static_feat_dim` — no code change needed |
-| `data/processed/master_dataset_15T.parquet` | Must be regenerated |
+### Flow Walkthrough
+1. **Instantiation**: `wandb.Api()` initializes a connection using the active shell's W&B credentials.
+2. **Download**: `artifact.download()` fetches the remote artifact bundle (containing `best_model.pt` and `config.yaml`) and stores it locally under a default cache directory (typically `./artifacts/` or `~/.cache/wandb/`).
+3. **Paths Resolution**: It extracts the absolute path to `best_model.pt` and the co-located `config.yaml` to ensure hyperparameters are dynamically matched during the exporter's initialization (Artifact Twinning).
+4. **ID Tracking**: The producer run's ID is retrieved to inject `wandb_run_id` into the output JSON metadata for full lineage auditability.
