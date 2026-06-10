@@ -28,4 +28,4 @@ def check_traffic_gaps(file_path: str):
     print(large_gaps.value_counts().head(10))
 
 if __name__ == "__main__":
-    check_traffic_gaps('data/traffic_20230108_20260108.parquet')
+    check_traffic_gaps('data/traffic_20230108_20260608.parquet')

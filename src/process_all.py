@@ -46,7 +46,7 @@ def prepare_weather_data(weather_path: str, frequency: str = '15min') -> pd.Data
     return resampled_weather
 
 def process_full_dataset():
-    traffic_path = 'data/traffic_20230108_20260108.parquet'
+    traffic_path = 'data/traffic_20230108_20260608.parquet'
     weather_path = 'data/weather_20230108_20260108.parquet'
     output_dir = 'data/processed'
     output_file = os.path.join(output_dir, 'master_dataset_15T.parquet')

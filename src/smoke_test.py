@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def run_smoke_test():
     # 1. Load Data
-    traffic_path = 'data/traffic_20230108_20260108.parquet'
+    traffic_path = 'data/traffic_20230108_20260608.parquet'
     full_traffic = pd.read_parquet(traffic_path)
     
     target_loc = 'NclCedarRdGowlandAveWest'
