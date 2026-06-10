@@ -100,10 +100,10 @@ def parse_args() -> argparse.Namespace:
         description="Generate ui_payload.json for the Geospatial Digital Twin"
     )
     # Load two days so we have seq_len context for day 2 predictions
-    parser.add_argument("--start_date", type=str, default="2025-05-10",
+    parser.add_argument("--start_date", type=str, default="2026-05-10",
                         help="Dataset start date (YYYY-MM-DD).  Load one day earlier than "
                              "the target day to supply seq_len look-back context.")
-    parser.add_argument("--end_date", type=str, default="2025-05-12",
+    parser.add_argument("--end_date", type=str, default="2026-05-12",
                         help="Dataset end date (YYYY-MM-DD, exclusive).")
     parser.add_argument("--veh_class", type=str, default="person",
                         help="Vehicle class filter used during training.")
@@ -164,9 +164,9 @@ def build_simulated_static(
     """
     sim_nodes = [m for m in nodes_meta if m["is_simulated"]]
     assert len(sim_nodes) == n
-    
+
     loader = StaticFeatureLoader(cache_path="data/external/simulated_places_cache.json")
-    
+
     # Query missing Google features
     for meta in sim_nodes:
         loc = meta["location_name"]
@@ -181,22 +181,22 @@ def build_simulated_static(
         for m in sim_nodes
     ]
     osm_cache = loader._build_osm_cache(sim_sensors_data)
-    
+
     rows = []
     for meta in sim_nodes:
         loc = meta["location_name"]
         feats = dict(loader.cache[loc])
         feats.update(osm_cache.get(loc, {}))
-        
+
         if 'is_school_zone' in feats:
             feats['is_school_zone'] = float(feats['is_school_zone'])
-            
+
         row = [float(feats[k]) for k in REQUIRED_KEYS]
         rows.append(row)
-        
+
     raw_static_np = np.array(rows, dtype=np.float32)
     scaled_static_np = static_scaler.transform(raw_static_np)
-    
+
     return torch.tensor(scaled_static_np, dtype=torch.float32, device=real_static.device)
 
 

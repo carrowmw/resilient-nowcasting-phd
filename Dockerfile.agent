@@ -27,6 +27,11 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
     && test -n "$CLAUDE_BIN" \
     && ln -sf "$CLAUDE_BIN" /usr/local/bin/claude \
     && chmod +x /usr/local/bin/claude
+# Install extensions
+RUN gemini extensions install https://github.com/wandb/wandb-mcp-server
+ENV WANDB_API_KEY=${WANDB_API_KEY}
+RUN claude mcp add --transport http wandb https://mcp.withwandb.com/mcp --header "Authorization: Bearer ${WANDB_API_KEY}"
+
 
 # 4. Set up the working directory inside the container
 WORKDIR /workspace

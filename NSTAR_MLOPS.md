@@ -43,11 +43,42 @@ We utilize a Centralized Configuration pattern. **No hyperparameters should be h
 - Required tracked metrics: `train_loss_total`, `train_loss_forecast`, `train_loss_impute`, `val_loss_total`, and human-readable metrics (`val_rmse`, `val_mae`, `val_zero_acc`).
 - `val_zero_acc` must be aggregated by keeping a running tally of true zero counts vs. predicted zero counts across the entire epoch to avoid batch-averaging skew.
 
-## 4. Evaluation Branching Strategy
+## 4. Git Branching & Experimentation Strategy
 
-- The evaluation framework (`train.py`, `tune.py`, metrics calculations) must be locked to the `main` branch.
-- Experimental model architectures live on their own branches (e.g., `exp/pure-transformer`).
-- Experimental branches will `git rebase main` to inherit updates to the universal evaluation framework.
+To prevent the repository from becoming an unmanageable bowl of spaghetti, we strictly separate code evolution (infrastructure/features) from configuration/data evolution (hypothesis testing).
+
+### 4.1 Branch Categories
+
+We categorize branches into three distinct tiers:
+
+1. **`main` (The Source of Truth)**
+   - Contains stable, tested, and examiner-ready code.
+   - Must always be capable of running an end-to-end pipeline.
+   - The universal evaluation framework (`train.py`, `tune.py`, metrics calculations) is locked to `main`.
+
+2. **`feat/` (Infrastructure Upgrades)**
+   - **Naming Convention:** `feat/add-rope-encoding`, `feat/deckgl-dashboard`, `feat/optuna-integration`.
+   - **Purpose:** Actual software engineering changes (new logic, new classes, helper functions, frontend features).
+   - **Lifecycle:** Once validated and clean, they are merged into `main` and deleted.
+
+3. **`exp/` (Hypothesis Testing)**
+   - **Naming Convention:** `exp/zinb-vs-mse`, `exp/high-sparsity-threshold`.
+   - **Purpose:** Hacking/testing specific scientific hypotheses (e.g., swapping a loss function, temporary architectural changes, custom metrics).
+   - **Lifecycle:** **Never merge `exp/` branches into `main`.** They serve as immutable historical archives of how results for a specific thesis chapter or model iteration were generated. If an experiment is highly successful, implement its features cleanly in a new `feat/` branch off `main`.
+   - **Syncing:** `exp/` branches should regularly `git rebase main` to inherit updates to the universal evaluation framework.
+
+### 4.2 Config-Driven Experiments (No Branching for Parameters)
+
+Do not create branches for parameter tuning (e.g., changing learning rates, attention heads, or batch sizes). Instead:
+- Keep the codebase strictly config-driven. All hyperparameters must live in YAML configs under `configs/`.
+- When running an experiment, duplicate the baseline config (e.g., `configs/baseline.yaml` -> `configs/exp_8_heads.yaml`), change the values, and run with `--config configs/exp_8_heads.yaml`.
+- Commit the new config file to Git to preserve the exact run configuration.
+
+### 4.3 Artifact Twinning & Traceability
+
+Every experiment run and UI payload must follow the "Artifact Twinning" protocol:
+- Logs in Weights & Biases (W&B) must automatically record the **Git Hash** of the active branch/commit and the **YAML config path/contents** used.
+- This ensures 1-to-1 traceability: a visual curve or dashboard payload can be traced back to the exact code commit and parameter set.
 
 ## 5. The Static Data Bridge & Evaluation Constraints
 
