@@ -58,3 +58,59 @@ def calculate_metrics(
         "zero_correct_count": zero_correct_count,
         "impute_mse": impute_mse
     }
+
+
+def compute_msle(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> float:
+    """
+    Mean Squared Logarithmic Error as a plain float metric (scale-invariant).
+
+    Mirrors decoders.scale_invariant_mse but returns a detached Python float for
+    logging. Inputs are clamped to >= 0; no division is performed.
+    """
+    pred_safe = torch.clamp(pred, min=0.0)
+    target_safe = torch.clamp(target, min=0.0)
+    log_pred = torch.log1p(pred_safe + eps)
+    log_target = torch.log1p(target_safe + eps)
+    return torch.mean((log_pred - log_target) ** 2).item()
+
+
+def calculate_kriging_metrics(
+    kriging_pred: torch.Tensor,
+    kriging_target: torch.Tensor,
+    traffic_channel: int = 0,
+) -> Dict[str, float]:
+    """
+    Spatial-kriging validation metrics over the held-out nodes (Component 2).
+
+    Args:
+        kriging_pred:    [B, K, T, D] reconstructed series for held-out nodes.
+        kriging_target:  [B, K, T, D] ground-truth series for the same nodes.
+        traffic_channel: channel index treated as count data; MSLE applies here
+                         (scale-invariant), matching the loss design in docs §5.5.
+
+    Returns:
+        Dict with keys: kriging_msle (traffic channel, scale-invariant),
+        kriging_rmse (all channels), kriging_mae (all channels).
+
+    NOTE: Phase 2 infrastructure only — not yet called from the training loop.
+    """
+    assert kriging_pred.shape == kriging_target.shape, \
+        f"CRITICAL: kriging metric shape mismatch: {kriging_pred.shape} vs {kriging_target.shape}"
+
+    # No held-out nodes in this batch -> nothing to score.
+    if kriging_pred.numel() == 0:
+        return {"kriging_msle": 0.0, "kriging_rmse": 0.0, "kriging_mae": 0.0}
+
+    traffic_pred = kriging_pred[..., traffic_channel]
+    traffic_target = kriging_target[..., traffic_channel]
+    kriging_msle = compute_msle(traffic_pred, traffic_target)
+
+    diff = kriging_pred - kriging_target
+    kriging_rmse = torch.sqrt(torch.mean(diff ** 2)).item()
+    kriging_mae = torch.mean(torch.abs(diff)).item()
+
+    return {
+        "kriging_msle": kriging_msle,
+        "kriging_rmse": kriging_rmse,
+        "kriging_mae": kriging_mae,
+    }

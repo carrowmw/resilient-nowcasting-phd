@@ -84,6 +84,84 @@ class DecoupledDecoders(nn.Module):
 
         return imputed_features, mu, theta, pi, tripwire_logs
 
+class SpatialKrigingDecoder(nn.Module):
+    """
+    Spatial kriging head (Spatial Estimation Architecture, Component 2).
+
+    Reconstructs the full time series for spatially held-out nodes from their latent
+    embeddings — embeddings that are shaped purely by message passing from observable
+    neighbours, since the held-out nodes' own dynamic features are blanked during
+    training (IGNNK-style node masking, docs/spatial_estimation_architecture.md §4).
+
+    Input:  latent_embeddings [B, N, T, H], holdout_mask [N] (bool)
+    Output: reconstructed series for the held-out nodes [B, K, T, D]
+            where K = holdout_mask.sum() and D = time_series_dim.
+
+    NOTE: Phase 2 infrastructure only. This head is instantiated but kept dormant
+    (the loss weight w_kriging defaults to 0.0). Wiring it into the pipeline,
+    dataset holdout masking, and compute_loss happens on exp/spatial-kriging-head.
+    """
+    def __init__(self, hidden_dim: int, time_series_dim: int, dropout: float = 0.1):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.time_series_dim = time_series_dim
+        # Mirrors the imputation head's capacity (doc §4.3).
+        self.kriging_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, time_series_dim),
+        )
+
+    def forward(self, latent_embeddings: torch.Tensor, holdout_mask: torch.Tensor) -> torch.Tensor:
+        assert latent_embeddings.dim() == 4, \
+            f"Expected 4D embeddings [B, N, T, H], got {latent_embeddings.shape}"
+        b, n, t, h = latent_embeddings.shape
+        assert holdout_mask.dim() == 1 and holdout_mask.shape[0] == n, \
+            f"holdout_mask must be [num_nodes={n}], got {tuple(holdout_mask.shape)}"
+        assert holdout_mask.dtype == torch.bool, \
+            f"holdout_mask must be boolean, got {holdout_mask.dtype}"
+        assert h == self.hidden_dim, \
+            f"hidden_dim mismatch: embeddings {h} != decoder {self.hidden_dim}"
+
+        held_out = latent_embeddings[:, holdout_mask, :, :]   # [B, K, T, H]
+        reconstructed = self.kriging_head(held_out)           # [B, K, T, D]
+        return reconstructed
+
+
+def scale_invariant_mse(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Mean Squared Logarithmic Error (MSLE) — a scale-invariant reconstruction loss
+    (Spatial Estimation Architecture, Component 3, docs §5).
+
+        L = mean( (log1p(pred) - log1p(target))^2 )
+
+    Penalises *relative* error rather than absolute magnitude, so quiet low-count
+    nodes contribute on par with high-variance city-centre nodes rather than being
+    drowned out. Intended for the raw (non-negative) count domain; inputs are clamped
+    to >= 0 before log1p.
+
+    Numerical safety: there is no division anywhere, so MSLE cannot raise a
+    division-by-zero, and log1p is finite for every non-negative input. NaNs in the
+    input propagate to the output by design (caught downstream by the compute_loss
+    NaN tripwire) rather than being silently masked.
+
+    Args:
+        pred:   predicted values, any shape broadcastable-equal to target.
+        target: ground-truth values, same shape as pred.
+        eps:    small additive constant for numerical headroom inside log1p.
+    Returns:
+        Scalar MSLE loss.
+    """
+    assert pred.shape == target.shape, \
+        f"CRITICAL: scale_invariant_mse shape mismatch: {pred.shape} vs {target.shape}"
+    pred_safe = torch.clamp(pred, min=0.0)
+    target_safe = torch.clamp(target, min=0.0)
+    log_pred = torch.log1p(pred_safe + eps)
+    log_target = torch.log1p(target_safe + eps)
+    return F.mse_loss(log_pred, log_target)
+
+
 def compute_zinb_nll(y_true: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
     """
     Negative Log-Likelihood for Zero-Inflated Negative Binomial Distribution.
