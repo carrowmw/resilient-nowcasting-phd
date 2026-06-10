@@ -38,8 +38,17 @@ from scipy.special import betainc
 # Allow direct execution from repo root or from src/
 sys.path.insert(0, str(Path(__file__).parent))
 
+env_path = os.path.join(Path(__file__).parent.parent, '.env')
+if os.path.exists(env_path):
+    with open(env_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, val = line.split('=', 1)
+                os.environ.setdefault(key.strip(), val.strip().strip('"\''))
+
 from dataset import RealIoTDataset
-from features import StaticFeatureLoader
+from features import StaticFeatureLoader, REQUIRED_KEYS
 from pipeline import ResilientIoTPipeline
 
 # ---------------------------------------------------------------------------
@@ -146,22 +155,49 @@ def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
 def build_simulated_static(
     real_static: torch.Tensor,
     n: int,
+    nodes_meta: List[Dict],
+    static_scaler,
 ) -> torch.Tensor:
     """
-    Create static features for n simulated nodes.
-
-    Uses the mean of the real nodes' (already-scaled) static features so that
-    the graph learner sees plausible, in-distribution embeddings.
-
-    Args:
-        real_static: [num_real_nodes, static_feat_dim]
-        n: number of simulated nodes to create
-
-    Returns:
-        [n, static_feat_dim]
+    Create static features for n simulated nodes by fetching spatial features
+    from Google Places and OSMnx, and scaling them.
     """
-    mean_static = real_static.mean(dim=0, keepdim=True)  # [1, static_feat_dim]
-    return mean_static.expand(n, -1)  # [n, static_feat_dim]
+    sim_nodes = [m for m in nodes_meta if m["is_simulated"]]
+    assert len(sim_nodes) == n
+    
+    loader = StaticFeatureLoader(cache_path="data/external/simulated_places_cache.json")
+    
+    # Query missing Google features
+    for meta in sim_nodes:
+        loc = meta["location_name"]
+        if loc not in loader.cache:
+            logger.info(f"Fetching live data for simulated node: {loc}")
+            loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
+            loader._save_cache()
+
+    # Query OSM features
+    sim_sensors_data = [
+        {"location": m["location_name"], "lat": m["lat"], "lon": m["lon"]}
+        for m in sim_nodes
+    ]
+    osm_cache = loader._build_osm_cache(sim_sensors_data)
+    
+    rows = []
+    for meta in sim_nodes:
+        loc = meta["location_name"]
+        feats = dict(loader.cache[loc])
+        feats.update(osm_cache.get(loc, {}))
+        
+        if 'is_school_zone' in feats:
+            feats['is_school_zone'] = float(feats['is_school_zone'])
+            
+        row = [float(feats[k]) for k in REQUIRED_KEYS]
+        rows.append(row)
+        
+    raw_static_np = np.array(rows, dtype=np.float32)
+    scaled_static_np = static_scaler.transform(raw_static_np)
+    
+    return torch.tensor(scaled_static_np, dtype=torch.float32, device=real_static.device)
 
 
 def compute_std_dev(mu: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
@@ -219,6 +255,7 @@ def extract_timestep_attention(
 def load_semantic_tags(
     nodes_meta: List[Dict],
     places_cache_path: str = PLACES_CACHE_PATH,
+    sim_places_cache_path: str = "data/external/simulated_places_cache.json",
 ) -> Dict[str, List[str]]:
     """
     Build a {location_name: [tag, ...]} mapping from the Places cache.
@@ -231,17 +268,19 @@ def load_semantic_tags(
 
     # Initialize loader; will raise ValueError/RuntimeError on auth/quota/missing key issues
     loader = StaticFeatureLoader(cache_path=places_cache_path)
+    sim_loader = StaticFeatureLoader(cache_path=sim_places_cache_path)
 
     # Live Query for simulated nodes missing from cache
     for meta in nodes_meta:
         loc = meta["location_name"]
-        if meta["is_simulated"] and loc not in loader.cache:
+        if meta["is_simulated"] and loc not in sim_loader.cache:
             logger.info(f"Fetching live data for simulated node: {loc}")
             # Note: Using private method as requested in Task 3.2
-            loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
-            loader._save_cache()
+            sim_loader.cache[loc] = sim_loader._fetch_location_data(meta["lat"], meta["lon"])
+            sim_loader._save_cache()
 
-    cache = loader.cache
+    cache = dict(loader.cache)
+    cache.update(sim_loader.cache)
 
     # Process features and append tags from Cache
     for loc, feats in cache.items():
@@ -763,7 +802,9 @@ def main() -> None:
     # 6. Build static features for simulated nodes once (reused every step)
     # ------------------------------------------------------------------
     real_static: torch.Tensor = dataset.static_features.to(device)   # [num_nodes_real, static_feat_dim]
-    sim_static: torch.Tensor = build_simulated_static(real_static, num_simulated)  # [num_simulated, static_feat_dim]
+    sim_static: torch.Tensor = build_simulated_static(
+        real_static, num_simulated, nodes_meta, dataset.static_scaler
+    )  # [num_simulated, static_feat_dim]
     combined_static: torch.Tensor = torch.cat([real_static, sim_static], dim=0)    # [total, static_feat_dim]
 
     assert combined_static.shape == (num_nodes_total, static_feat_dim), \
