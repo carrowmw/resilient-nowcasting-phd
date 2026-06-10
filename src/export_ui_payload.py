@@ -862,9 +862,15 @@ def main() -> None:
             # Add batch dimension: [1, num_nodes_total, seq_len, time_series_dim]
             combined_dynamic = combined_dynamic.unsqueeze(0)
 
+            # Mask to prevent simulated nodes from sending messages
+            sim_mask = torch.zeros(num_nodes_total, dtype=torch.bool, device=device)
+            if num_simulated > 0:
+                sim_mask[num_nodes_real:] = True
+
             batch = {
                 "static_features": combined_static,
                 "dynamic_features": combined_dynamic,
+                "simulated_nodes_mask": sim_mask,
             }
 
             # Forward pass (analysis mode: returns graph + ZINB params + imputation, no loss)

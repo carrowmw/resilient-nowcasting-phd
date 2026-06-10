@@ -98,6 +98,15 @@ class ResilientIoTPipeline(nn.Module):
         # 1. Graph Learner
         edge_index, edge_weight = self.graph_learner(static_features)
 
+        # --- Strict Topology Masking ---
+        # Prevent "ghost clustering" and pollution by dropping outgoing edges from simulated nodes
+        if 'simulated_nodes_mask' in batch:
+            sim_mask = batch['simulated_nodes_mask']
+            sources = edge_index[0]
+            valid_edges = ~sim_mask[sources]
+            edge_index = edge_index[:, valid_edges]
+            edge_weight = edge_weight[valid_edges]
+
         # 2. Encoder — request attention weights when in analysis mode
         if return_analysis:
             latent_embeddings, alpha = self.encoder(
