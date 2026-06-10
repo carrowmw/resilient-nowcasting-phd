@@ -31,6 +31,37 @@ REQUIRED_KEYS = [
     'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking'
 ]
 
+# --- Edge feature enrichment (Spatial Kriging architecture, Component 1) ---
+# Cached pairwise OSM walking-network features used to build the GATv2 edge_attr tensor.
+EDGE_FEATURE_CACHE_PATH = 'data/external/edge_features_cache.json'
+
+# K=6 collapsed road-type categories (docs/spatial_estimation_architecture.md §3.3).
+ROAD_CATEGORIES = ['pedestrian', 'residential', 'tertiary', 'secondary', 'primary', 'service']
+
+# OSM `highway` tag -> collapsed category. Unknown tags fall through to 'service'
+# (the residual minor-way bucket) so that road-type fractions always sum to 1.0.
+HIGHWAY_TO_CATEGORY = {
+    'pedestrian': 'pedestrian', 'footway': 'pedestrian', 'path': 'pedestrian',
+    'steps': 'pedestrian', 'corridor': 'pedestrian',
+    'residential': 'residential', 'living_street': 'residential',
+    'tertiary': 'tertiary', 'tertiary_link': 'tertiary', 'unclassified': 'tertiary',
+    'secondary': 'secondary', 'secondary_link': 'secondary',
+    'primary': 'primary', 'primary_link': 'primary', 'trunk': 'primary', 'trunk_link': 'primary',
+    'service': 'service', 'track': 'service', 'bridleway': 'service', 'cycleway': 'service',
+}
+
+# Per-pair cached feature schema. Order is the contract for the runtime [E, edge_dim]
+# tensor: these 9 cached dims + a 10th `learned_similarity` dim supplied at runtime by
+# DynamicGraphLearner (see Phase 5) => edge_dim=10.
+EDGE_FEATURE_KEYS = ['shortest_path_distance', 'euclidean_distance', 'directness'] + ROAD_CATEGORIES
+
+
+def classify_highway(hw) -> str:
+    """Collapse a raw OSM `highway` tag (str or list) into one of ROAD_CATEGORIES."""
+    if isinstance(hw, (list, tuple)):
+        hw = hw[0] if hw else None
+    return HIGHWAY_TO_CATEGORY.get(hw, 'service')
+
 
 def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Returns distance in metres between two WGS-84 lat/lon points."""
@@ -376,6 +407,114 @@ class StaticFeatureLoader:
 
         logger.info("Static feature enrichment complete. 15 features validated.")
         return df
+
+
+def compute_pairwise_edge_features(G_walk, sensor_coords, cache_path: str = None,
+                                   nearest_nodes: list = None) -> dict:
+    """
+    Compute pairwise OSM walking-network edge features for every ordered sensor pair.
+
+    For each directed pair (i -> j) computes, along the Dijkstra shortest path:
+      - shortest_path_distance: network distance in metres (edge `length` weight)
+      - euclidean_distance:     straight-line haversine distance in metres
+      - directness:             euclidean / shortest_path  in (0, 1]; low = winding
+      - road-type composition:  fraction of path length per ROAD_CATEGORIES (sums to 1.0)
+
+    Args:
+        G_walk:        networkx (Multi)DiGraph walking network with `length` and
+                       `highway` edge attributes (e.g. an OSMnx graph).
+        sensor_coords: list of (name, lat, lon) tuples.
+        cache_path:    if given, the nested result dict is written to this JSON path.
+        nearest_nodes: optional list of graph node ids aligned to sensor_coords. When
+                       omitted, nodes are resolved via ox.nearest_nodes. (Passing this
+                       explicitly lets the desk-check run on a synthetic graph without
+                       invoking OSMnx's spatial index.)
+
+    Returns:
+        Nested dict: result[name_i][name_j] = {feature_key: value, ...}. Pairs with no
+        walking path are omitted (logged). JSON-serialisable (string keys, float values).
+    """
+    assert len(sensor_coords) >= 2, \
+        f"CRITICAL: need >=2 sensors for pairwise features, got {len(sensor_coords)}"
+
+    names = [c[0] for c in sensor_coords]
+    coords = {c[0]: (float(c[1]), float(c[2])) for c in sensor_coords}
+    assert len(set(names)) == len(names), "CRITICAL: duplicate sensor names in sensor_coords."
+
+    # Resolve each sensor to its nearest graph node.
+    if nearest_nodes is None:
+        node_ids = [ox.nearest_nodes(G_walk, lon, lat) for (_, lat, lon) in sensor_coords]
+    else:
+        assert len(nearest_nodes) == len(sensor_coords), \
+            f"CRITICAL: nearest_nodes length {len(nearest_nodes)} != sensor_coords {len(sensor_coords)}"
+        node_ids = list(nearest_nodes)
+
+    indexed = list(zip(names, node_ids))
+    result = {name: {} for name in names}
+
+    for i, (name_i, node_i) in enumerate(indexed):
+        lat_i, lon_i = coords[name_i]
+        # One Dijkstra sweep from source i reaches every target in O((V+E) log V),
+        # avoiding the O(N^2) pair-by-pair shortest-path calls in the spec pseudocode.
+        dist_map, path_map = nx.single_source_dijkstra(G_walk, node_i, weight='length')
+
+        for j, (name_j, node_j) in enumerate(indexed):
+            if i == j:
+                continue
+            if node_j not in dist_map:
+                logger.warning(f"No walking path between '{name_i}' and '{name_j}'. Skipping pair.")
+                continue
+
+            sp_dist = float(dist_map[node_j])
+            path = path_map[node_j]
+
+            # Sum path length per road-type category.
+            type_lengths = {cat: 0.0 for cat in ROAD_CATEGORIES}
+            for u, v in zip(path[:-1], path[1:]):
+                edges = G_walk.get_edge_data(u, v)
+                assert edges is not None, \
+                    f"CRITICAL: path edge ({u},{v}) absent from graph for {name_i}->{name_j}"
+                # Dijkstra uses the minimum-length parallel edge; mirror that choice here.
+                best = min(edges.values(), key=lambda e: e.get('length', float('inf')))
+                cat = classify_highway(best.get('highway'))
+                type_lengths[cat] += float(best.get('length', 0.0))
+
+            total = sum(type_lengths.values())
+            if total > 0:
+                composition = {cat: type_lengths[cat] / total for cat in ROAD_CATEGORIES}
+            else:
+                # Degenerate: both sensors snap to the same node (zero-length path).
+                composition = {cat: 0.0 for cat in ROAD_CATEGORIES}
+
+            lat_j, lon_j = coords[name_j]
+            euc_dist = _haversine_distance(lat_i, lon_i, lat_j, lon_j)
+            directness = (euc_dist / sp_dist) if sp_dist > 0 else 1.0
+
+            record = {
+                'shortest_path_distance': sp_dist,
+                'euclidean_distance': float(euc_dist),
+                'directness': float(directness),
+            }
+            record.update(composition)
+
+            # Offensive tripwires: no NaN, and (for non-degenerate paths) fractions sum to 1.0.
+            assert not any(math.isnan(val) for val in record.values()), \
+                f"CRITICAL: NaN in edge features for {name_i}->{name_j}: {record}"
+            if total > 0:
+                comp_sum = sum(composition.values())
+                assert abs(comp_sum - 1.0) < 1e-6, \
+                    f"CRITICAL: road composition {name_i}->{name_j} sums to {comp_sum}, expected 1.0"
+
+            result[name_i][name_j] = record
+
+    if cache_path is not None:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, 'w') as f:
+            json.dump(result, f, indent=2)
+        n_pairs = sum(len(v) for v in result.values())
+        logger.info(f"Edge features cached to {cache_path} ({n_pairs} directed pairs).")
+
+    return result
 
 
 if __name__ == "__main__":
