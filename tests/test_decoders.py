@@ -17,7 +17,7 @@ def test_decoupled_decoders_and_loss():
     target_forecast = torch.randint(0, 100, (batch_size, num_nodes)).float()
     target_impute = torch.randn(batch_size, num_nodes, seq_len, time_series_dim)
 
-    imputed_features, mu, theta, pi = model(latent_embeddings)
+    imputed_features, mu, theta, pi, _ = model(latent_embeddings)
 
     loss, loss_impute, loss_forecast = compute_loss(
         imputed_features=imputed_features,

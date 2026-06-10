@@ -30,9 +30,10 @@ def test_dataset_places_enrichment():
     print(f"Loaded Static Feature Shape: {dataset.static_features.shape}")
     print(f"Dataset static_feat_dim: {dataset.static_feat_dim}")
     
-    # This will fail initially as expected (it should be 2 currently)
-    assert dataset.static_feat_dim == 5, f"Expected 5 features, got {dataset.static_feat_dim}"
-    assert dataset.static_features.shape == (dataset.num_nodes, 5), "Static features shape mismatch!"
+    # Static feature schema is 15-dim (Google Places 12 + OSMnx centrality 3),
+    # per the 2026-05-21 / 2026-06-09 static-feature expansion.
+    assert dataset.static_feat_dim == 15, f"Expected 15 features, got {dataset.static_feat_dim}"
+    assert dataset.static_features.shape == (dataset.num_nodes, 15), "Static features shape mismatch!"
     
     # 3. Assert correct normalization (mean close to 0, std close to 1)
     mean = dataset.static_features.mean(dim=0)
