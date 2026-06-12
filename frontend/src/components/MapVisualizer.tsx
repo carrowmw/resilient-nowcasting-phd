@@ -48,8 +48,11 @@ function nodeFillColor(
 ): [number, number, number, number] {
   const entry = d.timeseries[timestep];
   if (!entry) return [128, 128, 128, 180];
-  const maxUncertainty = 50;
-  const normalized = Math.min(1, entry.uncertainty / maxUncertainty);
+  // Stabilised Coefficient of Variation: σ/(μ+1)
+  // Prevents high-volume nodes from always appearing red due to high absolute
+  // variance. A CV > 1.0 (uncertainty exceeds predicted volume) is capped at red.
+  const relativeUncertainty = entry.uncertainty / (entry.prediction + 1);
+  const normalized = Math.min(1, relativeUncertainty);
   return heatColor(normalized);
 }
 
@@ -266,6 +269,7 @@ export default function MapVisualizer() {
   const rebuildHoverRef = useRef<(id: number | null) => void>(() => {});
 
   const setMaxTimesteps = useTimeStore((s) => s.setMaxTimesteps);
+  const setStartDate = useTimeStore((s) => s.setStartDate);
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
   const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
@@ -314,6 +318,7 @@ export default function MapVisualizer() {
         const payload: UIPayload = await res.json();
 
         setMaxTimesteps(payload.metadata.timesteps - 1);
+        setStartDate(payload.metadata.start_date);
 
         const nodeMap = new Map<number, NodeEntry>();
         for (const node of payload.nodes) nodeMap.set(node.id, node);
