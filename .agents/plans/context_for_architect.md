@@ -1,70 +1,63 @@
-# Context for Architect: UI Payload Generation and W&B Model Ingestion
+# Context for Architect: Chapter 5 Negative Baseline
 
-This document details the spatiotemporal IoT prediction pipeline's frontend static payload generation system, its ability to connect to Weights & Biases (W&B) for remote model checkpoints, and execution options.
-
----
-
-## 1. System for Generating the UI Payload
-
-The static data bridge between the PyTorch Backend and the Next.js Frontend is governed by the script [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py).
-
-### Output Architecture
-Rather than writing a single massive monolithic file, [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py) shards the data for performance:
-1. **Master Index**: Written to [master_index.json](file:///Users/administrator/Code/ml-agent-workspace/frontend/public/data/master_index.json). It contains top-level metadata, PIT calibration distributions, zero-inflation reliability metrics, and active node arrays.
-2. **Sharded Node Details**: Written to [nodes/node_{id}.json](file:///Users/administrator/Code/ml-agent-workspace/frontend/public/data/nodes/) (one per node ID). Each file contains:
-   - Ground-truth series (length 96)
-   - Imputed series (length 96)
-   - ZINB parameters ($\mu$, $\theta$, $\sigma$, and $\pi$ zero-inflation probability sequence)
-   - Ego-graph directed edge lists ranked by spatial attention.
+**Generated:** 2026-06-15T14:45:00+01:00
+**Purpose:** Codebase investigation results for the Ch5 Negative Baseline integration.
 
 ---
 
-## 2. Model Loading and W&B Integration
+## Current Architecture Summary
 
-The exporter script can load model weights from two distinct sources:
-1. **Local Filesystem Checkpoint**: Specified via `--checkpoint` (defaults to `models/resilient-iot/feasible-capybara-22/best_model.pt`).
-2. **W&B Remote Artifact**: Specified via `--artifact`. When provided, this flag overrides the local checkpoint path.
-
-### Execution Command with W&B
-If the desired model is hosted on the W&B server and not available locally, you do **not** need to copy it manually. The script integrates with the W&B API to pull and cache it dynamically.
-
-Run the script inside the Docker container using:
-```bash
-docker compose exec agent-workspace python src/export_ui_payload.py --artifact <entity>/<project>/<artifact_name>:<version>
+### Pipeline Flow (src/pipeline.py)
 ```
-*Example:*
-```bash
-docker compose exec agent-workspace python src/export_ui_payload.py --artifact my-team/resilient-iot/resilient-iot-model:latest
+ResilientIoTPipeline.forward(batch):
+  1. DynamicGraphLearner(static_features) → edge_index, edge_weight
+  2. MaskedSpatiotemporalEncoder(dynamic_features, edge_index, edge_weight) → latent [B, N, T, H]
+  3. DecoupledDecoders(latent) → imputed [B,N,T,D], mu/theta/pi [B,N]
+  4. compute_loss(imputed, targets, mu, theta, pi) → total_loss
 ```
 
-### High-Level Code Logic: `load_model_from_wandb`
+### Tensor Shape Contract
+- `dynamic_features`: `[B, N, T, D]` = `[batch, 81 nodes, 12 seq_len, 3 channels]`
+- `latent_embeddings`: `[B, N, T, hidden_dim]` = `[batch, 81, 12, 32]`
+- `imputed_features`: `[B, N, T, D]` = `[batch, 81, 12, 3]`
+- `mu/theta/pi`: `[B, N]` = `[batch, 81]`
+- `edge_index`: `[2, E]`
+- `edge_weight`: `[E]`
 
-The implementation in [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py#L126-L144) is structured as follows:
+### Key Files
+- **Encoder:** `src/encoder.py` — MaskedSpatiotemporalEncoder (GATv2 + Transformer)
+- **Decoders:** `src/decoders.py` — DecoupledDecoders (Imputation + ZINB Forecasting)
+- **Metrics:** `src/metrics.py` — calculate_metrics, compute_msle, calculate_kriging_metrics
+- **Training:** `src/train.py` — run_training(), main()
+- **Pipeline:** `src/pipeline.py` — ResilientIoTPipeline
+- **Dataset:** `src/dataset.py` — RealIoTDataset
+- **Config:** `configs/train/train.yaml`
 
+### Legacy Functions (from digest.txt)
+- `create_anomaly_column` (L1848): `timeseries_array[:, 0] > 0.9` → hardcoded boolean flag
+- `find_consecutive_sequences` (L2114): Iterates rows, drops sub-sequences shorter than window_size
+- `LSTMModel` (L1006): Bidirectional LSTM with `hidden_dim*2` linear output, `x[:, -1, :]` selection
+
+### Config Schema (train.yaml)
+```yaml
+data: {start_date, end_date, seq_len, target_veh_class, target_dir, mask_prob, spatial_holdout_prob}
+model: {num_nodes, static_feat_dim, time_series_dim, embedding_dim, hidden_dim, sparsity_threshold, num_layers, num_heads, dropout, dim_feedforward, zinb_eps}
+training: {epochs, batch_size, lr, grad_clip_max_norm, random_seed, early_stop_patience, early_stop_min_delta}
+loss: {w_forecast, w_impute, w_kriging}
+```
+
+### W&B Logging (current)
 ```python
-def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
-    """
-    Downloads a model artifact from W&B.
-    Returns (checkpoint_path, config_path, wandb_run_id).
-    """
-    api = wandb.Api()
-    logger.info(f"PHASE 2: Fetching artifact {artifact_name} from W&B...")
-    artifact = api.artifact(artifact_name)
-    artifact_dir = artifact.download()
-
-    checkpoint_path = os.path.join(artifact_dir, "best_model.pt")
-    config_path = os.path.join(artifact_dir, "config.yaml")
-
-    # Get the run ID from the artifact's producer
-    wandb_run_id = "unknown"
-    if artifact.producer:
-        wandb_run_id = artifact.producer.id
-
-    return checkpoint_path, config_path, wandb_run_id
+wandb.log({
+    "train_loss_total", "train_loss_impute", "train_loss_forecast",
+    "val_loss_total", "val_rmse", "val_mae", "val_zero_acc",
+    "val_zero_true_count", "val_zero_correct_count", "val_impute_mse",
+    "epoch"
+})
 ```
 
-### Flow Walkthrough
-1. **Instantiation**: `wandb.Api()` initializes a connection using the active shell's W&B credentials.
-2. **Download**: `artifact.download()` fetches the remote artifact bundle (containing `best_model.pt` and `config.yaml`) and stores it locally under a default cache directory (typically `./artifacts/` or `~/.cache/wandb/`).
-3. **Paths Resolution**: It extracts the absolute path to `best_model.pt` and the co-located `config.yaml` to ensure hyperparameters are dynamically matched during the exporter's initialization (Artifact Twinning).
-4. **ID Tracking**: The producer run's ID is retrieved to inject `wandb_run_id` into the output JSON metadata for full lineage auditability.
+### Tripwire Pattern
+All modules use `assert` + `raise ValueError` for offensive programming:
+- Shape asserts at function entry
+- NaN tripwires at function exit
+- ZINB eps guards in decoders
