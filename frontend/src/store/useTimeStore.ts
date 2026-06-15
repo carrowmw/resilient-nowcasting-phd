@@ -8,6 +8,8 @@ interface TimeState {
   selectedNodeId: number | null;
   globalAttentionThreshold: number;
   egoGraphEdges: AttentionEdge[] | null;
+  /** ISO date string (YYYY-MM-DD) for the first day of the exported payload. */
+  startDate: string;
 
   setTimestep: (step: number) => void;
   setMaxTimesteps: (max: number) => void;
@@ -16,6 +18,7 @@ interface TimeState {
   setSelectedNodeId: (id: number | null) => void;
   setGlobalAttentionThreshold: (v: number) => void;
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
+  setStartDate: (date: string) => void;
 }
 
 const useTimeStore = create<TimeState>((set, get) => ({
@@ -25,6 +28,7 @@ const useTimeStore = create<TimeState>((set, get) => ({
   selectedNodeId: null,
   globalAttentionThreshold: 0.5,
   egoGraphEdges: null,
+  startDate: '',
 
   setTimestep: (step: number) =>
     set({ currentTimestep: Math.max(0, Math.min(step, get().maxTimesteps)) }),
@@ -48,6 +52,8 @@ const useTimeStore = create<TimeState>((set, get) => ({
     set({ globalAttentionThreshold: Math.max(0, Math.min(1, v)) }),
 
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => set({ egoGraphEdges: edges }),
+
+  setStartDate: (date: string) => set({ startDate: date }),
 }));
 
 export default useTimeStore;

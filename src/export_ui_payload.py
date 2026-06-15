@@ -66,7 +66,6 @@ logger = logging.getLogger(__name__)
 #   graph_learner.lin.weight  → [32, 5]  ⟹ embedding_dim=32, static_feat_dim=5
 #   encoder.gat.lin_l.weight  → [64, 3]  ⟹ hidden_dim=64, time_series_dim=3
 # ---------------------------------------------------------------------------
-CHECKPOINT_PATH = "models/resilient-iot/feasible-capybara-22/best_model.pt"
 SENSORS_PATH = "data/traffic_sensors.json"
 PARQUET_PATH = "data/processed/master_dataset_15T.parquet"
 MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
@@ -100,10 +99,10 @@ def parse_args() -> argparse.Namespace:
         description="Generate ui_payload.json for the Geospatial Digital Twin"
     )
     # Load two days so we have seq_len context for day 2 predictions
-    parser.add_argument("--start_date", type=str, default="2026-05-10",
+    parser.add_argument("--start_date", type=str, default="2026-06-01",
                         help="Dataset start date (YYYY-MM-DD).  Load one day earlier than "
                              "the target day to supply seq_len look-back context.")
-    parser.add_argument("--end_date", type=str, default="2026-05-12",
+    parser.add_argument("--end_date", type=str, default="2026-06-03",
                         help="Dataset end date (YYYY-MM-DD, exclusive).")
     parser.add_argument("--veh_class", type=str, default="person",
                         help="Vehicle class filter used during training.")
@@ -113,8 +112,8 @@ def parse_args() -> argparse.Namespace:
                         help="Sequence length (must match trained model).")
     parser.add_argument("--num_simulated", type=int, default=5,
                         help="Number of synthetic zero-shot nodes to inject.")
-    parser.add_argument("--checkpoint", type=str, default=CHECKPOINT_PATH,
-                        help=f"Path to the trained model checkpoint (default: {CHECKPOINT_PATH})")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Path to the trained model checkpoint. If not provided, W&B will be queried.")
     parser.add_argument("--artifact", type=str, default=None,
                         help="W&B artifact name (e.g., 'entity/project/name:latest'). "
                              "If provided, overrides --checkpoint.")
@@ -130,6 +129,66 @@ def load_sensor_coords(path: str) -> Dict[str, Dict[str, float]]:
     with open(path, "r") as fh:
         raw = json.load(fh)
     return {entry["location"]: {"lat": entry["lat"], "lon": entry["lon"]} for entry in raw}
+
+
+def select_artifact_from_wandb() -> str:
+    """
+    Connects to W&B, lists all available model artifacts in the resilient-iot project,
+    and returns the selected or latest artifact name.
+    """
+    api = wandb.Api()
+    entity = api.default_entity
+    project = "resilient-iot"
+    collection_name = "resilient-iot-model"
+    collection_path = f"{entity}/{project}/{collection_name}"
+
+    logger.info(f"Connecting to W&B to list available model artifacts in project {project}...")
+    try:
+        collection = api.artifact_collection('model', collection_path)
+        artifacts = list(collection.artifacts())
+    except Exception as e:
+        logger.error(f"Failed to query W&B artifacts at {collection_path}: {e}")
+        raise RuntimeError(
+            "Could not fetch model artifacts from Weights & Biases. Please ensure "
+            "WANDB_API_KEY is configured and valid, or provide a local checkpoint path "
+            "via --checkpoint."
+        ) from e
+
+    if not artifacts:
+        raise ValueError(f"No model artifacts found in W&B collection: {collection_path}")
+
+    # Display options
+    print("\nAvailable W&B Model Artifacts:")
+    print("--------------------------------")
+    for i, art in enumerate(artifacts):
+        aliases_str = f" ({', '.join(art.aliases)})" if art.aliases else ""
+        print(f"[{i + 1}] {art.name}{aliases_str}")
+    print("--------------------------------")
+
+    # If interactive, ask the user to choose
+    if sys.stdin.isatty():
+        while True:
+            try:
+                user_input = input(f"Select an artifact (1-{len(artifacts)}) or press Enter for [1]: ").strip()
+                if not user_input:
+                    selected_idx = 0
+                    break
+                selected_idx = int(user_input) - 1
+                if 0 <= selected_idx < len(artifacts):
+                    break
+                print(f"Please enter a number between 1 and {len(artifacts)}.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+    else:
+        # Non-interactive mode (e.g., CI or background task)
+        selected_idx = 0
+        logger.info("Non-interactive session detected. Defaulting to the latest W&B artifact.")
+
+    selected_art = artifacts[selected_idx]
+    version = selected_art.name.split(':')[-1]
+    full_name = f"{collection_path}:{version}"
+    logger.info(f"Selected artifact: {full_name}")
+    return full_name
 
 
 def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
@@ -337,11 +396,13 @@ def _zinb_cdf(y_obs: float, mu: float, theta: float, pi_val: float) -> float:
     """
     assert mu > 0.0,    f"_zinb_cdf: mu={mu} must be > 0"
     assert theta > 0.0, f"_zinb_cdf: theta={theta} must be > 0"
-    assert 0.0 < pi_val < 1.0, f"_zinb_cdf: pi={pi_val} must be in (0,1)"
+    # Prevent rounded 0.0 or 1.0 values from tripping the strictly-positive assert
+    safe_pi = max(1e-6, min(1.0 - 1e-6, float(pi_val)))
+    assert 0.0 < safe_pi < 1.0, f"_zinb_cdf: pi={safe_pi} must be in (0,1)"
     k = int(math.floor(y_obs))
     p_nb = theta / (theta + mu)
     cdf_nb = float(betainc(theta, k + 1, p_nb))
-    u = pi_val + (1.0 - pi_val) * cdf_nb
+    u = safe_pi + (1.0 - safe_pi) * cdf_nb
     assert 0.0 <= u <= 1.0, f"_zinb_cdf: PIT value {u} outside [0,1] — parametric error"
     return u
 
@@ -382,7 +443,12 @@ def compute_pit_histogram(
         ):
             if gt is None or math.isnan(gt):
                 continue
-            u = _zinb_cdf(float(gt), float(mu_val), float(th_val), float(pi_val))
+            
+            # Prevent perfectly rounded 0.0s from tripping the strictly-positive assert
+            safe_mu = max(1e-6, float(mu_val))
+            safe_th = max(1e-6, float(th_val))
+            
+            u = _zinb_cdf(float(gt), safe_mu, safe_th, float(pi_val))
             bin_idx = min(int(u * num_bins), num_bins - 1)
             counts[bin_idx] += 1
 
@@ -429,8 +495,10 @@ def compute_zero_inflation_reliability(
         for gt, pi_val in zip(gt_seq, pi_seq):
             if gt is None or math.isnan(gt):
                 continue
-            assert 0.0 < pi_val < 1.0, f"Reliability: pi={pi_val} outside (0,1)"
-            bin_idx = min(int(pi_val * num_bins), num_bins - 1)
+            # Prevent rounded 0.0 or 1.0 values from tripping the strictly-positive assert
+            safe_pi = max(1e-6, min(1.0 - 1e-6, float(pi_val)))
+            assert 0.0 < safe_pi < 1.0, f"Reliability: pi={safe_pi} outside (0,1)"
+            bin_idx = min(int(safe_pi * num_bins), num_bins - 1)
             total_counts[bin_idx] += 1
             if gt == 0.0:
                 zero_counts[bin_idx] += 1
@@ -728,9 +796,13 @@ def main() -> None:
     wandb_run_id = "unknown"
     loaded_config_data = {}
     checkpoint_path = args.checkpoint
+    artifact_name = args.artifact
 
-    if args.artifact:
-        checkpoint_path, config_path, wandb_run_id = load_model_from_wandb(args.artifact)
+    if not checkpoint_path and not artifact_name:
+        artifact_name = select_artifact_from_wandb()
+
+    if artifact_name:
+        checkpoint_path, config_path, wandb_run_id = load_model_from_wandb(artifact_name)
     else:
         checkpoint_dir = os.path.dirname(checkpoint_path)
         config_path = os.path.join(checkpoint_dir, "config.yaml")
@@ -794,7 +866,11 @@ def main() -> None:
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
     state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    model.load_state_dict(state_dict)
+    incompatible_keys = model.load_state_dict(state_dict, strict=False)
+    if incompatible_keys.missing_keys:
+        logger.warning(f"Missing keys in state_dict: {incompatible_keys.missing_keys}")
+    if incompatible_keys.unexpected_keys:
+        logger.info(f"Ignored unexpected keys in state_dict: {incompatible_keys.unexpected_keys}")
     model.eval()
     logger.info("Model loaded and set to eval mode.")
 

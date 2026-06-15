@@ -20,6 +20,7 @@ export default function TimeSlider() {
   const setTimestep = useTimeStore((s) => s.setTimestep);
   const togglePlayback = useTimeStore((s) => s.togglePlayback);
   const incrementTimestep = useTimeStore((s) => s.incrementTimestep);
+  const startDate = useTimeStore((s) => s.startDate);
 
   // Log every timestep change so the test can be verified in the console
   useEffect(() => {
@@ -73,7 +74,7 @@ export default function TimeSlider() {
     >
       {/* Header row */}
       <div className="flex w-full items-center justify-between text-xs font-mono text-slate-300">
-        <span>2024-05-10</span>
+        <span>{startDate || '—'}</span>
         <span className="text-base font-semibold text-white tabular-nums">
           {timestepToLabel(currentTimestep)}
         </span>
