@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 import useTimeStore from "@/store/useTimeStore";
 import type { NodeDetailPayload, AttentionEdge } from "@/types/payload";
 import { useState } from "react";
+import { nodeUrl } from "@/lib/payloadSource";
 
 // ---------------------------------------------------------------------------
 // SVG layout constants (shared by both charts)
@@ -399,28 +400,37 @@ export default function NodeInspector() {
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
   const setEgoGraphEdges = useTimeStore((s) => s.setEgoGraphEdges);
+  const activeRunId = useTimeStore((s) => s.activeRunId);
+  const activeDate = useTimeStore((s) => s.activeDate);
 
   const [nodeDetail, setNodeDetail] = useState<NodeDetailPayload | null>(null);
 
-  // Lazy per-node fetch: load node_{id}.json whenever the selected node changes.
-  // Write ego_graph_edges into the store so MapVisualizer can render the ArcLayer.
+  // Lazy per-node fetch: load the day-scoped node_{id}.json from R2 whenever the
+  // selection, run, or day changes. Write ego_graph_edges into the store so
+  // MapVisualizer can render the ArcLayer.
   useEffect(() => {
-    if (selectedNodeId === null) {
+    if (selectedNodeId === null || !activeRunId || !activeDate) {
       setNodeDetail(null);
       setEgoGraphEdges(null);
       return;
     }
-    fetch(`/data/nodes/node_${selectedNodeId}.json`)
+    let cancelled = false;
+    fetch(nodeUrl(activeRunId, activeDate, selectedNodeId))
       .then((r) => (r.ok ? r.json() : null))
       .then((d: NodeDetailPayload | null) => {
+        if (cancelled) return;
         setNodeDetail(d);
         setEgoGraphEdges(d?.ego_graph_edges ?? null);
       })
       .catch(() => {
+        if (cancelled) return;
         setNodeDetail(null);
         setEgoGraphEdges(null);
       });
-  }, [selectedNodeId, setEgoGraphEdges]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNodeId, activeRunId, activeDate, setEgoGraphEdges]);
 
   if (selectedNodeId === null) return null;
   if (!nodeDetail) return null;

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import useTimeStore from '@/store/useTimeStore';
+import DatePaginator from './DatePaginator';
 
 // Each timestep represents 15 minutes; anchor to midnight of the test day.
 function timestepToLabel(t: number): string {
@@ -20,7 +21,6 @@ export default function TimeSlider() {
   const setTimestep = useTimeStore((s) => s.setTimestep);
   const togglePlayback = useTimeStore((s) => s.togglePlayback);
   const incrementTimestep = useTimeStore((s) => s.incrementTimestep);
-  const startDate = useTimeStore((s) => s.startDate);
 
   // Log every timestep change so the test can be verified in the console
   useEffect(() => {
@@ -74,7 +74,7 @@ export default function TimeSlider() {
     >
       {/* Header row */}
       <div className="flex w-full items-center justify-between text-xs font-mono text-slate-300">
-        <span>{startDate || '—'}</span>
+        <DatePaginator />
         <span className="text-base font-semibold text-white tabular-nums">
           {timestepToLabel(currentTimestep)}
         </span>

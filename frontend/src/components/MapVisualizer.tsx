@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
@@ -13,6 +13,56 @@ import type {
   EdgeEntry,
   AttentionEdge,
 } from "@/types/payload";
+import type {
+  RunRegistry,
+  SpatialIndex,
+  TemporalPage,
+} from "@/types/registry";
+import { registryUrl, spatialUrl, pageUrl } from "@/lib/payloadSource";
+
+/**
+ * Merge a per-run spatial index with a per-day temporal page into the legacy
+ * UIPayload shape, so buildLayers() / nodeMap logic stay unchanged. The split
+ * payload (Phase 1) keeps coordinates + topology in spatial.json and the 96-step
+ * timeseries + edge attention in page.json; this stitches them back together.
+ */
+function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
+  const m = spatial.metadata;
+  const nodes: NodeEntry[] = spatial.nodes.map((n) => ({
+    id: n.id,
+    location_name: n.location_name,
+    lat: n.lat,
+    lon: n.lon,
+    is_simulated: n.is_simulated,
+    timeseries: page.node_timeseries[String(n.id)] ?? [],
+    semantic_tags: n.semantic_tags,
+  }));
+  return {
+    metadata: {
+      num_nodes: m.num_nodes,
+      num_real_nodes: m.num_real_nodes,
+      num_simulated_nodes: m.num_simulated_nodes,
+      timesteps: page.timesteps,
+      seq_len: page.seq_len,
+      veh_class: m.veh_class,
+      dir: m.dir,
+      start_date: page.date,
+      end_date: page.date,
+      wandb_run_id: m.wandb_run_id,
+      git_commit_hash: m.git_commit_hash,
+      hyperparameters: m.hyperparameters,
+    },
+    nodes,
+    edges: page.edge_attention as EdgeEntry[],
+    pit_histogram: page.pit_histogram,
+    zero_inflation_reliability: page.zero_inflation_reliability,
+    global_imputation_burden: page.global_imputation_burden,
+    global_healing_quality: page.global_healing_quality,
+    attention_entropy_series: page.attention_entropy_series,
+    tripwire_audit_trail: page.tripwire_audit_trail,
+    alpha_node_leaderboard: page.alpha_node_leaderboard,
+  };
+}
 
 // Newcastle upon Tyne city centre
 const INITIAL_VIEW = {
@@ -252,6 +302,12 @@ export default function MapVisualizer() {
 
   const payloadRef = useRef<UIPayload | null>(null);
   const nodeMapRef = useRef<Map<number, NodeEntry>>(new Map());
+  const spatialRef = useRef<SpatialIndex | null>(null);
+
+  // Reactive triggers so the layer-rebuild effect fires when the map finishes
+  // loading or a new day's page is merged into payloadRef.
+  const [mapReady, setMapReady] = useState(false);
+  const [payloadVersion, setPayloadVersion] = useState(0);
 
   // Hover state is kept in a ref (not Zustand) to avoid React re-renders on
   // every pointer movement — only the WebGL overlay needs to rebuild.
@@ -269,7 +325,7 @@ export default function MapVisualizer() {
   const rebuildHoverRef = useRef<(id: number | null) => void>(() => {});
 
   const setMaxTimesteps = useTimeStore((s) => s.setMaxTimesteps);
-  const setStartDate = useTimeStore((s) => s.setStartDate);
+  const setTimestep = useTimeStore((s) => s.setTimestep);
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
   const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
@@ -277,6 +333,15 @@ export default function MapVisualizer() {
     (s) => s.globalAttentionThreshold,
   );
   const egoGraphEdges = useTimeStore((s) => s.egoGraphEdges);
+
+  // Multi-run + pagination state/actions (Phase 1)
+  const activeRunId = useTimeStore((s) => s.activeRunId);
+  const activeDate = useTimeStore((s) => s.activeDate);
+  const setRunRegistry = useTimeStore((s) => s.setRunRegistry);
+  const setActiveRunId = useTimeStore((s) => s.setActiveRunId);
+  const setAvailableDates = useTimeStore((s) => s.setAvailableDates);
+  const setActiveDate = useTimeStore((s) => s.setActiveDate);
+  const setIsLoadingPage = useTimeStore((s) => s.setIsLoadingPage);
 
   // ── Initialise MapLibre + deck.gl overlay once ────────────────────────────
   useEffect(() => {
@@ -311,73 +376,9 @@ export default function MapVisualizer() {
       }
     });
 
-    map.on("load", async () => {
-      try {
-        const res = await fetch("/data/master_index.json");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const payload: UIPayload = await res.json();
-
-        setMaxTimesteps(payload.metadata.timesteps - 1);
-        setStartDate(payload.metadata.start_date);
-
-        const nodeMap = new Map<number, NodeEntry>();
-        for (const node of payload.nodes) nodeMap.set(node.id, node);
-
-        payloadRef.current = payload;
-        nodeMapRef.current = nodeMap;
-
-        const simNodes = payload.nodes.filter((n) => n.is_simulated);
-        console.info(
-          `[MapVisualizer] Payload loaded: ${payload.nodes.length} nodes` +
-            ` (${payload.metadata.num_real_nodes} real + ${simNodes.length} simulated),` +
-            ` ${payload.edges.length} edges, ${payload.metadata.timesteps} timesteps.`,
-        );
-
-        // Initialise the self-referential hover rebuild function.
-        // Uses payloadRef/nodeMapRef/overlayRef so it stays correct if refs update.
-        rebuildHoverRef.current = (id: number | null) => {
-          if (hoveredNodeIdRef.current === id) return;
-          hoveredNodeIdRef.current = id;
-          const ov = overlayRef.current;
-          if (!ov) return;
-          const s = useTimeStore.getState();
-          ov.setProps({
-            layers: buildLayers(
-              payloadRef.current!,
-              nodeMapRef.current,
-              s.currentTimestep,
-              {
-                selectedNodeId: s.selectedNodeId,
-                attentionThreshold: s.globalAttentionThreshold,
-                hoveredNodeId: id,
-                egoGraphEdges: s.egoGraphEdges,
-              },
-              setSelectedNodeId,
-              (id2) => rebuildHoverRef.current(id2),
-            ),
-          });
-        };
-
-        const state = useTimeStore.getState();
-        overlay.setProps({
-          layers: buildLayers(
-            payload,
-            nodeMap,
-            state.currentTimestep,
-            {
-              selectedNodeId: state.selectedNodeId,
-              attentionThreshold: state.globalAttentionThreshold,
-              hoveredNodeId: hoveredNodeIdRef.current,
-              egoGraphEdges: state.egoGraphEdges,
-            },
-            setSelectedNodeId,
-            (id) => rebuildHoverRef.current(id),
-          ),
-        });
-      } catch (err) {
-        console.warn("[MapVisualizer] Failed to load master_index.json", err);
-      }
-    });
+    // Layer construction is handled by the rebuild effect once both the map is
+    // ready and a day's payload has been merged (three-stage loading below).
+    map.on("load", () => setMapReady(true));
 
     return () => {
       overlay.finalize();
@@ -387,6 +388,100 @@ export default function MapVisualizer() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Stage 1: on mount, fetch the run registry → pick the default run ───────
+  useEffect(() => {
+    let cancelled = false;
+    fetch(registryUrl())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<RunRegistry>;
+      })
+      .then((registry) => {
+        if (cancelled) return;
+        setRunRegistry(registry.runs);
+        const def = registry.default_run_id ?? registry.runs[0]?.run_id ?? null;
+        if (def) setActiveRunId(def);
+      })
+      .catch((err) =>
+        console.warn("[MapVisualizer] Failed to load run_registry.json", err),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [setRunRegistry, setActiveRunId]);
+
+  // ── Stage 2: on run change, fetch spatial.json → node coords + dates ───────
+  useEffect(() => {
+    if (!activeRunId) return;
+    let cancelled = false;
+    fetch(spatialUrl(activeRunId))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<SpatialIndex>;
+      })
+      .then((spatial) => {
+        if (cancelled) return;
+        spatialRef.current = spatial;
+        const dates = spatial.metadata.available_dates ?? [];
+        setAvailableDates(dates);
+        if (dates.length > 0) setActiveDate(dates[0]);
+        console.info(
+          `[MapVisualizer] spatial.json loaded for ${activeRunId}: ` +
+            `${spatial.nodes.length} nodes, ${spatial.edge_topology.length} edges, ` +
+            `${dates.length} days.`,
+        );
+      })
+      .catch((err) =>
+        console.warn(`[MapVisualizer] Failed to load spatial.json for ${activeRunId}`, err),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRunId, setAvailableDates, setActiveDate]);
+
+  // ── Stage 3: on run/date change, fetch page.json → merge into UIPayload ────
+  useEffect(() => {
+    if (!activeRunId || !activeDate) return;
+    const spatial = spatialRef.current;
+    // Guard the run-switch race: spatialRef may still hold the previous run when
+    // activeRunId has just changed. Wait until stage 2 loads the matching spatial.
+    if (!spatial || spatial.metadata.run_id !== activeRunId) return;
+    let cancelled = false;
+    setIsLoadingPage(true);
+    fetch(pageUrl(activeRunId, activeDate))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<TemporalPage>;
+      })
+      .then((page) => {
+        if (cancelled) return;
+        const payload = mergePayload(spatial, page);
+        const nodeMap = new Map<number, NodeEntry>();
+        for (const node of payload.nodes) nodeMap.set(node.id, node);
+        payloadRef.current = payload;
+        nodeMapRef.current = nodeMap;
+        setMaxTimesteps(page.timesteps - 1);
+        setTimestep(0);
+        setPayloadVersion((v) => v + 1);
+        setIsLoadingPage(false);
+        console.info(
+          `[MapVisualizer] page.json loaded: ${activeRunId}/${activeDate} ` +
+            `(${page.timesteps} timesteps, ${payload.edges.length} edges).`,
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setIsLoadingPage(false);
+        console.warn(
+          `[MapVisualizer] Failed to load page.json for ${activeRunId}/${activeDate}`,
+          err,
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRunId, activeDate, setMaxTimesteps, setTimestep, setIsLoadingPage]);
 
   // Rebuild layers whenever timestep, selection, threshold, or ego-graph data changes.
   // Also refreshes rebuildHoverRef.current so hover callbacks always see the latest
@@ -441,6 +536,8 @@ export default function MapVisualizer() {
     globalAttentionThreshold,
     egoGraphEdges,
     setSelectedNodeId,
+    payloadVersion,
+    mapReady,
   ]);
 
   return (

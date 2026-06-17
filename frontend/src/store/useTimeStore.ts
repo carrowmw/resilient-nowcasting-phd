@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AttentionEdge } from '@/types/payload';
+import type { RunRegistryEntry } from '@/types/registry';
 
 interface TimeState {
   currentTimestep: number;
@@ -8,8 +9,15 @@ interface TimeState {
   selectedNodeId: number | null;
   globalAttentionThreshold: number;
   egoGraphEdges: AttentionEdge[] | null;
-  /** ISO date string (YYYY-MM-DD) for the first day of the exported payload. */
+  /** ISO date string (YYYY-MM-DD) for the currently displayed day. */
   startDate: string;
+
+  // --- Multi-run + pagination state (Phase 1) ---
+  activeRunId: string | null;
+  activeDate: string | null;            // "2026-05-01"
+  availableDates: string[];             // sorted, from spatial.json metadata
+  runRegistry: RunRegistryEntry[];      // from run_registry.json
+  isLoadingPage: boolean;               // true during a page.json fetch
 
   setTimestep: (step: number) => void;
   setMaxTimesteps: (max: number) => void;
@@ -19,6 +27,14 @@ interface TimeState {
   setGlobalAttentionThreshold: (v: number) => void;
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
   setStartDate: (date: string) => void;
+
+  // --- Multi-run + pagination actions ---
+  setActiveRunId: (runId: string) => void;
+  setActiveDate: (date: string) => void;
+  setAvailableDates: (dates: string[]) => void;
+  setRunRegistry: (runs: RunRegistryEntry[]) => void;
+  setIsLoadingPage: (loading: boolean) => void;
+  navigateDay: (direction: 'prev' | 'next') => void;
 }
 
 const useTimeStore = create<TimeState>((set, get) => ({
@@ -29,6 +45,12 @@ const useTimeStore = create<TimeState>((set, get) => ({
   globalAttentionThreshold: 0.5,
   egoGraphEdges: null,
   startDate: '',
+
+  activeRunId: null,
+  activeDate: null,
+  availableDates: [],
+  runRegistry: [],
+  isLoadingPage: false,
 
   setTimestep: (step: number) =>
     set({ currentTimestep: Math.max(0, Math.min(step, get().maxTimesteps)) }),
@@ -54,6 +76,27 @@ const useTimeStore = create<TimeState>((set, get) => ({
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => set({ egoGraphEdges: edges }),
 
   setStartDate: (date: string) => set({ startDate: date }),
+
+  setActiveRunId: (runId: string) => set({ activeRunId: runId }),
+
+  // Changing the day resets the playhead and the current selection's stale detail.
+  setActiveDate: (date: string) => set({ activeDate: date, startDate: date }),
+
+  setAvailableDates: (dates: string[]) => set({ availableDates: dates }),
+
+  setRunRegistry: (runs: RunRegistryEntry[]) => set({ runRegistry: runs }),
+
+  setIsLoadingPage: (loading: boolean) => set({ isLoadingPage: loading }),
+
+  navigateDay: (direction: 'prev' | 'next') => {
+    const { availableDates, activeDate } = get();
+    if (!activeDate || availableDates.length === 0) return;
+    const idx = availableDates.indexOf(activeDate);
+    if (idx === -1) return;
+    const nextIdx = direction === 'next' ? idx + 1 : idx - 1;
+    if (nextIdx < 0 || nextIdx >= availableDates.length) return; // boundary
+    set({ activeDate: availableDates[nextIdx], startDate: availableDates[nextIdx] });
+  },
 }));
 
 export default useTimeStore;
