@@ -641,7 +641,7 @@ def write_page_json(out_dir: str, run_id: str, date_str: str, acc: Dict, day_met
     os.makedirs(day_dir, exist_ok=True)
     page_path = os.path.join(day_dir, "page.json")
     with open(page_path, "w") as fh:
-        json.dump(page, fh, indent=2)
+        json.dump(page, fh, separators=(",", ":"))  # minified — machine-fetched payload
     return page_path
 
 
@@ -725,7 +725,7 @@ def write_node_detail_jsons(out_dir: str, run_id: str, date_str: str, acc: Dict,
             "ego_graph_edges": ego_edges,
         }
         with open(os.path.join(nodes_dir, f"node_{node_id}.json"), "w") as fh:
-            json.dump(node_data, fh, indent=2)
+            json.dump(node_data, fh, separators=(",", ":"))  # minified
     return num_nodes_total
 
 
@@ -751,7 +751,7 @@ def write_spatial_json(out_dir: str, run_id: str, nodes_meta: List[Dict],
     os.makedirs(run_dir, exist_ok=True)
     spatial_path = os.path.join(run_dir, "spatial.json")
     with open(spatial_path, "w") as fh:
-        json.dump(spatial, fh, indent=2)
+        json.dump(spatial, fh, separators=(",", ":"))  # minified
     return spatial_path
 
 
@@ -786,22 +786,25 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     dates = list(daterange(start_date, end_date))
     assert dates, "TRIPWIRE: empty analysis window."
 
-    # --- Canonical node set / static features / model (fixed once per run) ---
-    # Reference window for the FIRST target day supplies the canonical locations,
-    # static features and dims; reused for every day so spatial.json is stable.
-    first = dates[0]
-    ref_ds = RealIoTDataset(
+    # --- Single full-window load (canonical node set / scaler / static / topology) ---
+    # One dataset over [start - 1 day, end) gives a SINGLE sorted location set (the
+    # union over the window), one scaler and one static-feature matrix shared by every
+    # day. RealIoTDataset.reindex(...).fillna(0.0) zero-fills any sensor that is absent
+    # on a given day, so days with a dropped sensor (e.g. 2026-05-19) are handled
+    # gracefully instead of shifting node ids. The look-back day (start - 1) supplies
+    # seq_len context for the first target day.
+    full_ds = RealIoTDataset(
         parquet_path=PARQUET_PATH,
-        start_date=(first - dt.timedelta(days=1)).isoformat(),
-        end_date=(first + dt.timedelta(days=1)).isoformat(),
+        start_date=(dt.date.fromisoformat(start_date) - dt.timedelta(days=1)).isoformat(),
+        end_date=end_date,
         seq_len=seq_len, mask_prob=0.15,
         target_veh_class=veh_class, target_dir=direction,
     )
-    canonical_locations = list(ref_ds.locations)
-    num_nodes_real = ref_ds.num_nodes
+    canonical_locations = list(full_ds.locations)
+    num_nodes_real = full_ds.num_nodes
     num_nodes_total = num_nodes_real + num_simulated
-    static_feat_dim = ref_ds.static_feat_dim
-    time_series_dim = ref_ds.time_series_dim
+    static_feat_dim = full_ds.static_feat_dim
+    time_series_dim = full_ds.time_series_dim
 
     nodes_meta = build_nodes_meta(canonical_locations, num_simulated, sensor_coords)
 
@@ -811,9 +814,9 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
         time_series_dim=time_series_dim, seq_len=seq_len, device=device,
     )
 
-    # Static features (real + simulated) built once → identical topology every day.
-    real_static = ref_ds.static_features.to(device)
-    sim_static = build_simulated_static(real_static, num_simulated, nodes_meta, ref_ds.static_scaler)
+    # Static features (real + simulated) → identical topology every day.
+    real_static = full_ds.static_features.to(device)
+    sim_static = build_simulated_static(real_static, num_simulated, nodes_meta, full_ds.static_scaler)
     combined_static = torch.cat([real_static, sim_static], dim=0)
     assert combined_static.shape == (num_nodes_total, static_feat_dim), \
         f"Static features shape mismatch: {combined_static.shape}"
@@ -824,25 +827,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
 
     for target_date in dates:
         date_str = target_date.isoformat()
-        # Reuse the reference dataset for the first day to avoid a redundant load.
-        if target_date == first:
-            day_ds = ref_ds
-        else:
-            day_ds = RealIoTDataset(
-                parquet_path=PARQUET_PATH,
-                start_date=(target_date - dt.timedelta(days=1)).isoformat(),
-                end_date=(target_date + dt.timedelta(days=1)).isoformat(),
-                seq_len=seq_len, mask_prob=0.15,
-                target_veh_class=veh_class, target_dir=direction,
-            )
-        # Node-set stability is required for a per-run spatial.json + stable topology.
-        assert list(day_ds.locations) == canonical_locations, (
-            f"TRIPWIRE: location set for {date_str} differs from canonical set "
-            f"(canonical={num_nodes_real} nodes, day={day_ds.num_nodes}). "
-            f"Phase-1 assumes a stable sensor set across the analysis window."
-        )
-
-        window_indices = select_day_window_indices(day_ds, seq_len, target_date)
+        window_indices = select_day_window_indices(full_ds, seq_len, target_date)
         if not window_indices:
             logger.warning(f"  {date_str}: no inference windows — skipping day.")
             continue
@@ -852,7 +837,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
 
         logger.info(f"  {date_str}: {len(window_indices)} inference timesteps …")
         acc = run_day_inference(
-            model, day_ds, window_indices,
+            model, full_ds, window_indices,
             combined_static=combined_static, num_nodes_real=num_nodes_real,
             num_simulated=num_simulated, seq_len=seq_len,
             time_series_dim=time_series_dim, device=device,
@@ -873,8 +858,6 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
             ]
         available_dates.append(date_str)
         del acc, day_metrics
-        if day_ds is not ref_ds:
-            del day_ds
 
     assert available_dates, f"TRIPWIRE: run '{run_id}' produced no days."
     assert edge_topology is not None
