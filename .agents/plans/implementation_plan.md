@@ -1,287 +1,426 @@
-# Implementation Plan: Static Spatial Features Pipeline Expansion (5 → 15 Dimensions)
+# Implementation Plan — Phase 1: Multi-Run Paginated Payload Architecture
 
-**Date**: 2026-06-09  
-**Based on**: `architect_plan.md` + `context_for_architect.md`  
-**Target output**: `data/processed/master_dataset_15T.parquet` with 15 static feature columns, no NaNs
+**Date**: 2026-06-17
+**Branch**: `database` (confirmed current)
+**Architect Plan**: `docs/database/phase1_detailed_plan.md`
+**Payload generation strategy**: Option B (batch script) — per Architect §6 recommendation
+**Status**: ⏸ **AWAITING USER APPROVAL — no execution code will be written until approved.**
 
 ---
 
-## Pre-flight Checks (Before Writing Code)
+## 0. Goal
 
-### ENV-1: osmnx / geopandas not installed
-```bash
-pip install osmnx geopandas
+Move the digital twin off the single inlined `master_index.json` and onto a
+**multi-run, paginated** layout so the frontend can (a) switch between W&B model
+runs and (b) page through analysis days without loading everything at once:
+
 ```
-Must complete successfully before any OSMnx code runs.
+frontend/public/data/runs/
+├── run_registry.json                    # all runs + default_run_id
+└── {run_id}/                            # e.g. feasible-capybara-22
+    ├── spatial.json                     # nodes + edge topology + run metadata (NO timeseries)
+    └── {YYYY-MM-DD}/                    # one folder per analysis day
+        ├── page.json                    # 96-step timeseries + edge attention + day metrics
+        └── nodes/node_{id}.json         # per-node deep analytics (day-scoped)
+```
 
-### ENV-2: GOOGLE_PLACES_API_KEY not set
-The environment variable `GOOGLE_PLACES_API_KEY` is currently unset. The standalone pagination test and `process_all.py` will both raise `ValueError` without it. The user must export this key before Phase 5 and Phase 6. **The implementation plan does not block on this** — all code is written first; the API calls happen last.
+Three workstreams: **Backend (B)** → validated independently → **Frontend (F)** → **Cleanup (C)**.
 
 ---
 
-## Phase 1: Rewrite `src/features.py`
+## 1. Verified Facts (checked against the repo on 2026-06-17)
 
-**Goal**: Replace the 5-feature, non-paginated loader with a 15-feature, paginated loader.
+| Claim | Status |
+|---|---|
+| On `database` branch | ✅ `git branch --show-current` = `database` |
+| `configs/analysis/analysis.yaml` exists with flat keys `holdout_start: 2026-05-01`, `holdout_end: 2026-06-01` | ✅ read directly |
+| All 15 helpers/constants the new script imports exist in `export_ui_payload.py` | ✅ `load_sensor_coords`, `select_artifact_from_wandb`, `load_model_from_wandb`, `build_simulated_static`, `compute_std_dev`, `extract_timestep_attention`, `load_semantic_tags`, `compute_pit_histogram`, `compute_zero_inflation_reliability`, `compute_two_extremes`, `build_ego_graph_edges`, `SIMULATED_NODE_COORDS`, `NUM_TIMESTEPS_TARGET` (=96), `TOP_K_EGO_EDGES` (=10), `SENSORS_PATH`, `PARQUET_PATH` (=`data/processed/master_dataset_15T.parquet`) |
+| `export_ui_payload.py` is 1347 lines; `main()` at L672 | ✅ |
+| `MapVisualizer.tsx:316` fetches `/data/master_index.json` | ✅ |
+| `NodeInspector.tsx:413` fetches `/data/nodes/node_${selectedNodeId}.json` | ✅ |
+| `analytics/page.tsx:92` ALSO fetches `/data/master_index.json` | ✅ (drives Cleanup decision C-3) |
+| `frontend/public/data/runs/` exists and is empty | ✅ |
+| Frontend components present: `MapScene`, `MapVisualizer`, `NodeInspector`, `TimeSlider`, `AttentionControls` | ✅ |
+| `frontend/src/store/useTimeStore.ts`, `frontend/src/types/payload.ts` present | ✅ |
+| `frontend/AGENTS.md`: "This is NOT the Next.js you know — read `node_modules/next/dist/docs/` before writing code" | ✅ |
+| docker-compose services: `agent-workspace` (my-ml-agent), `frontend-dev` (nextjs-frontend), `gpu-runner`, `cpu-runner` | ✅ |
 
-### 1.1 New constants / imports
-- Add `import math`, `import time`
-- Add `NEWCASTLE_CENTRE = (54.9738, -1.6131)` for Haversine distance
-- Add `OSM_CACHE_PATH = 'data/external/osm_features_cache.json'`
-- Keep existing imports (`logging`, `pandas`, `requests`, `json`, `os`, `numpy`, `random`)
+---
 
-### 1.2 New helper: `_haversine_distance(lat1, lon1, lat2, lon2) -> float`
-- Returns distance in **metres** between two WGS-84 points.
-- Pure Python, no external dependency.
+## 2. ⚠️ Decisions & Deviations (READ FIRST)
 
-### 1.3 New helper: `_shannon_entropy(counts: list[int]) -> float`
-- Normalised Shannon entropy in [0, 1] across N categories.
-- `H = -sum(p * log2(p)) / log2(N)` where `N = len(counts)`.
-- Returns 0.0 if total is 0 or if only one non-zero category.
-- Handles edge: if N == 1, return 0.0 (no diversity possible).
+### BLK-1 — Execution context: already inside `agent-workspace` ✅ RESOLVED
+The session **runs inside the `agent-workspace` container** (`hostname 914e32a0d702`,
+Python 3.11.15, wandb 0.27.2 confirmed). So Python/W&B commands run **directly** — the
+`docker compose exec agent-workspace …` prefix in the Architect examples is dropped.
+Frontend `tsc`/`vitest` still need the `frontend-dev` container; from inside this
+container that means either `docker compose exec frontend-dev …` (if the docker CLI is
+reachable here) **or** running them in the `frontend-dev` shell. **PF-1b**: confirm how
+to reach `frontend-dev` from here before F-11. Either way, **no host installs.**
 
-### 1.4 Retained helper: `_nearby_search_count(lat, lon, place_types, radius) -> int`
-- Same logic as current `get_count()` but extracted as a method.
-- Used for low-count features: nightlife, education, recreation, school_zone, bus_stops, parking.
-- Still crashes hard (raises `RuntimeError`) on 403/429.
-- Returns raw count (no `min(..., 50)` cap — let the data speak).
+### DEC-1 — Phase 3: serve payloads from Cloudflare R2, NOT git ✅ (user, FINAL)
+Decision history: git-ignore → commit-to-git → **(FINAL)** skip git entirely and serve
+from **Cloudflare R2** (S3-compatible object storage). Driver: the measured full-batch
+size is **~404 MB/model pretty / ~215 MB minified / ~62 MB gzipped**, and there are
+**10 model artifacts (v0–v9) × 31 days** → ~4.0 GB pretty / 2.1 GB minified in git — past
+the <500 MB target and into repo/Vercel-bloat territory (B-4 size projection).
+- Generated `runs/**` stay **git-ignored** (`.gitignore` rule re-added). Local generation
+  is a staging step only.
+- A new **`scripts/upload_to_r2.py`** (boto3, S3-compatible endpoint) uploads `runs/**`
+  (incl. `run_registry.json`) to R2. **gzip + `ContentEncoding: gzip` + `ContentType:
+  application/json`** so `fetch()` transparently decompresses (no frontend decode code) —
+  ~62 MB/model over the wire.
+- The **frontend fetches from `R2_PUBLIC_URL`** instead of local `/data/...` static files.
+- Env (already in `.env`): `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+  `R2_BUCKET_NAME`, `R2_PUBLIC_URL` (= `https://pub-…r2.dev`). Endpoint:
+  `https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com`. The browser base URL must be exposed
+  to Next.js as **`NEXT_PUBLIC_PAYLOAD_BASE_URL`** (= `R2_PUBLIC_URL`).
+- `boto3` added to `requirements.txt` (installed in agent-workspace).
+- The generator now **minifies** JSON (compact separators) regardless — smaller disk,
+  upload, and fetch.
+- W&B `--upload` to `riot-smoke` is retained as optional archival (used by the smoke test).
 
-### 1.5 New helper: `_text_search_paginated(lat, lon, text_query, included_type, radius) -> int`
-- Uses `POST https://places.googleapis.com/v1/places:searchText`
-- Headers: `X-Goog-Api-Key`, `X-Goog-FieldMask: places.id`
-- Body:
-  ```json
-  {
-    "textQuery": "<text_query>",
-    "includedType": "<included_type>",
-    "locationBias": { "circle": { "center": { "latitude": ..., "longitude": ... }, "radius": 500.0 } },
-    "maxResultCount": 20
-  }
+### DEC-2 — Smoke-test isolation: `riot-smoke` **project** ✅ (user, confirmed)
+Smoke-test outputs go to a W&B **project named `riot-smoke`** (not a new entity) under the
+production entity. Smoke tests still **read production model artifacts** from the real
+entity; only the *generated payload artifacts* / smoke W&B run go to `riot-smoke`.
+
+### DEC-3 — Production W&B entity ✅ (user)
+Entity: **`rappel-velvet9310-newcastle-university`**. Source model artifacts live at
+`rappel-velvet9310-newcastle-university/resilient-iot/resilient-iot-model`. Smoke uploads:
+`rappel-velvet9310-newcastle-university/riot-smoke`.
+
+### D-1 — Config path & schema (per user instruction #2) 🟡
+- Architect §2.2 said: create `configs/analysis.yaml`, nested `analysis:` block, dates
+  `2026-06-01 → 2026-07-01`.
+- **Reality / user instruction**: use the existing **`configs/analysis/analysis.yaml`**
+  (note the subdirectory) with **flat keys** and **dates `2026-05-01 → 2026-06-01`**:
+  ```yaml
+  holdout_start: 2026-05-01
+  holdout_end: 2026-06-01
   ```
-- Follows `nextPageToken` for up to **3 pages** (max 60 results).
-- `time.sleep(2.0)` between page requests (API requirement).
-- Crashes hard (raises `RuntimeError`) on 403/429 on any page.
-- Returns **total accumulated count** across all pages (no artificial cap).
+- **Action**: **Do NOT create `configs/analysis.yaml`. Do NOT overwrite the dates.**
+  The export script's config loader (B-1) must:
+  1. Read `holdout_start` / `holdout_end` as the primary date source.
+  2. Also accept a nested `analysis: {start_date, end_date, …}` block if present (forward-compat).
+  3. Fall back to CLI/hardcoded defaults for fields the file omits — the user's file has
+     **no** `veh_class`/`dir`/`seq_len`/`num_simulated`, so default to `person`/`all`/`12`/`5`
+     (matching `configs/train/train.yaml` + current `export_ui_payload.py`).
+  4. CLI `--start_date`/`--end_date` override the file when explicitly passed.
+- `generate_all_payloads.sh` points `CONFIG` at `configs/analysis/analysis.yaml`.
 
-### 1.6 New method: `_build_osm_cache(sensors_data: list) -> dict`
-- Checks if `data/external/osm_features_cache.json` already exists and is fully populated for all locations; if so, loads and returns it.
-- If not: downloads Newcastle walking network via:
-  ```python
-  G = ox.graph_from_point((54.978, -1.610), dist=5000, network_type='walk')
-  ```
-- Computes on the full graph (not per-node):
-  - `betweenness = nx.betweenness_centrality(G, normalized=True)`
-  - `closeness = nx.closeness_centrality(G)`
-  - `degree = nx.degree_centrality(G)`
-- For each sensor: find nearest OSM node via `ox.nearest_nodes(G, lon, lat)`, then look up its centrality values.
-- Saves result as `{ location_name: { betweenness_centrality, closeness_centrality, degree_centrality } }` to `data/external/osm_features_cache.json`.
-- Returns the dict.
+### D-2 — Analysis window is 31 days, not 30 🟡
+`2026-05-01 → 2026-06-01` (exclusive) = **31 inference days/model**. Per-day inference
+loads `[date − 1d, date + 1d)` for seq_len look-back, so the earliest data touched is
+**2026-04-30**. **PF-2 must confirm the parquet covers 2026-04-30.** (Parquet is known to
+end ~2026-06-08, so the upper bound is safe.)
 
-**Shape invariant assertion**: After mapping, every sensor in `sensors_data` must have all three OSM features. Raise `RuntimeError` on any missing.
+### D-3 — New file, not in-place edit 🟡
+Per Architect §2.1: create **new** `src/export_paginated_payload.py` and **import shared
+helpers** from `export_ui_payload.py` (left working & untouched). W&B-cleanup docstring
+edits (Architect §7 item 3) are comment-only and deferred to Cleanup C-1.
 
-### 1.7 Updated method: `_fetch_location_data(lat, lon) -> dict`
-
-Issues the following API calls in order (with `time.sleep(0.1)` between each):
-
-| Call | Method | Type(s) | Radius | Output key |
-|------|--------|---------|--------|------------|
-| 1 | Text Search paginated | `transit_station` | 500m | `transit_count` |
-| 2 | Text Search paginated | `store` | 500m | `retail_count` |
-| 3 | Text Search paginated (restaurant) + Nearby Search (cafe) | mixed | 500m | `food_drink_count` (sum) |
-| 4 | Nearby Search | `bar`, `night_club` | 500m | `nightlife_count` |
-| 5 | Nearby Search | `school`, `university` | 500m | `education_count` |
-| 6 | Nearby Search | `park`, `tourist_attraction`, `museum` | 500m | `recreation_count` |
-| 7 | Nearby Search | `school` | 250m | `is_school_zone` (bool: count > 0) |
-| 8 | Nearby Search | `bus_station` | 300m | `nearby_bus_stops` |
-| 9 | Nearby Search | `parking` | 500m | `nearby_parking` |
-
-Derived (no API call):
-- `total_poi_count` = sum of `transit_count` + `retail_count` + `food_drink_count` + `nightlife_count` + `education_count` + `recreation_count`
-- `landuse_entropy` = `_shannon_entropy([transit_count, retail_count, food_drink_count, nightlife_count, education_count, recreation_count])`
-- `dist_to_city_centre` = `_haversine_distance(lat, lon, *NEWCASTLE_CENTRE)`
-
-Returns 12 Google/derived features (OSM 3 merged in `join_features`).
-
-**Note on `food_drink_count`**: Text Search `includedType` accepts only one type. So we make two calls: Text Search for `restaurant` and Nearby Search for `cafe`, then sum them. The combined result can exceed 20 for busy nodes.
-
-### 1.8 Updated method: `join_features(df) -> pd.DataFrame`
-
-```
-required_keys = [
-    'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-    'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-    'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-    'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking'
-]
-```
-
-Steps:
-1. Build/load OSM cache via `_build_osm_cache(sensors_data)`.
-2. For each unique location: if cache entry is missing or `required_keys` not all present → call `_fetch_location_data()` + merge in OSM features → save cache.
-3. Build `metadata_df` from merged Google + OSM cache.
-4. Left-merge with `df` on `location`.
-5. Assert all 15 columns exist and have no NaNs.
-
-**Crash on shape mismatch**: `assert len(df) == original_len` (already present, retained).
+### D-4 — Pre-existing working-tree changes are not mine 🟡
+`git status` already shows unrelated changes (`notes/scaling_verification.md` deleted,
+`docs/scaling_verification.md` added, `master_index.json` modified, `__pycache__` churn,
+`configs/analysis/` untracked). **Every commit stages only its own files explicitly** —
+no `git add -A`.
 
 ---
 
-## Phase 2: Update `src/dataset.py`
+## 3. Pre-flight Checks (run in-container, before writing execution code)
 
-### 2.1 Update `pd.read_parquet()` columns list (lines 43–47)
-Replace old 5 static feature names with all 15 new names:
+> Running **inside `agent-workspace`** → Python runs directly (no `docker compose exec`).
+> Node tooling targets `frontend-dev` (PF-1b). **No host installs.**
+
+| ID | Check | Command (run directly in this container) |
+|----|-------|---------|
+| PF-1b | Can reach `frontend-dev` for tsc/vitest | `docker compose exec frontend-dev node -v` (or confirm the frontend shell) |
+| PF-2 | Parquet covers 2026-04-30 → 2026-06-01 | `python -c "import pandas as pd; df=pd.read_parquet('data/processed/master_dataset_15T.parquet'); print(df.index.min(), df.index.max())"` |
+| PF-3 | `WANDB_API_KEY` (+ `GOOGLE_PLACES_API_KEY`) load via `.env` | `python -c "import os;print(bool(os.getenv('WANDB_API_KEY')), bool(os.getenv('GOOGLE_PLACES_API_KEY')))"` (raw shell showed W&B auth not yet loaded — the script auto-loads `.env`; verify there) |
+| PF-4 | W&B collection lists expected artifacts | `python src/export_paginated_payload.py --all_artifacts --dry_run` (after B-1) |
+| PF-5 | Places caches exist | `ls data/external/places_cache.json data/external/simulated_places_cache.json` |
+
+If PF-2 shows the parquet starting after 2026-04-30, **surface to the user before generating** (first day(s) would lack look-back).
+
+---
+
+## 4. Backend Workstream (B)
+
+### B-1 — `src/export_paginated_payload.py` (NEW)
+Multi-run, per-day refactor of `export_ui_payload.py`. **Imports, never duplicates**, shared helpers:
 ```python
-columns=[
-    'dt', 'location', 'value', 'Humidity', 'Solar Radiation',
-    'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-    'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-    'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-    'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking',
-    'veh_class', 'dir'
-]
+from export_ui_payload import (
+    load_sensor_coords, select_artifact_from_wandb, load_model_from_wandb,
+    build_simulated_static, compute_std_dev, extract_timestep_attention,
+    load_semantic_tags, compute_pit_histogram, compute_zero_inflation_reliability,
+    compute_two_extremes, build_ego_graph_edges,
+    SIMULATED_NODE_COORDS, NUM_TIMESTEPS_TARGET, TOP_K_EGO_EDGES,
+    SENSORS_PATH, PARQUET_PATH,
+)
 ```
+(Importing triggers `export_ui_payload`'s module-level env/logging setup — idempotent; we never call its `main()`/`parse_args()`.)
 
-### 2.2 Update `agg_funcs` dict (lines 66–75)
-Add all 15 new static feature names with `'first'` aggregation; remove old 5 names.
+**New CLI args** (Architect §2.1, adapted to D-1):
+- `--config` (default `configs/analysis/analysis.yaml`)
+- `--start_date` / `--end_date` (override config)
+- `--output_dir` (default `frontend/public/data/runs`)
+- `--artifact <ref>` | `--all_artifacts`
+- `--veh_class` / `--dir` / `--seq_len` / `--num_simulated` (fallback `person/all/12/5`)
+- `--dry_run` (resolve artifacts + dates, print, exit — supports PF-4)
+- `--upload` / `--wandb_project` / `--wandb_entity` (DEC-1/2/3) — **opt-in archival**:
+  when set, also upload the generated per-run payload tree to W&B as an artifact after
+  writing it locally. Smoke tests pass `--wandb_entity rappel-velvet9310-newcastle-university
+  --wandb_project riot-smoke` to isolate from production. The git-committed local tree
+  (not W&B) is what Vercel serves. Reads of the source *model* artifact always use the
+  production entity regardless.
 
-### 2.3 Update `stat_cols` list (lines 130–136)
-```python
-stat_cols = [
-    'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-    'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-    'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-    'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking'
-]
+**New functions in this file:**
+1. `load_analysis_config(path, args) -> dict` — D-1 reconciliation; returns resolved
+   `{start_date, end_date, veh_class, dir, seq_len, num_simulated}`.
+2. `load_model_and_meta(artifact) -> (ckpt, cfg_path, wandb_run_id, run_name)` — wraps
+   `load_model_from_wandb` but also returns the producer run's `.name` for use as the
+   filesystem `run_id` (e.g. `feasible-capybara-22`); sanitized fallback if name missing.
+3. `resolve_artifacts(args) -> list[str]` — single (`--artifact`) or full collection
+   (`--all_artifacts`, reusing collection-listing logic from `select_artifact_from_wandb`).
+4. `select_day_windows(dataset, seq_len) -> (skip, num_timesteps)` — generalises the
+   existing day-2 `half/skip` selection in `export_ui_payload.main()` for the 2-day window.
+5. `run_day_inference(model, dataset, skip, n, …) -> accumulators` — port of the 24-hour
+   inference loop in `export_ui_payload.main()`; returns the same per-node/per-edge accumulators.
+   **Keep every existing tripwire/assert** from the source loop.
+6. Writers:
+   - `write_page_json(out, run_id, date, acc, seq_len)` — schema §5.3 (`node_timeseries`,
+     `edge_attention`, day-scoped `pit_histogram`, `zero_inflation_reliability`,
+     `global_imputation_burden`, `global_healing_quality`, `attention_entropy_series`,
+     `tripwire_audit_trail`, `alpha_node_leaderboard`).
+   - `write_node_detail_jsons(out, run_id, date, acc, …)` — same `NodeDetailPayload` shape
+     as today (zinb_series, ground_truth_series, imputed_series, mask_series, edges_1hop,
+     two_extremes, ego_graph_edges). Only the output path changes.
+   - `write_spatial_json(out, run_id, nodes_meta, edge_topology, metadata)` — schema §5.2;
+     `metadata.available_dates` = sorted generated day folders; `semantic_tags` per node
+     (computed once per run via `load_semantic_tags`).
+
+**Main flow:**
 ```
+cfg = load_analysis_config(args.config, args)
+for artifact in resolve_artifacts(args):
+    try:
+        ckpt, cfg_path, wandb_run_id, run_name = load_model_and_meta(artifact)
+        model, model_cfg, git_hash = build_model(ckpt, cfg_path)   # port from main()
+        available = []
+        for date in date_range(cfg.start_date, cfg.end_date):       # exclusive end
+            ds  = RealIoTDataset(PARQUET_PATH, date-1d, date+1d, cfg.seq_len, …)
+            skip, n = select_day_windows(ds, cfg.seq_len)
+            acc = run_day_inference(model, ds, skip, n, …)
+            write_page_json(...); write_node_detail_jsons(...)
+            available.append(date)
+        write_spatial_json(..., metadata={run_id, run_name, wandb_run_id, git_hash,
+                                          hyperparameters, metrics_summary, available_dates: available, …})
+        if args.upload:                                             # DEC-1: W&B is canonical
+            upload_run_artifact(out, run_id, project=args.wandb_project, entity=args.wandb_entity)
+    except Exception:
+        log.exception("artifact %s failed; continuing", artifact)   # Option-B retry/skip
+```
+`upload_run_artifact(...)` logs `{output_dir}/{run_id}/` as a W&B artifact
+(`type="ui-payload"`, name=`run_id`) under the given entity/project — **only when
+`--upload` is passed** (DEC-1: git is the serving path; W&B upload is archival/smoke-only).
 
-### 2.4 Update boolean cast (line 138)
-`is_school_zone` column name is unchanged, so the `.astype(float).fillna(0.0)` line needs no change.
+### B-2 — `scripts/build_run_registry.py` (NEW)
+Direct port of Architect §2.3 `build_registry()`. Scans `output_dir` for `*/spatial.json`,
+emits `run_registry.json` with `default_run_id` = first run.
+CLI: `python scripts/build_run_registry.py <runs_dir>`.
 
-**Result**: `dataset.static_feat_dim` will automatically be 15 — no other downstream changes needed.
-
----
-
-## Phase 3: Clean up `src/preprocess.py`
-
-### 3.1 Remove `enrich_static_features()` method (lines 171–196)
-This method uses an obsolete mock schema (`highway_proximity`, `commercial_density`, `school_zone` as NaN/False) and is never called by `process_all.py`. It is dead code and will be removed entirely.
-
----
-
-## Phase 4: Cache Migration
-
-### 4.1 Clear `data/external/places_cache.json`
-Write an empty JSON object `{}` to the cache file. The new `required_keys` check will trigger a full re-fetch for all 94 locations on next run.
-
-**Do NOT delete the file** — preserve the path so `_load_cache()` doesn't fail.
-
-### 4.2 Create `data/external/osm_features_cache.json`
-Write an empty JSON object `{}`. The `_build_osm_cache()` method will populate it on first run.
-
----
-
-## Phase 5: Standalone Pagination Test (`tests/test_text_search_pagination.py`)
-
-**Purpose**: Verify that `_text_search_paginated()` yields counts > 20 for central nodes *before* running the expensive 89-sensor loop.
-
-**Test structure**:
-1. Skip with clear message if `GOOGLE_PLACES_API_KEY` is not set.
-2. Instantiate `StaticFeatureLoader` with a temp cache path.
-3. For `NclQuaysideUnderHighLevelBridge` (lat=54.9675, lon=-1.6097):
-   - Call `_text_search_paginated()` for `transit_station`, `store`, `restaurant`
-   - Print page-by-page counts
-   - **Assert at least one of transit/retail/restaurant > 20** (verifying pagination is actually fetching pages 2 and 3)
-4. Compare vs. Nearby Search count for same types (should be ≤ 20)
-5. Print a summary table: feature | nearby_count | text_search_count | pages_used
-
-**Crash contract**: The test raises `AssertionError` (not silently passes) if:
-- Any 403/429 is encountered
-- All text search counts are ≤ 20 (pagination may have failed silently)
-
----
-
-## Phase 6: Run `process_all.py` (User-triggered)
-
+### B-3 — `scripts/generate_all_payloads.sh` (NEW)
+Architect §6 Option B, with D-1 config path (runs directly in-container):
 ```bash
-export GOOGLE_PLACES_API_KEY=<your_key>
-cd /workspace && python src/process_all.py
+#!/bin/bash
+set -euo pipefail
+CONFIG="configs/analysis/analysis.yaml"      # D-1
+OUTPUT_DIR="frontend/public/data/runs"
+# Git is the serving path (DEC-1) → no --upload here; W&B upload is opt-in/archival only.
+python src/export_paginated_payload.py --all_artifacts --config "$CONFIG" --output_dir "$OUTPUT_DIR"
+python scripts/build_run_registry.py "$OUTPUT_DIR"
+echo "Done. du -sh $OUTPUT_DIR to check total size."
+```
+`chmod +x`. Invoked as `bash scripts/generate_all_payloads.sh`. Default artifact discovery
+uses entity `rappel-velvet9310-newcastle-university` (DEC-3).
+
+### B-4 — Backend smoke test (before full batch)
+Smoke output uploaded to the `riot-smoke` project (DEC-2); reads the production model
+artifact from the `rappel-velvet9310-newcastle-university` entity (DEC-3):
+```bash
+python src/export_paginated_payload.py \
+  --artifact rappel-velvet9310-newcastle-university/resilient-iot/resilient-iot-model:latest \
+  --start_date 2026-05-01 --end_date 2026-05-03 \
+  --output_dir frontend/public/data/runs \
+  --upload --wandb_entity rappel-velvet9310-newcastle-university --wandb_project riot-smoke
+```
+Validate (Architect §9): `spatial.json`, `2026-05-01/page.json`, `2026-05-01/nodes/node_0.json`;
+`jq .metadata.num_nodes …/spatial.json`, `jq .timesteps …/2026-05-01/page.json`; confirm the
+`riot-smoke` artifact appears in W&B.
+✅ **Done** — run `dark-brook-37` (v9), 61 nodes (56 real + 5 sim), 1761 edges, schemas valid.
+
+### B-5 — `scripts/upload_to_r2.py` (NEW, boto3 → Cloudflare R2) [DEC-1 Phase 3]
+S3-compatible uploader. Walks a local `runs/` tree and uploads each file to R2 under the
+same key path (`runs/{run_id}/…`). Per object: gzip the bytes, set
+`ContentType=application/json`, `ContentEncoding=gzip`, `CacheControl`. Uses a boto3 client
+with `endpoint_url=https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+`region_name="auto"`, sigv4. CLI: `--runs-dir`, `--prefix runs`, `--dry-run`, `--no-gzip`.
+Reads R2_* creds from env (`.env` auto-loaded). Invoked after generation; the batch script
+calls it.
+
+---
+
+## 5. Frontend Workstream (F)
+
+> ⚠️ Per `frontend/AGENTS.md`: **before writing any frontend code, read the relevant guide
+> in `node_modules/next/dist/docs/`** (via `docker compose exec frontend-dev cat …`).
+
+### F-1 — `frontend/src/types/registry.ts` (NEW)
+All new pagination types in one module: `RunRegistry`, `RunRegistryEntry`, `SpatialIndex`,
+`SpatialNode`, `EdgeTopology`, `TemporalPage` (schemas §5.1–5.3). Re-use the existing
+`NodeDetailPayload` from `payload.ts` (unchanged).
+
+### F-2 — `frontend/src/store/useTimeStore.ts` (MODIFY)
+Add Architect §4.1 fields + actions: `activeRunId`, `activeDate`, `availableDates`,
+`runRegistry`, `isLoadingPage`; `setActiveRunId`, `setActiveDate`, `setAvailableDates`,
+`setRunRegistry`, `setIsLoadingPage`, `navigateDay('prev'|'next')`. Keep existing
+`startDate` (TimeSlider uses it) and drive it from `activeDate`.
+
+### F-3 — `frontend/src/components/MapVisualizer.tsx` (MODIFY)
+Replace the single `/data/master_index.json` fetch (around L316–378) with three-stage loading (Architect §4.2):
+- **Stage 1 (mount)**: fetch `run_registry.json` → `setRunRegistry`, `setActiveRunId(default)`.
+- **Stage 2 (on `activeRunId`)**: fetch `{runId}/spatial.json` → `spatialRef`, `setAvailableDates`, `setActiveDate(dates[0])`.
+- **Stage 3 (on `activeRunId`+`activeDate`)**: fetch `{runId}/{date}/page.json` →
+  `mergePayload(spatialRef, page)` → `payloadRef`, `setMaxTimesteps`, `setTimestep(0)`, rebuild layers.
+- Add `mergePayload(spatial, page)` producing the **existing `UIPayload` shape** so
+  `buildLayers()`/`nodeMap` stay unchanged → minimal refactor surface.
+
+### F-4 — `frontend/src/components/NodeInspector.tsx` (MODIFY)
+Change the fetch at **L413** from `/data/nodes/node_${selectedNodeId}.json` to
+`/data/runs/${activeRunId}/${activeDate}/nodes/node_${selectedNodeId}.json`; add
+`activeRunId`/`activeDate` to the effect deps + null-guard (Architect §4.3).
+
+### F-5 — `frontend/src/components/ModelSelector.tsx` (NEW)
+Dropdown bound to `runRegistry`/`activeRunId` (Architect §3.1). On change → `setActiveRunId`
+(Stages 2–3 cascade). URL `?run=` sync **deferred** unless trivial.
+
+### F-6 — `frontend/src/components/DatePaginator.tsx` (NEW)
+Prev/next over `availableDates` via `navigateDay`; disable at boundaries; spinner on
+`isLoadingPage` (Architect §3.3). Mounted inside `TimeSlider`.
+
+### F-7 — `frontend/src/components/ModelInfoOverlay.tsx` (NEW)
+Glassmorphic card from `spatial.json` metadata + registry entry (Architect §3.2). Lowest
+priority — lands last.
+
+### F-8 — `frontend/src/components/TimeSlider.tsx` (MODIFY)
+Mount `DatePaginator` in the header row; replace static `startDate` label with `activeDate`.
+
+### F-9 — `frontend/src/components/MapScene.tsx` (MODIFY)
+Add `<ModelSelector />` + `<ModelInfoOverlay />` to the composition (Architect §4.4) as
+`dynamic(..., { ssr:false })` imports, matching the existing pattern.
+
+### F-10 — `frontend/src/app/analytics/page.tsx` (DECISION: leave on legacy)
+Still fetches `/data/master_index.json` (L92). **Phase-1 decision: leave analytics on the
+legacy payload** (small blast radius; run-scoping deferred to Phase 2).
+**Consequence: Cleanup C-3 must NOT delete `master_index.json` in Phase 1.**
+
+### F-11 — Type-check + tests (via `frontend-dev`, per PF-1b)
+```bash
+docker compose exec frontend-dev npx tsc --noEmit
+docker compose exec frontend-dev npx vitest run
 ```
 
-Expected duration: ~15–20 minutes (89 real sensors × ~9 API calls × up to 3 pages, with 0.1s delays + 2.0s between pages, + OSMnx network download ~1–2 min).
+---
+
+## 6. Cleanup Workstream (C) — deferred until F validates
+- **C-1**: Comment-only docstring fixes in `export_ui_payload.py` (remove `models/best_pipeline.pt` refs). No behaviour change.
+- **C-2**: Update `NSTAR_MLOPS.md` + `.agents/plans/context_for_architect.md` (Architect §7 items 5–6).
+- **C-3**: After manual + automated frontend verification, list (do **not** delete in Phase 1)
+  `master_index.json` (still used by analytics — F-10), `nodes/*`, `ui_payload.json` for user sign-off.
 
 ---
 
-## Phase 7: Verification Script (`tests/verify_parquet_15features.py`)
-
-After `process_all.py` completes:
-
-1. Load `data/processed/master_dataset_15T.parquet`.
-2. **Assert** all 15 feature columns are present.
-3. **Assert** no NaN values in any of the 15 columns.
-4. Print `df[stat_cols].describe()`.
-5. **Assert** no feature column has > 50% identical values (the saturation check).
-6. Spot-check: Print Quayside row vs. a suburban sensor (e.g., `NclSaltersHollywood`).
-
----
-
-## Phase 8: Update `EXPERIMENTS.md`
-
-Add a new row to the experiment ledger documenting:
-- Date, branch, goal, outcome
-- Feature expansion: 5 → 15 static features
-- API strategy change: Nearby Search (capped at 20) → Text Search paginated (up to 60) + OSMnx
-- Expected impact: Reduced RMSE on high-volume nodes (Barras Bridge, Quayside) after retrain
+## 7. Git / Commit Strategy (branch `database`)
+Already on `database`. Each commit stages **only its own files** (D-4 — no `git add -A`).
+Generated `runs/**` **is committed** to git for Vercel static serving (DEC-1).
+1. `feat(backend): paginated payload generator + registry builder + batch script` (B-1..B-3)
+2. *(B-4 smoke test — no commit; verify + size projection)*
+3. `feat(data): generated paginated payloads + run registry` (full batch `runs/**` +
+   `run_registry.json`) — **only after the size projection is confirmed acceptable (DEC-1 caveat)**
+4. `feat(frontend): registry types + store fields` (F-1, F-2)
+5. `feat(frontend): three-stage loading + day-scoped node fetch` (F-3, F-4)
+6. `feat(frontend): model selector, date paginator, info overlay` (F-5..F-9)
+7. `chore: w&b model cleanup docs` (C-1, C-2)
 
 ---
 
-## Execution Order
-
+## 8. Execution Order (after approval)
 ```
-Phase 0: pip install osmnx geopandas          [run now, env setup]
-Phase 1: Rewrite src/features.py               [code]
-Phase 2: Update src/dataset.py                 [code]
-Phase 3: Clean src/preprocess.py               [code]
-Phase 4: Clear/create cache files              [file ops]
-Phase 5: Write tests/test_text_search_pagination.py  [code]
-─── AWAIT API KEY ───
-Phase 5b: python tests/test_text_search_pagination.py  [requires API key]
-Phase 6: python src/process_all.py             [requires API key, ~15 min]
-Phase 7: python tests/verify_parquet_15features.py    [post-run verification]
-Phase 8: Update EXPERIMENTS.md                 [ledger]
+PF-1b..PF-5
+  → B-1, B-2, B-3 → [commit 1]
+  → B-4 smoke (→ riot-smoke) + jq + du -sh size projection
+  → full batch (generate_all_payloads.sh) → confirm size acceptable → [commit 3]
+  → F-1, F-2 → [commit 4]
+  → F-3, F-4 → tsc → [commit 5]
+  → F-5..F-9 → tsc + vitest → [commit 6]
+  → manual verify → C-1, C-2 → [commit 7] → C-3 sign-off
 ```
 
 ---
 
-## Files Changed
-
-| File | Change |
-|------|--------|
-| `src/features.py` | Full rewrite: 15-feature schema, Text Search pagination, OSMnx, Shannon entropy |
-| `src/dataset.py` | Update `columns`, `agg_funcs`, `stat_cols` lists |
-| `src/preprocess.py` | Remove dead `enrich_static_features()` method |
-| `data/external/places_cache.json` | Reset to `{}` (triggers full re-fetch) |
-| `data/external/osm_features_cache.json` | Create as `{}` (new file) |
-| `tests/test_text_search_pagination.py` | New pagination test |
-| `tests/verify_parquet_15features.py` | New post-run verification script |
-| `EXPERIMENTS.md` | Add experiment entry |
-
-## Files NOT Changed (auto-adapt)
-
-| File | Why |
-|------|-----|
-| `src/pipeline.py` | Reads `static_feat_dim` from dataset — auto-adapts |
-| `src/graph_learner.py` | Reads `static_feat_dim` as constructor arg — auto-adapts |
-| `src/train.py` | Reads `static_feat_dim` from dataset — auto-adapts |
-| `src/tune.py` | Reads `static_feat_dim` from dataset — auto-adapts |
-| `src/process_all.py` | `join_features()` interface unchanged — no edit needed |
+## 9. Open Questions — all resolved
+- **OQ-2 (prod serving)** → **RESOLVED (DEC-1)**: commit `runs/**` to git; Vercel serves
+  them statically. Size projection reported before the full-batch commit.
+- **OQ-3 (`riot-smoke`)** → **RESOLVED (DEC-2)**: `riot-smoke` **project** under the
+  production entity; no new entity created.
+- **Prod entity** → **RESOLVED (DEC-3)**: `rappel-velvet9310-newcastle-university`.
 
 ---
 
-## Risks & Mitigations
+---
 
-| Risk | Mitigation |
-|------|-----------|
-| Text Search `includedType` rejects multi-type queries | Split into separate calls; sum results (as planned for `food_drink_count`) |
-| OSMnx download fails (network) | Crash with clear error; retry manually; result cached so only runs once |
-| `nextPageToken` missing on page 1 despite >20 results | Log a warning but continue; count will be ≤ 20 for that type only |
-| 15-col dataset breaks existing checkpoint | Expected and documented — full retrain required after this change |
-| `api_key` is None at runtime | `ValueError` raised in `__init__` (already present); plan notes API key requirement |
+## 10. Execution Log & Deviations (actual)
+
+**Backend (B) — done.** `export_paginated_payload.py`, `build_run_registry.py`,
+`generate_all_payloads.sh`, `upload_to_r2.py` written & committed (`a7d9f1c` for the first
+three). Smoke test passed (run `dark-brook-37`/v9). JSON is **minified**.
+
+**Phase-3 pivot (DEC-1):** size projection showed 10 models × 31 days ≈ 4.0 GB pretty /
+2.1 GB minified in git → user chose **Cloudflare R2** instead. `runs/**` git-ignored;
+`upload_to_r2.py` (boto3, gzip + `ContentEncoding: gzip`) pushes to R2; frontend fetches
+from `R2_PUBLIC_URL` via `frontend/src/lib/payloadSource.ts` (`NEXT_PUBLIC_PAYLOAD_BASE_URL`
+override). R2 upload verified end-to-end via the S3 API (`head_object` OK).
+- ⚠️ **ACTION (user)**: the bucket's **public access (`r2.dev` URL) returns 403** until
+  enabled in the Cloudflare dashboard (or a custom domain is attached). Data is uploaded
+  and ready; the frontend can't fetch until this is on.
+
+**Two batch failures found & fixed:**
+- **D-5 — per-day location instability.** 2026-05-19 has **55** active sensors vs the
+  canonical **56**; the original per-day 2-day loads + strict equality assert aborted 8/10
+  runs. **Fix:** load **one dataset over `[start−1d, end)`** per run — a single sorted
+  location set (union), one scaler, one static-feature matrix, one topology; the dataset's
+  `reindex(...).fillna(0.0)` zero-fills absent sensors per day. Windows are grouped to a
+  target day by `times[idx+seq_len].date()`. Full 32-day load peak ≈ 3.7 GB (cgroup=max).
+- **D-6 — incompatible architectures (v5, v4).** Trained with `edge_dim: 10`
+  (`encoder.gat.lin_edge.weight` `[32,10]`), but the current `ResilientIoTPipeline.__init__`
+  has **no `edge_dim`** param → `state_dict` shape mismatch. These are an older arch variant
+  the current code can't load (legacy script can't either). **Decision:** skip gracefully
+  (try/except per artifact) → **8/10 models** generate (v0–v3, v6–v9).
+
+**Frontend (F) — done (pending type-check).** All files written:
+`lib/payloadSource.ts`, `types/registry.ts`, `store/useTimeStore.ts` (+pagination state),
+`MapVisualizer.tsx` (three-stage R2 loading + `mergePayload`, run-switch race guard),
+`NodeInspector.tsx` (day/run-scoped R2 node fetch), `ModelSelector.tsx`, `DatePaginator.tsx`,
+`ModelInfoOverlay.tsx`, `TimeSlider.tsx`, `MapScene.tsx`. Stack is **Next 16 / React 19**;
+components mirror existing patterns (no new Next API surface). `analytics/page.tsx` left on
+legacy local `master_index.json` (F-10).
+- ⚠️ **PF-1b unresolved**: `tsc`/`vitest` need the `frontend-dev` container (deps live only
+  there; no docker CLI in agent-workspace, `frontend/node_modules` empty). **Type-check +
+  tests must be run there**: `docker compose exec frontend-dev npx tsc --noEmit` and
+  `… npx vitest run`. Did a careful manual TS review (fixed `React.*` type refs → named
+  imports; removed unused `startDate`).
+
+**Open items for user:**
+1. Enable R2 public access (403 today). 2. Run frontend `tsc`/`vitest` in `frontend-dev`.
+3. `NEXT_PUBLIC_PAYLOAD_BASE_URL` for Vercel (defaults to the `r2.dev` URL in code).
