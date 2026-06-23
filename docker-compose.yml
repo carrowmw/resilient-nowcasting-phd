@@ -9,6 +9,7 @@ services:
       - .:/workspace
     # Notice we don't even need the 'environment:' block anymore!
     # Compose passes the .env file automatically.
+      - ~/.config/gcloud:/root/.config/gcloud  # This is required for ADC authentication
     stdin_open: true
     tty: true
 
