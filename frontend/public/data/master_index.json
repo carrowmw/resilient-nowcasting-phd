@@ -10,7 +10,7 @@
     "start_date": "2026-06-01",
     "end_date": "2026-06-03",
     "wandb_run_id": "7kqm51i4",
-    "git_commit_hash": "aa66c61ec316d397082de187f477b10859902dcf",
+    "git_commit_hash": "de52953569327e50abda5cbb78cca147290afa53",
     "hyperparameters": {
       "data": {
         "end_date": "2026-04-02",

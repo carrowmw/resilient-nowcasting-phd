@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dynamic Topology Inference</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #FFFFFF;
+      font-family: 'Inter', system-ui, sans-serif;
+      color: #171717;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .figure-container {
+      width: 100%;
+      max-width: 1600px;
+    }
+
+    .figure-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 0 8px;
+    }
+
+    .figure-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #171717;
+    }
+
+    .figure-title .accent { color: #F97316; }
+
+    .figure-subtitle {
+      font-size: 12px;
+      color: #A3A3A3;
+      font-weight: 400;
+      margin-top: 2px;
+    }
+
+    .toggle-group {
+      display: flex;
+      gap: 0;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #E5E5E7;
+    }
+
+    .toggle-btn {
+      font-family: 'Inter', sans-serif;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 8px 18px;
+      border: none;
+      cursor: pointer;
+      background: #FFFFFF;
+      color: #525252;
+      transition: all 0.2s ease;
+    }
+
+    .toggle-btn.active {
+      background: #F97316;
+      color: #FFFFFF;
+    }
+
+    .toggle-btn:hover:not(.active) {
+      background: #F5F5F5;
+    }
+
+    .graphs-container {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+    }
+
+    .graph-panel {
+      flex: 1;
+      max-width: 700px;
+      position: relative;
+    }
+
+    .graph-panel-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #A3A3A3;
+      text-align: center;
+      margin-bottom: 6px;
+    }
+
+    .graph-panel-label.active-label { color: #F97316; }
+
+    svg {
+      display: block;
+      border: 1px solid #E5E5E7;
+      border-radius: 12px;
+      background: #FAFAFA;
+    }
+
+    .link-euclidean {
+      stroke: #D4D4D4;
+      stroke-opacity: 0.5;
+    }
+
+    .link-learned {
+      stroke: #F97316;
+    }
+
+    .node-circle {
+      stroke: #FFFFFF;
+      stroke-width: 2;
+      cursor: pointer;
+      transition: r 0.2s;
+    }
+
+    .node-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 8px;
+      fill: #525252;
+      pointer-events: none;
+      text-anchor: middle;
+    }
+
+    .stats-bar {
+      display: flex;
+      gap: 32px;
+      justify-content: center;
+      margin-top: 16px;
+    }
+
+    .stat-item {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 800;
+      color: #F97316;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: #A3A3A3;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+    }
+
+    .tooltip {
+      position: absolute;
+      background: #171717;
+      color: #FFFFFF;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+  </style>
+</head>
+<body>
+  <div class="figure-container">
+    <div class="figure-header">
+      <div>
+        <div class="figure-title">
+          <span class="accent">Dynamic Topology</span> Inference
+        </div>
+        <div class="figure-subtitle">
+          DynamicGraphLearner · Euclidean baseline vs learned GAT adjacency
+        </div>
+      </div>
+      <div class="toggle-group">
+        <button class="toggle-btn active" id="btn-side" onclick="setMode('side')">Side by Side</button>
+        <button class="toggle-btn" id="btn-euclidean" onclick="setMode('euclidean')">Euclidean Only</button>
+        <button class="toggle-btn" id="btn-learned" onclick="setMode('learned')">Learned Only</button>
+      </div>
+    </div>
+
+    <div class="graphs-container" id="graphs-container">
+      <div class="graph-panel" id="panel-euclidean">
+        <div class="graph-panel-label">Euclidean Distance Graph</div>
+        <svg id="svg-euclidean"></svg>
+      </div>
+      <div class="graph-panel" id="panel-learned">
+        <div class="graph-panel-label active-label">GAT Learned Topology</div>
+        <svg id="svg-learned"></svg>
+      </div>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat-item">
+        <div class="stat-value" id="stat-nodes">20</div>
+        <div class="stat-label">Sensor Nodes</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="stat-euclidean-edges">0</div>
+        <div class="stat-label">Euclidean Edges</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="stat-learned-edges">0</div>
+        <div class="stat-label">Learned Edges</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="stat-sparsity">0%</div>
+        <div class="stat-label">Sparsity Ratio</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    // ── Configuration ──
+    const NUM_NODES = 20;
+    const SVG_SIZE = 500;
+    const NODE_RADIUS = 10;
+
+    // ── Generate sensor network ──
+    const areas = ['Eldon', 'Quayside', 'Jesmond', 'Heaton', 'Gosforth',
+                   'Byker', 'Ouseburn', 'Haymarket', 'Monument', 'Central',
+                   'Grey St', 'Dean St', 'Pilgrim', 'Westgate', 'N\'land St',
+                   'Grainger', 'Bigg Mkt', 'High Br', 'Cloth Mkt', 'The Side'];
+
+    // Place nodes using a force layout seed
+    const rng = d3.randomLcg(42);
+    const nodes = Array.from({ length: NUM_NODES }, (_, i) => ({
+      id: i,
+      name: areas[i],
+      x: 80 + rng() * (SVG_SIZE - 160),
+      y: 80 + rng() * (SVG_SIZE - 160),
+      poi_density: 0.2 + rng() * 0.8, // environmental covariate
+    }));
+
+    // ── Euclidean distance edges (k-nearest, k=4) ──
+    function euclideanDist(a, b) {
+      return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+    }
+
+    const euclideanEdges = [];
+    for (let i = 0; i < NUM_NODES; i++) {
+      const dists = [];
+      for (let j = 0; j < NUM_NODES; j++) {
+        if (i !== j) dists.push({ j, d: euclideanDist(nodes[i], nodes[j]) });
+      }
+      dists.sort((a, b) => a.d - b.d);
+      for (let k = 0; k < 4; k++) {
+        euclideanEdges.push({
+          source: i,
+          target: dists[k].j,
+          weight: 1 - dists[k].d / SVG_SIZE,
+        });
+      }
+    }
+
+    // ── Learned edges (based on POI similarity + sparsity threshold) ──
+    const learnedEdges = [];
+    for (let i = 0; i < NUM_NODES; i++) {
+      for (let j = i + 1; j < NUM_NODES; j++) {
+        // Similarity based on POI density (not distance!)
+        const poiSim = 1 - Math.abs(nodes[i].poi_density - nodes[j].poi_density);
+        const spatialBonus = euclideanDist(nodes[i], nodes[j]) < 150 ? 0.15 : 0;
+        const score = poiSim * 0.7 + spatialBonus + rng() * 0.2;
+
+        // ReLU + sparsity threshold
+        if (score > 0.65) {
+          learnedEdges.push({
+            source: i,
+            target: j,
+            weight: Math.min(score, 1),
+          });
+        }
+      }
+    }
+
+    // ── Update stats ──
+    document.getElementById('stat-euclidean-edges').textContent = euclideanEdges.length;
+    document.getElementById('stat-learned-edges').textContent = learnedEdges.length;
+    const maxEdges = NUM_NODES * (NUM_NODES - 1) / 2;
+    document.getElementById('stat-sparsity').textContent =
+      Math.round((1 - learnedEdges.length / maxEdges) * 100) + '%';
+
+    // ── Draw function ──
+    function drawGraph(svgId, edges, colorFn, opacityFn) {
+      const svg = d3.select(`#${svgId}`)
+        .attr('width', SVG_SIZE)
+        .attr('height', SVG_SIZE)
+        .attr('viewBox', `0 0 ${SVG_SIZE} ${SVG_SIZE}`);
+
+      svg.selectAll('*').remove();
+
+      // Edges
+      svg.selectAll('line')
+        .data(edges)
+        .join('line')
+          .attr('x1', d => nodes[d.source].x)
+          .attr('y1', d => nodes[d.source].y)
+          .attr('x2', d => nodes[d.target].x)
+          .attr('y2', d => nodes[d.target].y)
+          .attr('stroke', colorFn)
+          .attr('stroke-width', d => 0.5 + d.weight * 2.5)
+          .attr('stroke-opacity', opacityFn)
+          .attr('class', svgId.includes('euclidean') ? 'link-euclidean' : 'link-learned');
+
+      // Nodes
+      const tooltip = d3.select('#tooltip');
+      const nodeColor = d3.scaleSequential(d3.interpolateOranges)
+        .domain([0.15, 1]);
+
+      svg.selectAll('circle')
+        .data(nodes)
+        .join('circle')
+          .attr('class', 'node-circle')
+          .attr('cx', d => d.x)
+          .attr('cy', d => d.y)
+          .attr('r', NODE_RADIUS)
+          .attr('fill', d => nodeColor(d.poi_density))
+          .on('mouseenter', (event, d) => {
+            const edgeCount = edges.filter(e => e.source === d.id || e.target === d.id).length;
+            tooltip.style('opacity', 1)
+              .html(`<strong>${d.name}</strong><br/>POI density: ${d.poi_density.toFixed(2)}<br/>Edges: ${edgeCount}`);
+          })
+          .on('mousemove', (event) => {
+            tooltip.style('left', (event.pageX + 12) + 'px')
+                   .style('top', (event.pageY - 10) + 'px');
+          })
+          .on('mouseleave', () => tooltip.style('opacity', 0));
+
+      // Labels
+      svg.selectAll('text.node-label')
+        .data(nodes)
+        .join('text')
+          .attr('class', 'node-label')
+          .attr('x', d => d.x)
+          .attr('y', d => d.y + NODE_RADIUS + 12)
+          .text(d => d.name);
+    }
+
+    // ── Initial draw ──
+    drawGraph('svg-euclidean', euclideanEdges,
+      () => '#D4D4D4',
+      d => 0.3 + d.weight * 0.5
+    );
+
+    drawGraph('svg-learned', learnedEdges,
+      () => '#F97316',
+      d => 0.2 + d.weight * 0.7
+    );
+
+    // ── Toggle mode ──
+    function setMode(mode) {
+      document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`btn-${mode}`).classList.add('active');
+
+      const eucPanel = document.getElementById('panel-euclidean');
+      const learnPanel = document.getElementById('panel-learned');
+      const container = document.getElementById('graphs-container');
+
+      if (mode === 'side') {
+        eucPanel.style.display = 'block';
+        learnPanel.style.display = 'block';
+        container.style.justifyContent = 'center';
+      } else if (mode === 'euclidean') {
+        eucPanel.style.display = 'block';
+        learnPanel.style.display = 'none';
+        container.style.justifyContent = 'center';
+      } else {
+        eucPanel.style.display = 'none';
+        learnPanel.style.display = 'block';
+        container.style.justifyContent = 'center';
+      }
+    }
+  </script>
+</body>
+</html>
