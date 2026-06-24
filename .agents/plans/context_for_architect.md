@@ -1,70 +1,38 @@
-# Context for Architect: UI Payload Generation and W&B Model Ingestion
+# Frontend Bug Report: ZINB Calibration Chart Alignment
 
-This document details the spatiotemporal IoT prediction pipeline's frontend static payload generation system, its ability to connect to Weights & Biases (W&B) for remote model checkpoints, and execution options.
+## Issue Description
+1. **Tooltip Offset:** Hovering over points in the Zero-Inflation Reliability diagram highlights a point two spaces to the right.
+2. **Phantom Highlights:** The user can highlight points at exactly `x=0` and `x=1` despite the scatter data following a `0.05 + 0.1n` bin center pattern.
+3. **Missing Data:** For certain runs (`solar-butterfly-38`, `pretty-glitter-29`), the points stop abruptly at `x=0.45` or `x=0.75`.
 
----
+## Bug Identification & Root Cause Analysis
 
-## 1. System for Generating the UI Payload
+### 1. The Missing Data "Bug" (Expected Behavior)
+The absence of points past `x=0.45` is **not a bug**. 
+- **Location:** `src/export_ui_payload.py` -> `compute_zero_inflation_reliability()`
+- **Logic:** The backend explicitly filters out bins where the total observation count is zero (`if n == 0: continue`). If a model run never outputs a predicted zero-inflation probability (`pi`) greater than 0.45, those higher bins are completely empty and correctly omitted from the payload to avoid charting artifacts.
 
-The static data bridge between the PyTorch Backend and the Next.js Frontend is governed by the script [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py).
+### 2. The Tooltip Offset & Phantom Highlights
+The frontend Recharts implementation uses a `<ComposedChart>` containing two disjoint `<Line>` components:
+1. A diagonal reference line fed by a 2-element array: `RELIABILITY_DIAGONAL = [{ pi_center: 0, ... }, { pi_center: 1, ... }]`
+2. The scatter dots fed by the payload: `reliabilityData` (containing up to 10 elements).
 
-### Output Architecture
-Rather than writing a single massive monolithic file, [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py) shards the data for performance:
-1. **Master Index**: Written to [master_index.json](file:///Users/administrator/Code/ml-agent-workspace/frontend/public/data/master_index.json). It contains top-level metadata, PIT calibration distributions, zero-inflation reliability metrics, and active node arrays.
-2. **Sharded Node Details**: Written to [nodes/node_{id}.json](file:///Users/administrator/Code/ml-agent-workspace/frontend/public/data/nodes/) (one per node ID). Each file contains:
-   - Ground-truth series (length 96)
-   - Imputed series (length 96)
-   - ZINB parameters ($\mu$, $\theta$, $\sigma$, and $\pi$ zero-inflation probability sequence)
-   - Ego-graph directed edge lists ranked by spatial attention.
+**Root Cause:** Recharts struggles with `<ComposedChart>` tooltips when child components use disjoint data arrays with overlapping keys but different lengths. It attempts to merge the internal arrays by array index. Because `RELIABILITY_DIAGONAL` has 2 points, it shifts the tooltip index mapping for the scatter plot, resulting in the "off by two" offset. Furthermore, the tooltip actively snaps to the 2 points from the diagonal array (at 0 and 1), creating the phantom highlights.
 
----
+## Relevant Files
+- **Frontend Chart:** `frontend/src/app/analytics/page.tsx` (Lines 944-1035)
+- **Backend Generator:** `src/export_ui_payload.py` (Line 464, `compute_zero_inflation_reliability`)
 
-## 2. Model Loading and W&B Integration
+## Proposed Architectural Solution
 
-The exporter script can load model weights from two distinct sources:
-1. **Local Filesystem Checkpoint**: Specified via `--checkpoint` (defaults to `models/resilient-iot/feasible-capybara-22/best_model.pt`).
-2. **W&B Remote Artifact**: Specified via `--artifact`. When provided, this flag overrides the local checkpoint path.
-
-### Execution Command with W&B
-If the desired model is hosted on the W&B server and not available locally, you do **not** need to copy it manually. The script integrates with the W&B API to pull and cache it dynamically.
-
-Run the script inside the Docker container using:
-```bash
-docker compose exec agent-workspace python src/export_ui_payload.py --artifact <entity>/<project>/<artifact_name>:<version>
-```
-*Example:*
-```bash
-docker compose exec agent-workspace python src/export_ui_payload.py --artifact my-team/resilient-iot/resilient-iot-model:latest
-```
-
-### High-Level Code Logic: `load_model_from_wandb`
-
-The implementation in [export_ui_payload.py](file:///Users/administrator/Code/ml-agent-workspace/src/export_ui_payload.py#L126-L144) is structured as follows:
-
-```python
-def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
-    """
-    Downloads a model artifact from W&B.
-    Returns (checkpoint_path, config_path, wandb_run_id).
-    """
-    api = wandb.Api()
-    logger.info(f"PHASE 2: Fetching artifact {artifact_name} from W&B...")
-    artifact = api.artifact(artifact_name)
-    artifact_dir = artifact.download()
-
-    checkpoint_path = os.path.join(artifact_dir, "best_model.pt")
-    config_path = os.path.join(artifact_dir, "config.yaml")
-
-    # Get the run ID from the artifact's producer
-    wandb_run_id = "unknown"
-    if artifact.producer:
-        wandb_run_id = artifact.producer.id
-
-    return checkpoint_path, config_path, wandb_run_id
-```
-
-### Flow Walkthrough
-1. **Instantiation**: `wandb.Api()` initializes a connection using the active shell's W&B credentials.
-2. **Download**: `artifact.download()` fetches the remote artifact bundle (containing `best_model.pt` and `config.yaml`) and stores it locally under a default cache directory (typically `./artifacts/` or `~/.cache/wandb/`).
-3. **Paths Resolution**: It extracts the absolute path to `best_model.pt` and the co-located `config.yaml` to ensure hyperparameters are dynamically matched during the exporter's initialization (Artifact Twinning).
-4. **ID Tracking**: The producer run's ID is retrieved to inject `wandb_run_id` into the output JSON metadata for full lineage auditability.
+1. **Remove Disjoint Data:** Eliminate the `RELIABILITY_DIAGONAL` constant entirely to stop Recharts from merging disjoint arrays.
+2. **Top-Level Data Binding:** Pass `data={reliabilityData}` directly to the top-level `<ComposedChart>` component so the chart has a single, unified data context.
+3. **Replace Diagonal Line Component:** Replace the diagonal `<Line>` component with a Recharts `<ReferenceLine />` using the `segment` property to draw an arbitrary line between two coordinate pairs:
+   ```tsx
+   <ReferenceLine 
+     segment={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} 
+     stroke="#f59e0b" 
+     strokeDasharray="6 3" 
+   />
+   ```
+   *Rationale:* A `ReferenceLine` is purely presentational. It does not register as interactive data points, which instantly solves both the tooltip misalignment and the phantom snapping at 0 and 1.

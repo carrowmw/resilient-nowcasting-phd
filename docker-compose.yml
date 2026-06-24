@@ -5,8 +5,12 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     container_name: my-ml-agent
+
+    env_file:
+      - .env
     volumes:
       - .:/workspace
+      - ~/.config/gcloud:/root/.config/gcloud
     # Notice we don't even need the 'environment:' block anymore!
     # Compose passes the .env file automatically.
       - ~/.config/gcloud:/root/.config/gcloud  # This is required for ADC authentication
