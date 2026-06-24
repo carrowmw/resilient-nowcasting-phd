@@ -30,7 +30,9 @@
       "Bash(awk '{print $2}')",
       "Bash(xargs -I{} readlink {})",
       "Bash(curl -s http://localhost:3000/data/ui_payload.json)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(node -e \"console.log\\('recharts', require\\('./node_modules/recharts/package.json'\\).version\\)\")",
+      "Bash(npx eslint *)"
     ]
   }
 }

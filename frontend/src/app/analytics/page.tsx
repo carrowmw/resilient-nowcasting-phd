@@ -32,7 +32,11 @@ import type {
   MasterIndex,
   NodeEntry,
   PITBin,
+  UIPayload,
 } from "@/types/payload";
+import type { SpatialIndex, TemporalPage, RunRegistry } from "@/types/registry";
+import useTimeStore from "@/store/useTimeStore";
+import { registryUrl, spatialUrl, pageUrl } from "@/lib/payloadSource";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,13 +59,6 @@ interface NodeRow {
 // Each chart point has numeric keys for mu and ci bounds per selected node.
 type ChartPoint = Record<string, number>;
 
-// Diagonal data uses the same axis keys as the reliability chart (pi_center / observed_zero_fraction)
-// so that the Line component can resolve them against the configured axes.
-const RELIABILITY_DIAGONAL = [
-  { pi_center: 0, observed_zero_fraction: 0 },
-  { pi_center: 1, observed_zero_fraction: 1 },
-];
-
 // ---------------------------------------------------------------------------
 // Colour palette for multi-node overlay
 // ---------------------------------------------------------------------------
@@ -78,6 +75,48 @@ const PALETTE = [
 ];
 
 // ---------------------------------------------------------------------------
+// Payload merge (mirrors MapVisualizer.tsx — kept in sync manually)
+// ---------------------------------------------------------------------------
+
+function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
+  const m = spatial.metadata;
+  const nodes: NodeEntry[] = spatial.nodes.map((n) => ({
+    id: n.id,
+    location_name: n.location_name,
+    lat: n.lat,
+    lon: n.lon,
+    is_simulated: n.is_simulated,
+    timeseries: page.node_timeseries[String(n.id)] ?? [],
+    semantic_tags: n.semantic_tags,
+  }));
+  return {
+    metadata: {
+      num_nodes: m.num_nodes,
+      num_real_nodes: m.num_real_nodes,
+      num_simulated_nodes: m.num_simulated_nodes,
+      timesteps: page.timesteps,
+      seq_len: page.seq_len,
+      veh_class: m.veh_class,
+      dir: m.dir,
+      start_date: page.date,
+      end_date: page.date,
+      wandb_run_id: m.wandb_run_id,
+      git_commit_hash: m.git_commit_hash,
+      hyperparameters: m.hyperparameters,
+    },
+    nodes,
+    edges: page.edge_attention,
+    pit_histogram: page.pit_histogram,
+    zero_inflation_reliability: page.zero_inflation_reliability,
+    global_imputation_burden: page.global_imputation_burden,
+    global_healing_quality: page.global_healing_quality,
+    attention_entropy_series: page.attention_entropy_series,
+    tripwire_audit_trail: page.tripwire_audit_trail,
+    alpha_node_leaderboard: page.alpha_node_leaderboard,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -88,15 +127,74 @@ export default function AnalyticsPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [activeTab, setActiveTab] = useState(0);
 
+  const activeRunId = useTimeStore((s) => s.activeRunId);
+  const activeDate = useTimeStore((s) => s.activeDate);
+  const runRegistry = useTimeStore((s) => s.runRegistry);
+  const setRunRegistry = useTimeStore((s) => s.setRunRegistry);
+  const setActiveRunId = useTimeStore((s) => s.setActiveRunId);
+  const setAvailableDates = useTimeStore((s) => s.setAvailableDates);
+  const setActiveDate = useTimeStore((s) => s.setActiveDate);
+
+  const [spatialIndex, setSpatialIndex] = useState<SpatialIndex | null>(null);
+
+  // Stage 1 — registry (no-op if already loaded from map page)
   useEffect(() => {
-    fetch("/data/master_index.json")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: MasterIndex | null) => {
-        setMasterIndex(d);
+    if (runRegistry.length > 0) return;
+    let cancelled = false;
+    fetch(registryUrl())
+      .then((r) => (r.ok ? (r.json() as Promise<RunRegistry>) : Promise.reject()))
+      .then((registry) => {
+        if (cancelled) return;
+        setRunRegistry(registry.runs);
+        const def = registry.default_run_id ?? registry.runs[0]?.run_id ?? null;
+        if (def) setActiveRunId(def);
+      })
+      .catch(() => setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [runRegistry.length, setRunRegistry, setActiveRunId]);
+
+  // Stage 2 — spatial index (re-fetches on run change)
+  // Uses setSpatialIndex (state, not a ref) so Stage 3 re-triggers when spatial
+  // arrives even if activeDate hasn't changed (e.g. navigating from the map page).
+  useEffect(() => {
+    if (!activeRunId) return;
+    let cancelled = false;
+    fetch(spatialUrl(activeRunId))
+      .then((r) => (r.ok ? (r.json() as Promise<SpatialIndex>) : Promise.reject()))
+      .then((spatial) => {
+        if (cancelled) return;
+        setSpatialIndex(spatial);
+        const dates = spatial.metadata.available_dates ?? [];
+        setAvailableDates(dates);
+        if (dates.length > 0) setActiveDate(dates[0]);
+      })
+      .catch(() => setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRunId, setAvailableDates, setActiveDate]);
+
+  // Stage 3 — page fetch + merge (re-fetches on run, date, or spatial change)
+  useEffect(() => {
+    if (!activeRunId || !activeDate || !spatialIndex) return;
+    // Guard against run-switch race: spatialIndex may still be for the previous run.
+    if (spatialIndex.metadata.run_id !== activeRunId) return;
+    let cancelled = false;
+    setLoading(true);
+    fetch(pageUrl(activeRunId, activeDate))
+      .then((r) => (r.ok ? (r.json() as Promise<TemporalPage>) : Promise.reject()))
+      .then((page) => {
+        if (cancelled) return;
+        setMasterIndex(mergePayload(spatialIndex, page));
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRunId, activeDate, spatialIndex]);
 
   // ---- DataGrid rows (computed aggregates) --------------------------------
 
@@ -161,9 +259,9 @@ export default function AnalyticsPage() {
     });
   }, [masterIndex, selectedIds]);
 
-  // ---- Reliability chart data (dots + diagonal in one ComposedChart) -------
-  // The diagonal Line uses RELIABILITY_DIAGONAL with its own `data` prop.
-  // The scatter Line uses the reliability bins from the payload.
+  // ---- Reliability chart data (scatter dots) ------------------------------
+  // The ComposedChart binds this data at the top level; the y = x reference
+  // line is drawn presentationally via <ReferenceLine segment={...} />.
 
   const reliabilityData = useMemo(
     () => masterIndex?.zero_inflation_reliability ?? [],
@@ -269,8 +367,7 @@ export default function AnalyticsPage() {
         }}
       >
         <Alert severity="error">
-          Failed to load master_index.json — check that{" "}
-          <code>export_ui_payload.py</code> has been run.
+          Failed to load payload — check the run registry and R2 bucket.
         </Alert>
       </Box>
     );
@@ -336,6 +433,39 @@ export default function AnalyticsPage() {
             {masterIndex.metadata.timesteps}T ·{" "}
             {masterIndex.metadata.start_date}
           </Typography>
+
+          {runRegistry.length > 0 && (
+            <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography
+                variant="caption"
+                sx={{ color: "#64748b", fontFamily: "monospace", fontSize: 11 }}
+              >
+                MODEL
+              </Typography>
+              <select
+                value={activeRunId ?? ""}
+                onChange={(e) => setActiveRunId(e.target.value)}
+                aria-label="Select model run"
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  color: "#e2e8f0",
+                  border: "1px solid rgba(148,163,184,0.3)",
+                  borderRadius: 8,
+                  padding: "4px 8px",
+                  fontSize: 13,
+                  fontFamily: "monospace",
+                  cursor: "pointer",
+                  outline: "none",
+                }}
+              >
+                {runRegistry.map((r) => (
+                  <option key={r.run_id} value={r.run_id} style={{ color: "#000" }}>
+                    {r.run_id}
+                  </option>
+                ))}
+              </select>
+            </Box>
+          )}
         </Toolbar>
       </AppBar>
 
@@ -805,13 +935,14 @@ export default function AnalyticsPage() {
                   {hasReliability ? (
                     <ResponsiveContainer width="100%" height={280}>
                       {/*
-                       * ComposedChart with two Line series:
-                       *   1. Scatter dots (stroke=none, large dots) — observed zero fractions
-                       *   2. Dashed diagonal (y = x) — perfect calibration reference
-                       * Both use the same axis keys (pi_center / observed_zero_fraction) so
-                       * the diagonal data also uses those key names for correct axis resolution.
+                       * ComposedChart bound to a single, unified data array
+                       * (reliabilityData). The scatter dots are the only
+                       * interactive series; the dashed y = x perfect-calibration
+                       * reference is drawn with a presentational <ReferenceLine>
+                       * so it does not register as hoverable data points.
                        */}
                       <ComposedChart
+                        data={reliabilityData}
                         margin={{ top: 8, right: 16, left: -4, bottom: 28 }}
                       >
                         <CartesianGrid
@@ -868,23 +999,30 @@ export default function AnalyticsPage() {
                             fontSize: "0.72rem",
                           }}
                         />
-                        {/* y = x diagonal — same axis keys, two endpoint data points */}
-                        <Line
-                          data={RELIABILITY_DIAGONAL}
-                          type="linear"
-                          dataKey="observed_zero_fraction"
+                        {/*
+                         * y = x perfect-calibration reference. Purely
+                         * presentational — drawn between two axis coordinates
+                         * so it never registers as interactive data points,
+                         * which avoids tooltip misalignment and phantom
+                         * highlights at x = 0 / x = 1.
+                         */}
+                        <ReferenceLine
+                          segment={[
+                            { x: 0, y: 0 },
+                            { x: 1, y: 1 },
+                          ]}
                           stroke="#f59e0b"
                           strokeDasharray="6 3"
                           strokeWidth={1.5}
-                          dot={false}
-                          activeDot={false}
-                          name="Perfect calibration (y = x)"
-                          isAnimationActive={false}
-                          legendType="plainline"
+                          label={{
+                            value: "Perfect calibration (y = x)",
+                            position: "insideTopLeft",
+                            fill: "#f59e0b",
+                            fontSize: 9,
+                          }}
                         />
                         {/* Observed scatter — dots only, no connecting line */}
                         <Line
-                          data={reliabilityData}
                           type="monotone"
                           dataKey="observed_zero_fraction"
                           stroke="none"
