@@ -19,7 +19,7 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      padding: 24px;
+      padding: 40px;
     }
 
     .figure-container {
@@ -35,12 +35,14 @@
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      margin-bottom: 12px;
+      margin-bottom: 24px;
       padding: 0 8px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #E5E5E7;
     }
 
     .figure-title {
-      font-size: 18px;
+      font-size: 28px;
       font-weight: 700;
       color: #171717;
     }
@@ -48,15 +50,16 @@
     .figure-title .accent { color: #F97316; }
 
     .figure-subtitle {
-      font-size: 12px;
+      font-size: 16px;
       color: #A3A3A3;
       font-weight: 400;
+      margin-top: 6px;
     }
 
     .legend {
       display: flex;
       gap: 16px;
-      font-size: 11px;
+      font-size: 13px;
       color: #525252;
       align-items: center;
     }
@@ -134,10 +137,11 @@
   <script>
     // ── Configuration ──
     const NUM_SENSORS = 40;
-    const NUM_DAYS = 90;     // ~3 months of data
-    const CELL_W = 14;
+    const NUM_INTERVALS = 192;  // 2 days × 96 intervals/day (15-min intervals)
+    const INTERVALS_PER_DAY = 96;
+    const CELL_W = 6;
     const CELL_H = 12;
-    const MARGIN = { top: 20, right: 30, bottom: 50, left: 140 };
+    const MARGIN = { top: 20, right: 30, bottom: 60, left: 140 };
 
     // ── Generate realistic missingness patterns ──
     // Simulates non-random, systemic outages that cluster spatially & temporally
@@ -152,29 +156,33 @@
       });
 
       const data = [];
-      const startDate = new Date('2023-01-01');
+      const startDate = new Date('2023-05-15T00:00:00');
 
       // Create base missingness probabilities per sensor (some sensors are flaky)
       const baseMiss = sensorNames.map(() => 0.05 + Math.random() * 0.15);
 
-      // Create systemic outage events (entire groups go offline)
+      // Create systemic outage events (in 15-min intervals)
       const outages = [
-        { startDay: 12, duration: 8, sensors: [0, 1, 2, 3, 4, 5, 6, 7], label: 'Power failure Zone A' },
-        { startDay: 35, duration: 14, sensors: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24], label: 'Network switch failure' },
-        { startDay: 55, duration: 5, sensors: Array.from({ length: NUM_SENSORS }, (_, i) => i), label: 'City-wide outage' },
-        { startDay: 70, duration: 10, sensors: [28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39], label: 'Gateway offline' },
+        { startInterval: 32, duration: 16, sensors: [0, 1, 2, 3, 4, 5, 6, 7], label: 'Power failure Zone A' },
+        { startInterval: 96, duration: 28, sensors: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24], label: 'Network switch failure' },
+        { startInterval: 144, duration: 12, sensors: [28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39], label: 'Gateway offline' },
       ];
 
       for (let s = 0; s < NUM_SENSORS; s++) {
-        for (let d = 0; d < NUM_DAYS; d++) {
-          const date = new Date(startDate);
-          date.setDate(date.getDate() + d);
+        for (let interval = 0; interval < NUM_INTERVALS; interval++) {
+          const timestamp = new Date(startDate);
+          timestamp.setMinutes(timestamp.getMinutes() + interval * 15);
+
+          const day = Math.floor(interval / INTERVALS_PER_DAY);
+          const timeOfDay = interval % INTERVALS_PER_DAY;
+          const hour = Math.floor(timeOfDay / 4);
+          const minute = (timeOfDay % 4) * 15;
 
           // Check if in an outage window
           let inOutage = false;
           let outageLabel = '';
           for (const o of outages) {
-            if (d >= o.startDay && d < o.startDay + o.duration && o.sensors.includes(s)) {
+            if (interval >= o.startInterval && interval < o.startInterval + o.duration && o.sensors.includes(s)) {
               inOutage = true;
               outageLabel = o.label;
               break;
@@ -198,8 +206,10 @@
           data.push({
             sensor: sensorNames[s],
             sensorIdx: s,
-            day: d,
-            date: date.toISOString().slice(0, 10),
+            interval,
+            timestamp: timestamp.toISOString(),
+            timeLabel: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+            day,
             status,
             outageLabel: inOutage ? outageLabel : ''
           });
@@ -212,7 +222,7 @@
     // ── Build Chart ──
     const { data, sensorNames, outages } = generateMissingnessData();
 
-    const width = MARGIN.left + NUM_DAYS * CELL_W + MARGIN.right;
+    const width = MARGIN.left + NUM_INTERVALS * CELL_W + MARGIN.right;
     const height = MARGIN.top + NUM_SENSORS * CELL_H + MARGIN.bottom;
 
     const svg = d3.select('#chart')
@@ -231,8 +241,8 @@
 
     // Scales
     const x = d3.scaleBand()
-      .domain(d3.range(NUM_DAYS))
-      .range([0, NUM_DAYS * CELL_W])
+      .domain(d3.range(NUM_INTERVALS))
+      .range([0, NUM_INTERVALS * CELL_W])
       .padding(0.08);
 
     const y = d3.scaleBand()
@@ -248,7 +258,7 @@
       .data(data)
       .join('rect')
         .attr('class', 'cell')
-        .attr('x', d => x(d.day))
+        .attr('x', d => x(d.interval))
         .attr('y', d => y(d.sensorIdx))
         .attr('width', x.bandwidth())
         .attr('height', y.bandwidth())
@@ -257,8 +267,9 @@
         .attr('opacity', d => d.status === 0 ? 0.6 : 0.9)
         .on('mouseenter', (event, d) => {
           const labels = ['Data present', 'Null-zero ambiguity', 'Confirmed outage'];
+          const dayLabel = `Day ${d.day + 1}`;
           tooltip.style('opacity', 1)
-            .html(`<strong>${d.sensor}</strong><br/>${d.date}<br/>${labels[d.status]}${d.outageLabel ? '<br/>⚠ ' + d.outageLabel : ''}`);
+            .html(`<strong>${d.sensor}</strong><br/>${dayLabel} ${d.timeLabel}<br/>${labels[d.status]}${d.outageLabel ? '<br/>⚠ ' + d.outageLabel : ''}`);
         })
         .on('mousemove', (event) => {
           tooltip.style('left', (event.pageX + 12) + 'px')
@@ -271,8 +282,8 @@
     // Outage annotations — red brackets on top
     const outageG = g.append('g').attr('class', 'outage-annotations');
     for (const o of outages) {
-      const x1 = x(o.startDay);
-      const x2 = x(o.startDay + o.duration - 1) + x.bandwidth();
+      const x1 = x(o.startInterval);
+      const x2 = x(o.startInterval + o.duration - 1) + x.bandwidth();
       const yMin = y(Math.min(...o.sensors));
       const yMax = y(Math.max(...o.sensors)) + y.bandwidth();
 
@@ -289,31 +300,33 @@
         .attr('opacity', 0.7);
     }
 
-    // X axis (sparse date labels)
-    const xAxisDays = d3.range(0, NUM_DAYS, 14);
-    const startDate = new Date('2023-01-01');
+    // X axis (show hours across 2 days, every 4 hours)
+    const xAxisIntervals = d3.range(0, NUM_INTERVALS, 16); // every 4 hours (16 intervals)
+    const startDate = new Date('2023-05-15T00:00:00');
     const xAxis = g.append('g')
       .attr('class', 'axis')
       .attr('transform', `translate(0, ${NUM_SENSORS * CELL_H + 4})`);
 
     xAxis.selectAll('text')
-      .data(xAxisDays)
+      .data(xAxisIntervals)
       .join('text')
         .attr('x', d => x(d) + x.bandwidth() / 2)
         .attr('y', 12)
         .attr('text-anchor', 'middle')
         .text(d => {
-          const date = new Date(startDate);
-          date.setDate(date.getDate() + d);
-          return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+          const ts = new Date(startDate);
+          ts.setMinutes(ts.getMinutes() + d * 15);
+          const day = Math.floor(d / INTERVALS_PER_DAY) + 1;
+          const hour = String(ts.getHours()).padStart(2, '0');
+          return d % INTERVALS_PER_DAY === 0 ? `Day ${day}` : `${hour}:00`;
         });
 
     xAxis.append('text')
       .attr('class', 'axis-label')
-      .attr('x', (NUM_DAYS * CELL_W) / 2)
-      .attr('y', 35)
+      .attr('x', (NUM_INTERVALS * CELL_W) / 2)
+      .attr('y', 42)
       .attr('text-anchor', 'middle')
-      .text('Time (15-min aggregation windows)');
+      .text('Time (15-minute intervals)');
 
     // Y axis (sensor names)
     const yAxis = g.append('g')
