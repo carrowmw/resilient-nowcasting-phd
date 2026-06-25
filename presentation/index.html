@@ -11,17 +11,17 @@
     <meta name="description" content="A Digital Twin Paradigm for Imperfect Urban Sensor Networks. PhD Presentation at WCCI Conference, Maastricht." />
 
     <!-- Reveal.js Core Styles -->
-    <link rel="stylesheet" href="dist/reset.css" />
-    <link rel="stylesheet" href="dist/reveal.css" />
+    <link rel="stylesheet" href="./dist/reset.css" />
+    <link rel="stylesheet" href="./dist/reveal.css" />
 
     <!-- Base white theme (provides variables we override) -->
-    <link rel="stylesheet" href="dist/theme/white.css" id="theme" />
+    <link rel="stylesheet" href="./dist/theme/white.css" id="theme" />
 
     <!-- WCCI Custom Overrides -->
-    <link rel="stylesheet" href="theme/wcci-custom.css" />
+    <link rel="stylesheet" href="./theme/wcci-custom.css" />
 
     <!-- Syntax highlighting (high contrast for projector) -->
-    <link rel="stylesheet" href="dist/plugin/highlight/monokai.css" />
+    <link rel="stylesheet" href="./dist/plugin/highlight/monokai.css" />
   </head>
   <body>
     <div class="reveal">
@@ -102,6 +102,13 @@
             <div class="section-number">01</div>
             <h2>The Urban Sensing Paradox</h2>
             <p class="section-subtitle">Abundant data, limited intelligence</p>
+            <aside class="notes">
+              We now move into Section 1, examining the fundamental paradox of urban sensing:
+              we have abundant data from IoT networks, but severe limitations in extracting
+              reliable intelligence due to data quality issues.
+
+              [No fragments - section divider]
+            </aside>
           </section>
 
           <!-- 1.1 Abundant Data, Limited Intelligence -->
@@ -194,7 +201,7 @@
           </section>
 
           <!-- 1.2b Edge Object Detection Video (Fullscreen background) -->
-          <section data-background-video="videos/computer_vision.mp4" data-background-video-loop data-background-video-muted>
+          <section data-background-video="./videos/computer_vision.mp4" data-background-video-loop data-background-video-muted>
             <div style="background-color: rgba(255, 255, 255, 0.95); padding: 1.5em; border-radius: 12px; border: 1px solid var(--wcci-border); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15); display: inline-block; position: absolute; bottom: 50px; left: 50px; text-align: left; max-width: 500px;">
               <h3 style="color: var(--wcci-orange); margin: 0 0 0.5em 0; font-size: 1.1em; font-weight: 700;">Edge Object Detection</h3>
               <p style="color: var(--wcci-fg-muted); margin: 0; font-size: 0.6em; line-height: 1.5;">
@@ -208,9 +215,9 @@
             </aside>
           </section>
           <!-- 1.2b Edge Object Detection Video (Fullscreen background) -->
-          <section data-background-video="videos/computer_vision.mp4" data-background-video-loop data-background-video-muted>
+          <section data-background-video="./videos/computer_vision.mp4" data-background-video-loop data-background-video-muted>
             <div style="background-color: rgba(255, 255, 255, 0.95); padding: 1.5em; border-radius: 12px; border: 1px solid var(--wcci-border); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15); display: inline-block; position: absolute; bottom: 50px; left: 50px; text-align: left; max-width: 500px;">
-              <img src="figures/wireless_schematic.svg" alt="Wireless Schematic" style="max-height: 500px; width: auto; display: block; margin: 0 auto;" />
+              <img src="./figures/wireless_schematic.svg" alt="Wireless Schematic" style="max-height: 500px; width: auto; display: block; margin: 0 auto;" />
             </div>
             <aside class="notes">
               Here is a demonstration of the pedestrian detection and tracking process running at the edge.
@@ -220,7 +227,7 @@
           </section>
 
           <!-- 1.3 Missingness Heatmap Figure -->
-          <section data-background-iframe="figures/missingness-heatmap.html" data-background-interactive>
+          <section data-background-iframe="./figures/missingness-heatmap.html" data-background-interactive>
             <aside class="notes">
               This heatmap renders every 15-minute observation window across all sensors
               over a 2-day period. Green cells indicate data was present. Orange cells show
@@ -245,6 +252,13 @@
             <div class="section-number">02</div>
             <h2>Intrinsic Resilience</h2>
             <p class="section-subtitle">Treating missing data as a learnable signal</p>
+            <aside class="notes">
+              Section 2 introduces our core innovation: building intrinsic resilience into
+              the model by treating missing data as an informative signal rather than a
+              pre-processing problem to be solved separately.
+
+              [No fragments - section divider]
+            </aside>
           </section>
 
           <!-- 2.1 The Failure of Imputation -->
@@ -297,10 +311,17 @@
             <div class="section-number">03</div>
             <h2>The RIoT Pipeline</h2>
             <p class="section-subtitle">Resilient IoT: Joint spatial-temporal learning</p>
+            <aside class="notes">
+              Section 3 presents the Resilient IoT (RIoT) pipeline architecture. We'll explore
+              the three core modules: Dynamic Graph Learner, Masked Spatiotemporal Encoder,
+              and the Triple Decoders for multi-task learning.
+
+              [No fragments - section divider]
+            </aside>
           </section>
 
           <!-- 3.0b Data Processing Pipeline Diagram -->
-          <section class="top-left-layout" data-background-image="figures/data_pipeline.svg" data-background-size="1280px" data-background-position="center">
+          <section class="top-left-layout" data-background-image="./figures/data_pipeline.svg" data-background-size="1280px" data-background-position="center">
             <h3>Data Processing Pipeline</h3>
 
             <aside class="notes">
@@ -361,7 +382,7 @@
           </section>
 
           <!-- 3.1b RIoT Model Architecture Diagram -->
-          <section class="top-left-layout" data-background-image="figures/riot_architecture.svg" data-background-size="720px" data-background-position="center">
+          <section class="top-left-layout" data-background-image="./figures/riot_architecture.svg" data-background-size="720px" data-background-position="center">
             <h3>RIoT Model Architecture</h3>
             <aside class="notes">
               This diagram shows the complete RIoT model architecture with all three modules:
@@ -374,11 +395,25 @@
           </section>
 
           <!-- 3.1c RIoT Training & Optimization Diagram -->
-          <section class="top-left-layout" data-background-image="figures/riot_architecture_training.svg" data-background-size="720px" data-background-position="center">
+          <section class="top-left-layout" data-background-image="./figures/riot_architecture_training.svg" data-background-size="720px" data-background-position="center">
             <h3>RIoT Training & Optimization</h3>
+            <aside class="notes">
+              This shows the training workflow including the multi-task loss computation,
+              gradient flow, and optimizer configuration. Note how the three decoder heads
+              contribute separate loss terms that are weighted and combined.
+
+              [No fragments - static background diagram]
+            </aside>
           </section>
-          <section class="top-left-layout" data-background-image="figures/v2_riot_train.svg" data-background-size="1480px" data-background-position="center">
+          <section class="top-left-layout" data-background-image="./figures/v2_riot_train.svg" data-background-size="1480px" data-background-position="center">
             <h3>RIoT Training & Optimization</h3>
+            <aside class="notes">
+              This is the detailed version of the training architecture showing the complete
+              forward and backward pass through all modules. Pay attention to the masking
+              strategy applied during training for the spatial kriging decoder.
+
+              [No fragments - static background diagram]
+            </aside>
           </section>
 
           <!-- 3.2 Dynamic Topology Inference -->
@@ -417,7 +452,7 @@
           </section>
 
           <!-- 3.3 Dynamic Topology Graph Figure -->
-          <section data-background-iframe="figures/topology-graph.html" data-background-interactive>
+          <section data-background-iframe="./figures/topology-graph.html" data-background-interactive>
             <aside class="notes">
               This side-by-side comparison uses the real sensor network from run
               dark-brook-37. The left graph connects each sensor to its four nearest
@@ -443,6 +478,13 @@
             <div class="section-number">04</div>
             <h2>Spatial Estimation & Kriging</h2>
             <p class="section-subtitle">Bridging spatial gaps with physical edge features</p>
+            <aside class="notes">
+              Section 4 addresses spatial estimation and kriging. We'll show how the model
+              reconstructs data for entirely unknown locations using edge-enriched features
+              and a dedicated kriging decoder.
+
+              [No fragments - section divider]
+            </aside>
           </section>
 
           <!-- 4.1 The Spatial Holdout Problem -->
@@ -536,7 +578,7 @@
           </section> -->
 
           <!-- 4.3 Spatial Kriging Reconstruction (real data snapshot) -->
-          <section data-background-iframe="figures/kriging-map.html" data-background-interactive>
+          <section data-background-iframe="./figures/kriging-map.html" data-background-interactive>
             <aside class="notes">
               This map shows the kriging decoder's predictions across the real Newcastle
               sensor network, drawn from a snapshot of the held-out evaluation period
@@ -561,6 +603,13 @@
             <div class="section-number">05</div>
             <h2>Uncertainty & Scaling</h2>
             <p class="section-subtitle">Building operational trust through probabilistic forecasting</p>
+            <aside class="notes">
+              Section 5 focuses on uncertainty quantification and validation. We demonstrate
+              how probabilistic forecasting with ZINB loss and proper calibration builds
+              operational trust for real-world deployment.
+
+              [No fragments - section divider]
+            </aside>
           </section>
 
           <!-- 5.1 Zero-Inflated Negative Binomial -->
@@ -637,7 +686,7 @@
           </section>
 
           <!-- 5.3 Model Predictions & Uncertainty -->
-          <section data-background-iframe="figures/zinb-confidence.html" data-background-interactive>
+          <section data-background-iframe="./figures/zinb-confidence.html" data-background-interactive>
             <aside class="notes">
               Here we see the ZINB probabilistic forecast visualization. The orange line shows
               the predicted mean (μ), the orange shaded region shows the 95% confidence interval
@@ -649,23 +698,32 @@
             </aside>
           </section>
 
-          <!-- 5.4 PIT Diagrams — Calibration Verification -->
-          <section data-background-iframe="figures/pit-diagrams.html" data-background-interactive>
+          <!-- 5.4a PIT Diagram — Underdispersed -->
+          <section data-background-iframe="./figures/pit-underdispersed.html" data-background-interactive>
             <aside class="notes">
-              These Probability Integral Transform (PIT) diagrams validate our uncertainty
-              quantification. Both diagrams appear vertically stacked for clarity.
+              This Probability Integral Transform (PIT) diagram shows an underdispersed model
+              run before MLSE calibration. The model was overconfident, with PIT values
+              clustering around 0.5 rather than spreading uniformly — visible as a pronounced
+              peak in the center of the histogram. The dashed line represents the ideal
+              uniform distribution. This clustering indicates the model's uncertainty bands
+              were too narrow, underestimating the true prediction variance.
 
-              The FIRST diagram (top) shows an underdispersed run — the model was overconfident,
-              with PIT values clustering around 0.5 rather than spreading uniformly, visible
-              as a peak in the center of the histogram.
+              [No fragments on this slide - static visualization]
+            </aside>
+          </section>
 
-              The SECOND diagram (bottom) shows a well-calibrated run — the PIT distribution
-              is nearly uniform, proving the predicted uncertainty bands are properly
-              calibrated. The dashed line represents the ideal uniform distribution.
+          <!-- 5.4b PIT Diagram — Well-Calibrated -->
+          <section data-background-iframe="./figures/pit-calibrated.html" data-background-interactive>
+            <aside class="notes">
+              This PIT diagram shows a well-calibrated model after applying MLSE techniques.
+              The PIT distribution is nearly uniform, proving the predicted uncertainty bands
+              are properly calibrated. The histogram bars are relatively even across all bins,
+              approaching the ideal uniform distribution shown by the dashed line.
 
-              This calibration is critical for operational trust: it demonstrates that MLSE
-              techniques have improved (but not perfectly calibrated) the model's uncertainty
-              estimates, making them more honest and reliable.
+              This demonstrates that MLSE has significantly improved (though not perfectly
+              calibrated) the model's uncertainty estimates. This calibration is critical for
+              operational trust: it proves the model's uncertainty estimates are honest and
+              reliable, allowing operators to trust the prediction intervals.
 
               [No fragments on this slide - static visualization]
             </aside>
@@ -683,6 +741,13 @@
             <div class="section-number">06</div>
             <h2>MLOps & Rigorous Engineering</h2>
             <p class="section-subtitle">Reproducible, publication-grade experimentation</p>
+            <aside class="notes">
+              Section 6 details our MLOps infrastructure. We enforce strict environment
+              isolation, artifact twinning, and comprehensive experiment tracking to ensure
+              all results are reproducible and traceable.
+
+              [No fragments - section divider]
+            </aside>
           </section>
 
           <!-- 6.1 Strict Environment Isolation -->
@@ -776,6 +841,13 @@
             <div class="section-number">07</div>
             <h2>Conclusion</h2>
             <p class="section-subtitle">Achieving AI-Readiness at the edge</p>
+            <aside class="notes">
+              Final section: we summarize the key contributions and achievements of this
+              research, demonstrating how we've achieved AI-Readiness for edge deployment
+              in urban sensor networks.
+
+              [No fragments - section divider]
+            </aside>
           </section>
 
           <!-- 7.1 Summary -->
@@ -836,7 +908,7 @@
               <i class="bx bx-target-lock" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
               Disentangling Aleatoric vs. Epistemic Uncertainty
             </p>
-            
+
             <ul style="margin-top: 1em;">
               <li class="fragment fade-up" style="margin-bottom: 0.5em;">
                 <strong>Current State (Aleatoric):</strong> ZINB formulation ($\mu, \theta, \pi$) quantifies inherent data noise and physical zero-inflation.
@@ -870,6 +942,12 @@
             <p style="font-size: 0.5em; color: var(--wcci-fg-subtle); margin-top: 1.5em;">
               Newcastle University · Urban Observatory
             </p>
+            <aside class="notes">
+              Thank you for your attention. I'm now happy to take any questions about the
+              research, methodology, results, or future directions.
+
+              [No fragments - final slide]
+            </aside>
           </section>
 
         </section>
@@ -890,13 +968,13 @@
     </div><!-- /.reveal -->
 
     <!-- Reveal.js Core -->
-    <script src="dist/reveal.js"></script>
+    <script src="./dist/reveal.js"></script>
 
     <!-- Plugins -->
-    <script src="dist/plugin/notes.js"></script>
-    <script src="dist/plugin/markdown.js"></script>
-    <script src="dist/plugin/highlight.js"></script>
-    <script src="dist/plugin/math.js"></script>
+    <script src="./dist/plugin/notes.js"></script>
+    <script src="./dist/plugin/markdown.js"></script>
+    <script src="./dist/plugin/highlight.js"></script>
+    <script src="./dist/plugin/math.js"></script>
 
     <script>
       Reveal.initialize({

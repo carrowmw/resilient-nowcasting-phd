@@ -20,7 +20,7 @@ import statistics
 import urllib.request
 from pathlib import Path
 
-R2_BASE = "https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs"
+R2_BASE = Path(__file__).resolve().parents[2] / "frontend" / "public" / "data" / "runs"
 # Representative day pulled for the snapshot (evaluation period).
 SNAPSHOT_DATE = "2026-05-15"
 # Edge budget per node — matched across both graphs for a fair side-by-side.
@@ -34,18 +34,22 @@ PIT_RUNS = {
 OUT_DIR = Path(__file__).resolve().parents[1] / "figures" / "data"
 
 
-def fetch_json(url: str) -> dict:
-    req = urllib.request.Request(
-        url,
-        headers={"Accept-Encoding": "gzip", "User-Agent": "Mozilla/5.0 (figure-cache)"},
-    )
-    with urllib.request.urlopen(req) as resp:
-        raw = resp.read()
-        if resp.headers.get("Content-Encoding") == "gzip":
-            import gzip
+def fetch_json(url: str | Path) -> dict:
+    if isinstance(url, str) and url.startswith("http"):
+        req = urllib.request.Request(
+            url,
+            headers={"Accept-Encoding": "gzip", "User-Agent": "Mozilla/5.0 (figure-cache)"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            raw = resp.read()
+            if resp.headers.get("Content-Encoding") == "gzip":
+                import gzip
 
-            raw = gzip.decompress(raw)
-        return json.loads(raw)
+                raw = gzip.decompress(raw)
+            return json.loads(raw)
+    else:
+        # Load locally
+        return json.loads(Path(url).read_text())
 
 
 def haversine(a: dict, b: dict) -> float:
