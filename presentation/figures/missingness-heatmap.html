@@ -140,9 +140,9 @@
   <script>
     // ── Configuration ──
     const NUM_SENSORS = 40;
-    const NUM_INTERVALS = 192;  // 2 days × 96 intervals/day (15-min intervals)
+    const NUM_INTERVALS = 96;  // 1 day × 96 intervals/day (15-min intervals)
     const INTERVALS_PER_DAY = 96;
-    const CELL_W = 6;
+    const CELL_W = 12;
     const CELL_H = 12;
     const MARGIN = { top: 20, right: 30, bottom: 60, left: 140 };
 
@@ -167,8 +167,7 @@
       // Create systemic outage events (in 15-min intervals)
       const outages = [
         { startInterval: 32, duration: 16, sensors: [0, 1, 2, 3, 4, 5, 6, 7], label: 'Power failure Zone A' },
-        { startInterval: 96, duration: 28, sensors: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24], label: 'Network switch failure' },
-        { startInterval: 144, duration: 12, sensors: [28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39], label: 'Gateway offline' },
+        { startInterval: 64, duration: 20, sensors: Array.from({ length: NUM_SENSORS }, (_, i) => i), label: 'City-wide network outage' },
       ];
 
       for (let s = 0; s < NUM_SENSORS; s++) {

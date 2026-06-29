@@ -32,7 +32,15 @@
       "Bash(curl -s http://localhost:3000/data/ui_payload.json)",
       "Bash(docker compose *)",
       "Bash(node -e \"console.log\\('recharts', require\\('./node_modules/recharts/package.json'\\).version\\)\")",
-      "Bash(npx eslint *)"
+      "Bash(npx eslint *)",
+      "Bash(curl -s --compressed \"https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs/run_registry.json\" -o /tmp/run_registry.json)",
+      "Read(//tmp/**)",
+      "Bash(curl -s --compressed \"https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs/dark-brook-37/spatial.json\" -o spatial.json)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -I https://ml-agent-workspace.vercel.app/)",
+      "Bash(node -e \"try{require.resolve\\('puppeteer'\\);console.log\\('puppeteer available'\\)}catch\\(e\\){try{require.resolve\\('playwright'\\);console.log\\('playwright available'\\)}catch\\(e2\\){console.log\\('no headless browser module'\\)}}\")",
+      "Bash(curl -s \"https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs/dark-brook-37/2026-05-15/page.json\")",
+      "Bash(curl -s \"https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs/pretty-glitter-29/2026-05-15/page.json\")",
+      "Bash(awk *)"
     ]
   }
 }

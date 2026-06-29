@@ -94,9 +94,9 @@ def create_mock_dataloader(
 
 
 def run_training(
-    config: dict, 
-    init_wandb: bool = True, 
-    use_mock_data: bool = False, 
+    config: dict,
+    init_wandb: bool = True,
+    use_mock_data: bool = False,
     study_name: str = None,
     train_loader: DataLoader = None,
     val_loader: DataLoader = None,
@@ -170,7 +170,7 @@ def run_training(
         logger.info("Using provided full_dataset.")
         train_size = int(0.8 * len(full_dataset))
         val_size = len(full_dataset) - train_size
-        
+
         train_dataset, val_dataset = torch.utils.data.random_split(
             full_dataset, [train_size, val_size]
         )

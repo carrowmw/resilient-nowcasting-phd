@@ -385,25 +385,41 @@ def load_semantic_tags(
 # Calibration metric helpers
 # ---------------------------------------------------------------------------
 
-def _zinb_cdf(y_obs: float, mu: float, theta: float, pi_val: float) -> float:
+def _zinb_randomized_pit(y_obs: float, mu: float, theta: float, pi_val: float) -> float:
     """
-    ZINB CDF at observed count y_obs.
+    Randomized Probability Integral Transform (PIT) for the discrete ZINB distribution.
+
+    For discrete distributions, F(y) produces step functions which skew the PIT histogram.
+    Randomized PIT draws a uniform random value between F(y-1) and F(y) to restore
+    the continuous uniform property under the null hypothesis.
 
     F_NB(y; mu, theta) = betainc(theta, floor(y)+1, theta/(theta+mu))
     F_ZINB(y)          = pi + (1 - pi) * F_NB(y)
-
-    Both mu and theta are guaranteed > 0 by upstream tripwires.
     """
-    assert mu > 0.0,    f"_zinb_cdf: mu={mu} must be > 0"
-    assert theta > 0.0, f"_zinb_cdf: theta={theta} must be > 0"
-    # Prevent rounded 0.0 or 1.0 values from tripping the strictly-positive assert
+    import random
+    assert mu > 0.0,    f"_zinb_randomized_pit: mu={mu} must be > 0"
+    assert theta > 0.0, f"_zinb_randomized_pit: theta={theta} must be > 0"
+    
     safe_pi = max(1e-6, min(1.0 - 1e-6, float(pi_val)))
-    assert 0.0 < safe_pi < 1.0, f"_zinb_cdf: pi={safe_pi} must be in (0,1)"
     k = int(math.floor(y_obs))
     p_nb = theta / (theta + mu)
-    cdf_nb = float(betainc(theta, k + 1, p_nb))
-    u = safe_pi + (1.0 - safe_pi) * cdf_nb
-    assert 0.0 <= u <= 1.0, f"_zinb_cdf: PIT value {u} outside [0,1] — parametric error"
+    
+    # Calculate upper bound F(y)
+    cdf_nb_upper = float(betainc(theta, k + 1, p_nb))
+    f_upper = safe_pi + (1.0 - safe_pi) * cdf_nb_upper
+    
+    # Calculate lower bound F(y-1)
+    if k == 0:
+        f_lower = 0.0
+    else:
+        cdf_nb_lower = float(betainc(theta, k, p_nb))
+        f_lower = safe_pi + (1.0 - safe_pi) * cdf_nb_lower
+        
+    # Draw uniform random value between F(y-1) and F(y)
+    u = random.uniform(f_lower, f_upper)
+    
+    # Clip just in case of floating point inaccuracies
+    u = max(0.0, min(1.0, u))
     return u
 
 
@@ -448,7 +464,7 @@ def compute_pit_histogram(
             safe_mu = max(1e-6, float(mu_val))
             safe_th = max(1e-6, float(th_val))
             
-            u = _zinb_cdf(float(gt), safe_mu, safe_th, float(pi_val))
+            u = _zinb_randomized_pit(float(gt), safe_mu, safe_th, float(pi_val))
             bin_idx = min(int(u * num_bins), num_bins - 1)
             counts[bin_idx] += 1
 

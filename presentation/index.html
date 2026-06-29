@@ -81,12 +81,11 @@
           </div>
 
           <aside class="notes">
-            This structure deliberately fronts the problem and the data. We first examine
-            the physical reality of the Newcastle Urban Observatory dataset. Then, we explore
-            why traditional imputation fails in this context, leading into the design of the
-            Resilient Graph Neural Network (RIoT) pipeline. We will dive into our novel
-            spatial kriging methodologies for missing nodes, and finally, validate the
-            engineering through our MLOps scaling and uncertainty quantification strategies.
+            - Section 1: The physical reality of the Newcastle Urban Observatory dataset
+            - Section 2: Why traditional imputation fails in this context
+            - Section 3: Design of the Resilient Graph Neural Network (RIoT) pipeline
+            - Section 4: Novel spatial kriging methodologies for missing nodes
+            - Section 5: Validation through MLOps scaling and uncertainty quantification
 
             [Press SPACE to reveal each agenda item: 1→2→3→4→5]
           </aside>
@@ -103,9 +102,9 @@
             <h2>The Urban Sensing Paradox</h2>
             <p class="section-subtitle">Abundant data, limited intelligence</p>
             <aside class="notes">
-              We now move into Section 1, examining the fundamental paradox of urban sensing:
-              we have abundant data from IoT networks, but severe limitations in extracting
-              reliable intelligence due to data quality issues.
+              - Section 1: The Urban Sensing Paradox
+              - Paradox: Abundant data from IoT networks yet severe limitations in extracting intelligence
+              - Root cause: Data quality issues (missingness, gaps, failures)
 
               [No fragments - section divider]
             </aside>
@@ -134,13 +133,10 @@
             </ul>
 
             <aside class="notes">
-              Cities function as complex adaptive systems, and state-of-the-art approaches
-              increasingly rely on digital twins for situational awareness. However, we face
-              a paradox: deploying vast networks of low-cost sensors yields high spatial
-              coverage but introduces severe data quality issues like missing records and
-              delays. Traditional models require complete datasets, forcing a reliance on
-              brittle imputation pre-processing. This creates a "Rapid Deployment Problem,"
-              where edge networks fail when disconnected from centralised enterprise servers.
+              - Urban networks function as complex adaptive systems requiring digital twins for situational awareness
+              - Low-cost sensors provide high spatial coverage but introduce severe data quality issues
+              - Result: Intermittent connectivity, missing records, delays, and outright failures
+              - The Rapid Deployment Problem: Edge networks fail when disconnected from centralized servers; traditional imputation pre-processing is too brittle
 
               [Fragments: 1. Complex systems → 2. Low-cost sensors → 3. Failures → 4. Rapid Deployment Problem]
             </aside>
@@ -188,13 +184,10 @@
             </p>
 
             <aside class="notes">
-              Our empirical lens is the Newcastle Urban Observatory dataset, specifically
-              pedestrian count data from 2018 to 2026, although only at a usable scale from
-              2022. The network is extremely heterogeneous; over the full archive period,
-              there are no sensors with 100% completeness. The most critical data reality is
-              "Total Null-Zero Conflation". The dataset contains strictly positive count
-              values. Therefore, a missing 15-minute record could mean a genuine zero-activity
-              interval or a complete operational outage.
+              - Source: Newcastle Urban Observatory pedestrian count data (2018–2026, usable from 2022)
+              - Heterogeneity: Zero sensors maintain 100% completeness over the full archive period
+              - Ambiguity: Dataset contains strictly positive values only—no explicit "0" counts
+              - Result: Total Null-Zero Conflation—missing record could mean genuine zero-activity OR complete sensor outage
 
               [Fragments: 1. Source → 2. Heterogeneity → 3. Ambiguity → 4. Result + stat cards (5-6)]
             </aside>
@@ -209,9 +202,9 @@
               </p>
             </div>
             <aside class="notes">
-              Here is a demonstration of the pedestrian detection and tracking process running at the edge.
-              Cameras perform object detection and tracking in real time, converting raw pixel data into discrete counts.
-              While powerful, this edge classification is subject to environmental noise, network disconnects, and hardware dropouts, leading to the data gaps we observe in the dataset.
+              - Edge object detection: Cameras perform real-time tracking, converting pixels to discrete counts
+              - Vulnerability: Edge computation is subject to environmental noise, network disconnects, power failures
+              - Result: The missingness patterns we observe in the dataset are byproducts of edge infrastructure fragility
             </aside>
           </section>
           <!-- 1.2b Edge Object Detection Video (Fullscreen background) -->
@@ -220,23 +213,21 @@
               <img src="./figures/wireless_schematic.svg" alt="Wireless Schematic" style="max-height: 500px; width: auto; display: block; margin: 0 auto;" />
             </div>
             <aside class="notes">
-              Here is a demonstration of the pedestrian detection and tracking process running at the edge.
-              Cameras perform object detection and tracking in real time, converting raw pixel data into discrete counts.
-              While powerful, this edge classification is subject to environmental noise, network disconnects, and hardware dropouts, leading to the data gaps we observe in the dataset.
+              - Edge object detection: Cameras perform real-time tracking, converting pixels to discrete counts
+              - Vulnerability: Edge computation is subject to environmental noise, network disconnects, power failures
+              - Result: The missingness patterns we observe in the dataset are byproducts of edge infrastructure fragility
             </aside>
           </section>
 
           <!-- 1.3 Missingness Heatmap Figure -->
           <section data-background-iframe="./figures/missingness-heatmap.html" data-background-interactive>
             <aside class="notes">
-              This heatmap renders every 15-minute observation window across all sensors
-              over a 2-day period. Green cells indicate data was present. Orange cells show
-              the null-zero conflation — we cannot distinguish a genuine zero-activity interval
-              from a sensor failure. Black cells are confirmed outages. The red dashed brackets
-              highlight systemic, non-random outage events where entire groups of sensors
-              go offline simultaneously, proving the data loss is not independent. The x-axis
-              now shows actual 15-minute intervals, making the temporal granularity of the
-              problem visible.
+              - Coverage: Every 15-minute observation window across all sensors over a single day
+              - Green cells: Data was present
+              - Orange cells: Null-zero conflation—cannot distinguish genuine zero-activity from sensor failure
+              - Black cells: Confirmed outages
+              - Red brackets: Systemic, non-random outage events including city-wide network failure where ALL sensors go offline
+              - Key insight: Data loss is NOT independent; it clusters spatially and temporally
             </aside>
           </section>
 
@@ -286,14 +277,10 @@
             </blockquote>
 
             <aside class="notes">
-              Traditional imputation pipelines, like k-NN or mean substitution, treat data
-              recovery as an isolated pre-processing step. When networks experience massive
-              non-random data loss, these local statistical assumptions break down completely.
-              If multiple sensors drop offline, external imputation might feed zeros to the
-              model, causing the graph neural network to learn spurious, fabricated
-              relationships between failed nodes. Our framework abandons sequential
-              imputation; it treats missing data as an informative operational state,
-              generating intrinsic resilience through Masked Auto-Encoding.
+              - Traditional pipelines: k-NN or mean substitution treat recovery as isolated pre-processing
+              - Massive outages: Local statistical assumptions break down during non-random data loss
+              - Fabricated relationships: Imputed zeros cause GNN to learn spurious correlations between failed nodes
+              - Our approach: Treat missing data as informative operational state via Masked Auto-Encoding
 
               [Fragments: 1. Separate imputation → 2. Massive outages → 3. Misinterpretation → 4. Informative state → 5. Our framework blockquote]
             </aside>
@@ -312,9 +299,9 @@
             <h2>The RIoT Pipeline</h2>
             <p class="section-subtitle">Resilient IoT: Joint spatial-temporal learning</p>
             <aside class="notes">
-              Section 3 presents the Resilient IoT (RIoT) pipeline architecture. We'll explore
-              the three core modules: Dynamic Graph Learner, Masked Spatiotemporal Encoder,
-              and the Triple Decoders for multi-task learning.
+              - Section 3: The Resilient IoT (RIoT) pipeline architecture
+              - Three core modules: Dynamic Graph Learner, Masked Spatiotemporal Encoder, Triple Decoders
+              - Focus: Joint spatial-temporal learning for multi-task forecasting
 
               [No fragments - section divider]
             </aside>
@@ -325,7 +312,9 @@
             <h3>Data Processing Pipeline</h3>
 
             <aside class="notes">
-              This figure details our data processing pipeline. Raw telemetry feeds from the Newcastle Urban Observatory undergo validation, normalization, and structural parsing. We align timestamps and map them onto the coordinate space, preparing the dynamic inputs and static covariates.
+              - Raw telemetry: Feeds from Newcastle Urban Observatory
+              - Processing steps: Validation, normalization, structural parsing
+              - Output: Aligned timestamps mapped onto coordinate space with dynamic inputs and static covariates
 
               [No fragments - static background diagram]
             </aside>
@@ -368,14 +357,10 @@
             </ul>
 
             <aside class="notes">
-              The RIoT pipeline abandons the Independent and Identically Distributed (I.I.D.)
-              assumption. It is built on three modules: First, the Dynamic Graph Learner
-              infers topology from static features, yielding an adaptive adjacency matrix.
-              Second, the Masked Spatiotemporal Encoder processes the graph spatially via
-              PyTorch Geometric GATv2Conv layers and temporally via Transformer encoders.
-              Third, Decoupled Decoders execute multi-task learning for imputation,
-              forecasting, and spatial kriging. To prevent gradient interference across
-              vehicle classes, the pipeline remains strictly univariate per run.
+              - Dynamic Graph Learner: Infers topology from static features → adaptive adjacency matrix
+              - Masked ST Encoder: GATv2Conv for spatial + Transformer for temporal processing
+              - Triple Decoders: Multi-task learning for imputation, forecasting, and spatial kriging
+              - Strict univariate constraint: Prevents gradient interference across vehicle classes
 
               [Fragments: 1. Dynamic Graph → 2. Arrow → 3. Masked ST Encoder → 4. Arrow → 5. Triple Decoders → 6-9. Bullet points]
             </aside>
@@ -385,10 +370,11 @@
           <section class="top-left-layout" data-background-image="./figures/riot_architecture.svg" data-background-size="720px" data-background-position="center">
             <h3>RIoT Model Architecture</h3>
             <aside class="notes">
-              This diagram shows the complete RIoT model architecture with all three modules:
-              the Dynamic Graph Learner, the Masked Spatiotemporal Encoder, and the Triple
-              Decoders. Study the flow from input features through graph convolution and
-              temporal attention to the final multi-task outputs.
+              - Complete RIoT architecture: All three modules visualized
+              - Module 1: Dynamic Graph Learner
+              - Module 2: Masked Spatiotemporal Encoder
+              - Module 3: Triple Decoders
+              - Flow: Input features → graph convolution → temporal attention → multi-task outputs
 
               [No fragments - static background diagram]
             </aside>
@@ -398,9 +384,9 @@
           <section class="top-left-layout" data-background-image="./figures/riot_architecture_training.svg" data-background-size="720px" data-background-position="center">
             <h3>RIoT Training & Optimization</h3>
             <aside class="notes">
-              This shows the training workflow including the multi-task loss computation,
-              gradient flow, and optimizer configuration. Note how the three decoder heads
-              contribute separate loss terms that are weighted and combined.
+              - Training workflow: Multi-task loss computation, gradient flow, optimizer configuration
+              - Three decoder heads: Each contributes separate loss terms
+              - Loss combination: Terms are weighted and combined for joint optimization
 
               [No fragments - static background diagram]
             </aside>
@@ -408,9 +394,9 @@
           <section class="top-left-layout" data-background-image="./figures/v2_riot_train.svg" data-background-size="1480px" data-background-position="center">
             <h3>RIoT Training & Optimization</h3>
             <aside class="notes">
-              This is the detailed version of the training architecture showing the complete
-              forward and backward pass through all modules. Pay attention to the masking
-              strategy applied during training for the spatial kriging decoder.
+              - Detailed training architecture: Complete forward and backward pass through all modules
+              - Key element: Masking strategy applied during training for spatial kriging decoder
+              - Flow: From input features → graph convolution → temporal attention → multi-task outputs
 
               [No fragments - static background diagram]
             </aside>
@@ -438,14 +424,10 @@
             </blockquote>
 
             <aside class="notes">
-              Because urban networks lack explicit routing topologies, the
-              DynamicGraphLearner dynamically infers graph structure using static
-              environmental covariates like point-of-interest density. It uses multi-head
-              GAT or linear embeddings with pairwise similarity to learn a dense adjacency
-              matrix, which is converted to sparse edge indices via a ReLU and a sparsity
-              threshold. Crucially, to prevent trivial spatial leakage, raw spatial
-              coordinates are deliberately discarded prior to model ingestion and are never
-              passed to the model as features.
+              - Problem: Urban networks lack explicit routing topologies
+              - Solution: DynamicGraphLearner infers structure from static covariates (POI density, etc.)
+              - Process: Multi-head GAT learns dense adjacency → ReLU + sparsity threshold → sparse edge indices
+              - Critical constraint: Raw spatial coordinates deliberately discarded to prevent trivial leakage
 
               [Fragments: 1. Lack topologies → 2. Uses covariates → 3. ReLU threshold → 4. Constraint blockquote]
             </aside>
@@ -454,15 +436,11 @@
           <!-- 3.3 Dynamic Topology Graph Figure -->
           <section data-background-iframe="./figures/topology-graph.html" data-background-interactive>
             <aside class="notes">
-              This side-by-side comparison uses the real sensor network from run
-              dark-brook-37. The left graph connects each sensor to its four nearest
-              neighbours by Euclidean proximity — the naive k-nearest-neighbour approach.
-              The right graph shows the learned adjacency, where each node keeps its four
-              strongest GAT attention edges; nodes are coloured by attention centrality and
-              edge thickness encodes attention weight. Crucially, around 85% of the learned
-              edges are non-local — they connect sensors that are not spatial neighbours —
-              showing how the GAT discovers functional relationships that raw distance
-              cannot capture.
+              - Left graph: Naive k-nearest-neighbor (4 nearest by Euclidean distance)
+              - Right graph: Learned adjacency (4 strongest GAT attention edges per node)
+              - Visual encoding: Node color = attention centrality, edge thickness = attention weight
+              - Key finding: ~85% of learned edges are non-local (not spatial neighbors)
+              - Insight: GAT discovers functional relationships that raw distance cannot capture
             </aside>
           </section>
 
@@ -479,9 +457,9 @@
             <h2>Spatial Estimation & Kriging</h2>
             <p class="section-subtitle">Bridging spatial gaps with physical edge features</p>
             <aside class="notes">
-              Section 4 addresses spatial estimation and kriging. We'll show how the model
-              reconstructs data for entirely unknown locations using edge-enriched features
-              and a dedicated kriging decoder.
+              - Section 4: Spatial estimation and kriging
+              - Challenge: Reconstruct data for entirely unknown locations
+              - Solution: Edge-enriched features + dedicated kriging decoder
 
               [No fragments - section divider]
             </aside>
@@ -511,14 +489,10 @@
             </p>
 
             <aside class="notes">
-              Our diagnosis revealed that while the base model learned imputation and
-              forecasting, it failed at spatial kriging — reconstructing data for an unknown
-              location given only its spatial context. If we drop a simulated node into the
-              graph, it produces a bland, mean-regressed forecast. To fix this, we
-              implemented an IGNNK-style spatial holdout strategy. We randomly sample about
-              15% of nodes per batch, replace their dynamic features with zeros, and train
-              a dedicated kriging decoder to reconstruct their full time series from graph
-              context alone.
+              - Baseline limitation: Learns temporal self-repair at known locations but fails at spatial kriging for unknown nodes
+              - Failure mode: Simulated nodes produce bland, mean-regressed forecasts
+              - IGNNK-style solution: Randomly sample ~15% nodes per batch, mask their dynamic features with zeros
+              - Dedicated kriging decoder: Trained to reconstruct full time series from graph context alone
 
               [Fragments: 1. Baseline models → 2. Cannot reconstruct unknown → 3. IGNNK solution → 4. Kriging decoder]
             </aside>
@@ -557,13 +531,10 @@
             </div>
 
             <aside class="notes">
-              Previously, our attention mechanism used a 1-dimensional similarity score,
-              which couldn't differentiate between nodes 50m apart on a physical street
-              versus 5km apart with similar POI profiles. We resolved this via Edge Feature
-              Enrichment. For every edge, we pre-compute network distance along the walking
-              graph, path directness, and road type composition from OSMnx highway tags.
-              This multi-dimensional edge attribute tensor enables the GATv2Conv layer to
-              understand the physical reality of the connections.
+              - Before: 1D similarity score couldn't differentiate 50m vs 5km distances with similar POI profiles
+              - After: Multi-dimensional edge attribute tensor [E, edge_dim]
+              - Features: Network distance (walking graph), path directness, road type composition (OSMnx)
+              - Impact: GATv2Conv understands physical reality of connections, not just feature similarity
 
               [Fragments: Left column "Before" - 1-2, Right column "After" - 3-5]
             </aside>
@@ -580,14 +551,11 @@
           <!-- 4.3 Spatial Kriging Reconstruction (real data snapshot) -->
           <section data-background-iframe="./figures/kriging-map.html" data-background-interactive>
             <aside class="notes">
-              This map shows the kriging decoder's predictions across the real Newcastle
-              sensor network, drawn from a snapshot of the held-out evaluation period
-              (run dark-brook-37). Each marker is a real sensor coloured by its predicted
-              count; the dashed orange links show the learned graph context that each
-              entirely simulated, out-of-sample node is reconstructed from. The simulated
-              nodes carry no observations of their own — their predictions come purely from
-              the attention-weighted neighbourhood, which is exactly the spatial kriging
-              capability we set out to validate.
+              - Snapshot: Real Newcastle network from held-out evaluation (run dark-brook-37)
+              - Markers: Real sensors colored by predicted count
+              - Orange dashed links: Learned graph context for simulated nodes
+              - Simulated nodes: Carry no observations—predictions from attention-weighted neighborhood only
+              - Validation: Demonstrates spatial kriging capability
             </aside>
           </section>
 
@@ -604,9 +572,9 @@
             <h2>Uncertainty & Scaling</h2>
             <p class="section-subtitle">Building operational trust through probabilistic forecasting</p>
             <aside class="notes">
-              Section 5 focuses on uncertainty quantification and validation. We demonstrate
-              how probabilistic forecasting with ZINB loss and proper calibration builds
-              operational trust for real-world deployment.
+              - Section 5: Uncertainty quantification and validation
+              - Focus: Probabilistic forecasting with ZINB loss
+              - Goal: Building operational trust through proper calibration
 
               [No fragments - section divider]
             </aside>
@@ -632,81 +600,34 @@
             </div>
 
             <aside class="notes">
-              To manage the Total Null-Zero Conflation, we forecast using a Zero-Inflated
-              Negative Binomial (ZINB) loss. This models a probabilistic mixture: the pi
-              parameter captures the likelihood of technical dropouts, while the Negative
-              Binomial component captures genuine environmental zeros. Crucially, while
-              dynamic and static features are globally normalized via StandardScaler to
-              prevent gradient starvation, the target variables must strictly remain as raw,
-              unscaled counts to preserve the domain required mathematically by the ZINB NLL
-              loss.
+              - ZINB predicts: μ (mean), θ (dispersion), π (dropout probability)
+              - Separates genuine environmental zeros from technical dropouts
+              - Raw counts requirement: Target variables remain unscaled to preserve ZINB NLL domain
+              - Feature normalization: Dynamic/static features use StandardScaler to prevent gradient starvation
 
               [Fragments: 1. Predicts parameters → 2. Separates inactivity vs outages → 3. Raw counts → 4. Math equation]
             </aside>
           </section>
 
-          <!-- 5.2 Probabilistic Forecasting Boundaries -->
-          <section>
-            <h2>Probabilistic Forecasting Boundaries</h2>
-            <ul>
-              <li class="fragment fade-up">
-                Quantifies <strong>Aleatoric</strong> (environmental) vs
-                <strong>Epistemic</strong> (model) uncertainty
-              </li>
-              <li class="fragment fade-up">
-                Flags novel events to human operators: <em>"I do not know"</em>
-              </li>
-              <li class="fragment fade-up">
-                Enables <strong>classification-with-rejection</strong> workflows at the tactical edge
-              </li>
-            </ul>
-
-            <div class="stat-grid fragment fade-up" style="margin-top: 1em;">
-              <div class="stat-card">
-                <div class="stat-value" style="font-size: 1.2em;">Aleatoric</div>
-                <div class="stat-label">Inherent noise · irreducible</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-value" style="font-size: 1.2em; color: var(--wcci-blue);">Epistemic</div>
-                <div class="stat-label">Lack of knowledge · reducible</div>
-              </div>
-            </div>
-
-            <aside class="notes">
-              Deterministic point predictions suffer from mode collapse during anomalies.
-              By outputting probabilistic boundaries via Gaussian Negative Log-Likelihood,
-              the model separates aleatoric uncertainty (inherent noise) from epistemic
-              uncertainty (lack of knowledge). When epistemic uncertainty spikes, the model
-              explicitly flags its own ignorance to the operator. This physical grounding
-              is critical for "AI-Readiness", allowing human operators to confidently
-              implement classification-with-rejection workflows at the tactical edge.
-
-              [Fragments: 1. Quantifies uncertainty → 2. Flags novel events → 3. Classification-with-rejection → 4-5. Stat cards]
-            </aside>
-          </section>
-
-          <!-- 5.3 Model Predictions & Uncertainty -->
+          <!-- 5.2 Model Predictions & Uncertainty -->
           <section data-background-iframe="./figures/zinb-confidence.html" data-background-interactive>
             <aside class="notes">
-              Here we see the ZINB probabilistic forecast visualization. The orange line shows
-              the predicted mean (μ), the orange shaded region shows the 95% confidence interval
-              from the dispersion parameter (θ), and the purple shading at the bottom indicates
-              dropout probability (π). Black dots are observed counts, and red tick marks at the
-              bottom indicate missing data. The red-shaded vertical region marks a simulated
-              outage window where dropout probability spikes. This demonstrates how the ZINB
-              loss explicitly separates genuine environmental zeros from technical failures.
+              - Orange line: Predicted mean (μ)
+              - Orange shaded region: 95% confidence interval from dispersion (θ)
+              - Purple shading (bottom): Dropout probability (π)
+              - Black dots: Observed counts; Red ticks: Missing data
+              - Red vertical region: Simulated outage where π spikes
+              - Demonstration: ZINB separates genuine zeros from technical failures
             </aside>
           </section>
 
           <!-- 5.4a PIT Diagram — Underdispersed -->
           <section data-background-iframe="./figures/pit-underdispersed.html" data-background-interactive>
             <aside class="notes">
-              This Probability Integral Transform (PIT) diagram shows an underdispersed model
-              run before MLSE calibration. The model was overconfident, with PIT values
-              clustering around 0.5 rather than spreading uniformly — visible as a pronounced
-              peak in the center of the histogram. The dashed line represents the ideal
-              uniform distribution. This clustering indicates the model's uncertainty bands
-              were too narrow, underestimating the true prediction variance.
+              - Before MLSE calibration: Underdispersed model showing overconfidence
+              - PIT histogram: Pronounced peak at 0.5 instead of uniform spread
+              - Dashed line: Ideal uniform distribution
+              - Diagnosis: Uncertainty bands too narrow, underestimating true variance
 
               [No fragments on this slide - static visualization]
             </aside>
@@ -715,15 +636,10 @@
           <!-- 5.4b PIT Diagram — Well-Calibrated -->
           <section data-background-iframe="./figures/pit-calibrated.html" data-background-interactive>
             <aside class="notes">
-              This PIT diagram shows a well-calibrated model after applying MLSE techniques.
-              The PIT distribution is nearly uniform, proving the predicted uncertainty bands
-              are properly calibrated. The histogram bars are relatively even across all bins,
-              approaching the ideal uniform distribution shown by the dashed line.
-
-              This demonstrates that MLSE has significantly improved (though not perfectly
-              calibrated) the model's uncertainty estimates. This calibration is critical for
-              operational trust: it proves the model's uncertainty estimates are honest and
-              reliable, allowing operators to trust the prediction intervals.
+              - After MLSE calibration: Nearly uniform PIT distribution
+              - Histogram bars: Relatively even across bins (approaching ideal dashed line)
+              - Improvement: MLSE significantly improved uncertainty estimates
+              - Operational trust: Honest, reliable prediction intervals operators can trust
 
               [No fragments on this slide - static visualization]
             </aside>
@@ -739,93 +655,54 @@
           <!-- Section Divider -->
           <section class="section-divider">
             <div class="section-number">06</div>
-            <h2>MLOps & Rigorous Engineering</h2>
-            <p class="section-subtitle">Reproducible, publication-grade experimentation</p>
+            <h2>The "Digital Twin"</h2>
+            <p class="section-subtitle">Building a scalable, interactive visualization layer</p>
             <aside class="notes">
-              Section 6 details our MLOps infrastructure. We enforce strict environment
-              isolation, artifact twinning, and comprehensive experiment tracking to ensure
-              all results are reproducible and traceable.
+              - Section 6: The "Digital Twin" (in quotes - not a true real-time twin)
+              - Focus: Scalable MLOps infrastructure + interactive visualization dashboard
+              - Goal: Reproducible research with accessible model exploration
 
               [No fragments - section divider]
             </aside>
           </section>
 
-          <!-- 6.1 Strict Environment Isolation -->
+          <!-- 6.1 Built for Scale -->
           <section>
-            <h2>Strict Environment Isolation</h2>
-
-            <div class="pipeline" style="margin-top: 1em; margin-bottom: 1.5em;">
-              <div class="pipeline-step fragment fade-up">
-                <span class="step-icon"><i class="bx bxl-docker"></i></span>
-                CPU<br/>Container
-              </div>
-              <span class="pipeline-arrow fragment">⇌</span>
-              <div class="pipeline-step active fragment fade-up">
-                <span class="step-icon"><i class="bx bx-chip"></i></span>
-                GPU<br/>Container
-              </div>
-              <span class="pipeline-arrow fragment">⇌</span>
-              <div class="pipeline-step fragment fade-up">
-                <span class="step-icon"><i class="bx bx-window-alt"></i></span>
-                Frontend<br/>Container
-              </div>
-            </div>
+            <h2>Built for Scale</h2>
 
             <ul>
               <li class="fragment fade-up">
-                <strong>Zero Host Download Policy:</strong> No local virtual environments
+                <strong>Containerized Pipeline:</strong> Dockerized execution ensures reproducibility and isolation
               </li>
               <li class="fragment fade-up">
-                <strong>Dockerized Execution:</strong> Segmented CPU, GPU, and Frontend containers
+                <strong>Experiment Tracking:</strong> W&B integration for model versioning and traceability
               </li>
               <li class="fragment fade-up">
-                <strong>Decoupled Parallelism:</strong> Static payload bridges isolate UI development
-              </li>
-            </ul>
-
-            <aside class="notes">
-              To ensure reproducible, publication-grade results, the entire pipeline is
-              governed by a strict MLOps blueprint. We enforce a "Zero Host Download"
-              policy—all code execution and dependency management occurs strictly inside
-              designated Docker containers. We utilize "Decoupled Parallelism,"
-              independently developing the Next.js frontend via a static ui_payload.json
-              generated from a strict visual holdout set to prevent data leakage.
-
-              [Fragments: 1-3. Pipeline steps with arrows, 4-6. Bullet points]
-            </aside>
-          </section>
-
-          <!-- 6.2 Optuna Ablation & Traceability -->
-          <section>
-            <h2>Optuna Ablation & Traceability</h2>
-            <ul>
-              <li class="fragment fade-up">
-                Hyperparameters tuned via <strong>SQLite-backed Optuna</strong> sweeps
-              </li>
-              <li class="fragment fade-up">
-                Every payload stamped with <strong>"Artifact Twinning"</strong> metadata
-              </li>
-              <li class="fragment fade-up">
-                High-resolution analysis scripts extract parameter importance
+                <strong>Artifact Twinning:</strong> Every output links back to exact model state via Git + Run IDs
               </li>
             </ul>
 
             <blockquote class="fragment fade-up" style="margin-top: 1em;">
-              <i class="bx bx-link" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
-              <strong>Artifact Twinning:</strong> Every UI payload embeds its W&B Run ID
-              and Git Commit Hash — linking visual behavior back to the exact mathematical
-              state of the model.
+              <i class="bx bx-code-block" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+              This system was designed with scalability in mind — from strict environment isolation to comprehensive experiment tracking.
             </blockquote>
 
             <aside class="notes">
-              The architecture was rigorously validated through Optuna hyperparameter sweeps
-              managed via centralized YAML configurations. To guarantee experiment
-              traceability, every generated UI payload is embedded with 'Artifact Twinning'
-              metadata, including the Weights and Biases Run ID and the specific Git Commit
-              Hash. This ensures we can explicitly link visual behavior in the dashboard
-              back to the exact mathematical state of the underlying model.
+              - Containerized pipeline: Docker ensures reproducible execution and environment isolation
+              - Experiment tracking: W&B integration for model versioning and metrics
+              - Artifact twinning: Git commit hash + Run ID links every output to exact model state
+              - Core principle: Scalability designed in from the start
 
-              [Fragments: 1. Optuna sweeps → 2. Artifact Twinning → 3. High-resolution analysis → 4. Blockquote]
+              [Fragments: 1-3. Three key scalability points → 4. Blockquote]
+            </aside>
+          </section>
+
+          <!-- 6.2 Live Digital Twin Demo -->
+          <section data-background-iframe="https://ml-agent-workspace.vercel.app/" data-background-interactive>
+            <aside class="notes">
+              - Live demo: Deployed Next.js "digital twin" with real model payloads
+              - Features to demonstrate: Model selection, time slider, node inspection, attention overlays
+              - Interactive visualization: Explore predictions, uncertainty, and learned graph topology
             </aside>
           </section>
 
@@ -842,7 +719,10 @@
             <h2>Conclusion</h2>
             <p class="section-subtitle">Achieving AI-Readiness at the edge</p>
             <aside class="notes">
-              Final section: we summarize the key contributions and achievements of this
+              - Final section: Summary of key contributions and achievements
+              - Focus: How this work achieves AI-Readiness at the edge
+
+              [No fragments - section divider]
               research, demonstrating how we've achieved AI-Readiness for edge deployment
               in urban sensor networks.
 
@@ -890,12 +770,11 @@
             </div>
 
             <aside class="notes">
-              In conclusion, this research successfully bridges the gap between theoretical
-              GNNs and the messy reality of urban sensor networks. By abandoning brittle
-              imputation, enriching spatial kriging with physical road typologies, and
-              exposing mathematical uncertainty bounds, we transition AI from a fragile
-              oracle into a resilient, "AI-Ready" decision-support tool. Thank you, and I
-              look forward to your questions.
+              - Achievement 1: Intrinsic resilience against massive missing data via Masked Auto-Encoding
+              - Achievement 2: Physical edge-enriched spatial kriging with road network features
+              - Achievement 3: Explicit uncertainty quantification through ZINB probabilistic forecasting
+              - Achievement 4: Scalable, isolated MLOps pipeline for reproducible research
+              - Impact: Transitions AI from fragile oracle to resilient, AI-Ready decision-support tool
 
               [Fragments: 1-4. Four key achievement cards]
             </aside>
@@ -926,7 +805,11 @@
             </ul>
 
             <aside class="notes">
-              While our current ZINB loss successfully models heteroscedastic aleatoric uncertainty — the inherent noise and structural zeros in the sensor environment — it does not quantify epistemic uncertainty, which is the model's own ignorance when facing out-of-distribution scenarios. A critical future direction for this research is to implement techniques like Monte Carlo Dropout or Deep Ensembles to capture model variance, alongside Conformal Prediction for robust, distribution-free coverage guarantees. This would allow the digital twin to explicitly signal when it is "guessing."
+              - Current State: ZINB successfully models aleatoric uncertainty (inherent noise and structural zeros)
+              - Next Frontier: Quantify epistemic uncertainty (model's ignorance for out-of-distribution scenarios)
+              - Deep Ensembles & MC Dropout: Generate predictive distributions to capture model variance
+              - Conformal Prediction: Provide distribution-free marginal coverage guarantees
+              - Impact: Digital twin could explicitly signal when it is "guessing"
 
               [Fragments: 1. Current State → 2. Next Frontier → 3. Proposed Methods with sub-bullets]
             </aside>
@@ -943,25 +826,13 @@
               Newcastle University · Urban Observatory
             </p>
             <aside class="notes">
-              Thank you for your attention. I'm now happy to take any questions about the
-              research, methodology, results, or future directions.
+              - Thank you for your attention
+              - Open for questions on: research methodology, results, future directions
 
               [No fragments - final slide]
             </aside>
           </section>
 
-        </section>
-
-        <!-- ═══════════════════════════════════════════════════════════
-             LIVE DEMO: Digital Twin Dashboard (full-screen iframe)
-             ═══════════════════════════════════════════════════════════ -->
-        <section data-background-iframe="https://ml-agent-workspace.vercel.app/" data-background-interactive>
-          <aside class="notes">
-            Final live demo. This is the deployed Next.js digital twin running against the
-            real model payloads. Walk through model selection, the time slider, node
-            inspection, and the attention overlays here before opening the floor for
-            questions.
-          </aside>
         </section>
 
       </div><!-- /.slides -->

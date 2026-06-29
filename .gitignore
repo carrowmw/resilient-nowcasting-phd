@@ -3,7 +3,6 @@ wandb/
 models/
 digest.txt
 node_modules/
-dist/
 build/
 logs/
 .next/
