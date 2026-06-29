@@ -16,6 +16,8 @@ services:
       - ~/.config/gcloud:/root/.config/gcloud  # This is required for ADC authentication
     stdin_open: true
     tty: true
+    networks:
+      - ml-network
 
   # Isolated Frontend Environment
   frontend-dev:
