@@ -39,7 +39,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
     && chmod +x /usr/local/bin/claude
 
 # 5. Install extensions
-RUN gemini extensions install https://github.com/wandb/wandb-mcp-server
+RUN gemini extensions install --consent https://github.com/wandb/wandb-mcp-server
 
 # Note: MCP setup commands below require the environment variables to be active during runtime.
 # If these configure steps need to happen during image build, ensure the variables are present,
