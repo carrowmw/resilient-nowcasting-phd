@@ -15,3 +15,7 @@ fastapi
 uvicorn
 osmnx
 boto3
+# Phase 2 (Training Database) dependencies
+alembic
+psycopg2-binary
+python-dotenv

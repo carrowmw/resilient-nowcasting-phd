@@ -36,9 +36,67 @@ Expected output: All ✓ (green checks) except warnings for services not running
 
 ---
 
+## Phase 2: Container Architecture
+
+> **📖 Detailed Guide**: See [docs/CONTAINER_USAGE_GUIDE.md](docs/CONTAINER_USAGE_GUIDE.md) for comprehensive container workflows and troubleshooting.
+
+Before starting, understand how the containers interact:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Docker Host                           │
+│                                                              │
+│  ┌────────────────────────┐      ┌──────────────────────┐  │
+│  │  agent-workspace       │      │   timescaledb        │  │
+│  │  (Python environment)  │──────│   (Database server)  │  │
+│  │                        │      │                      │  │
+│  │  - Alembic             │      │  - PostgreSQL 16     │  │
+│  │  - psycopg2            │      │  - TimescaleDB ext   │  │
+│  │  - Training scripts    │      │  - Port: 5432        │  │
+│  │  - Ingestion scripts   │      │                      │  │
+│  └────────────────────────┘      └──────────────────────┘  │
+│           │                                │                │
+│           └────────────ml-network──────────┘                │
+│                                                              │
+│  DATABASE_URL: postgresql://riotuser:riotpassword@          │
+│                timescaledb:5432/riot_traffic                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Points**:
+- **TimescaleDB container**: Database server only (no Python, no Alembic)
+- **agent-workspace container**: Has Python, Alembic, and all scripts
+- **Connection**: Both containers share the `ml-network` Docker network
+- **DATABASE_URL**: Uses `timescaledb` as hostname (Docker DNS resolution)
+
+**Where to run what**:
+- ✅ **Alembic**: Run from `agent-workspace` container
+- ✅ **Ingestion script**: Run from `agent-workspace` container
+- ✅ **Training**: Run from `agent-workspace` or `gpu-runner` container
+- ❌ **NOT from TimescaleDB**: It's just the database server!
+
+**Note**: All dependencies (alembic, psycopg2-binary, python-dotenv) are installed in the `agent-workspace` container. You must rebuild the container after pulling these changes:
+```bash
+docker-compose build agent-workspace
+```
+
+---
+
 ## Phase 2: Getting Started (30 minutes + 2-3 hour ingestion)
 
-### 1. Start TimescaleDB (2 minutes)
+### 1. Rebuild Containers with Phase 2 Dependencies (5 minutes - one-time)
+
+**IMPORTANT**: Before starting, rebuild the `agent-workspace` container to install Phase 2 dependencies (alembic, psycopg2-binary, python-dotenv):
+
+```bash
+# Rebuild agent-workspace with new dependencies
+docker-compose build agent-workspace
+
+# This will take a few minutes the first time
+# Output should show: "Successfully built..." and "Successfully tagged..."
+```
+
+### 2. Start TimescaleDB (2 minutes)
 
 ```bash
 # Start database container
@@ -51,41 +109,58 @@ docker logs -f ml-timescaledb
 # Press Ctrl+C to exit logs
 ```
 
-### 2. Apply Migrations (1 minute)
+### 3. Apply Migrations (1 minute)
+
+**Important**: Alembic runs from the **agent-workspace container**, not inside the TimescaleDB container. It connects to TimescaleDB over the Docker network.
 
 ```bash
-# Apply schema
-alembic upgrade head
+# Start agent-workspace container if not already running
+docker-compose up -d agent-workspace
+
+# Run Alembic migration inside agent-workspace
+docker-compose exec agent-workspace alembic upgrade head
 
 # Verify tables
 docker exec ml-timescaledb psql -U riotuser -d riot_traffic -c "\dt"
-
-# Expected output:
-#  traffic_readings
-#  model_runs
-#  dataset_versions
-#  alembic_version
 ```
 
-### 3. Ingest Parquet Data (2-3 hours)
+**Expected output**:
+```
+ Schema |       Name        | Type  |  Owner   
+--------+-------------------+-------+----------
+ public | alembic_version   | table | riotuser
+ public | dataset_versions  | table | riotuser
+ public | model_runs        | table | riotuser
+ public | traffic_readings  | table | riotuser
+```
+
+**Architecture Note**: 
+- **TimescaleDB container**: Database server only (PostgreSQL + TimescaleDB extension)
+- **agent-workspace container**: Python environment with Alembic, psycopg2, and migration scripts
+- **Connection**: Alembic in agent-workspace → TimescaleDB via `DATABASE_URL` over `ml-network`
+
+### 4. Ingest Parquet Data (2-3 hours)
+
+**Important**: The ingestion script runs from **agent-workspace container**, connecting to TimescaleDB over the network.
 
 ```bash
 # Create logs directory
 mkdir -p logs
 
 # Dry run first (check row count)
-python scripts/ingest_parquet.py \
+docker-compose exec agent-workspace python scripts/ingest_parquet.py \
     --parquet data/processed/master_dataset_15T.parquet \
     --dry-run
 
 # Expected: "Would insert 121,198,026 rows in 100,000-row batches"
 
-# Full ingestion (background job)
-nohup python scripts/ingest_parquet.py \
+# Full ingestion (background job in container)
+docker-compose exec -d agent-workspace sh -c \
+  "python scripts/ingest_parquet.py \
     --parquet data/processed/master_dataset_15T.parquet \
-    --create-dataset-version > logs/ingestion.log 2>&1 &
+    --create-dataset-version > logs/ingestion.log 2>&1"
 
-# Monitor progress
+# Monitor progress (from host)
 tail -f logs/ingestion.log
 
 # When complete, verify row count
@@ -95,11 +170,13 @@ docker exec ml-timescaledb psql -U riotuser -d riot_traffic \
 # Expected: ~121,198,026 rows
 ```
 
-### 4. Test Database Mode (5 minutes)
+**Performance Note**: Ingestion runs at ~100k rows per batch, taking 2-3 hours for 121M rows. Progress is logged every 10 batches (1M rows).
+
+### 5. Test Database Mode (5 minutes)
 
 ```bash
-# Test with 1 day of data
-python src/train.py \
+# Test with default config
+docker-compose exec agent-workspace python src/train.py \
     --use-database \
     --config configs/train/train.yaml
 
@@ -107,22 +184,30 @@ python src/train.py \
 # Look for: "Loading data from DATABASE between ..."
 ```
 
-### 5. Test Fallback (2 minutes)
+**What to expect**:
+- Log message: `"Loading data from DATABASE between ..."`
+- No connection errors
+- Training completes at least 1 epoch
+- Final validation metrics printed
+
+### 6. Test Fallback (2 minutes)
 
 ```bash
-# Temporarily hide .env
-mv .env .env.bak
+# Temporarily hide .env inside container
+docker-compose exec agent-workspace mv .env .env.bak
 
 # Run without database (should fall back to Parquet)
-python src/train.py \
+docker-compose exec agent-workspace python src/train.py \
     --use-database \
     --config configs/train/train.yaml
 
 # Look for: "Database backend failed (...), falling back to Parquet"
 
 # Restore .env
-mv .env.bak .env
+docker-compose exec agent-workspace mv .env.bak .env
 ```
+
+**What to expect**: Even with `--use-database` flag, the system automatically falls back to Parquet when the database is unreachable. This ensures training never breaks due to database issues.
 
 ---
 
