@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 import psycopg2
 from psycopg2.extras import execute_values
 from dotenv import load_dotenv
@@ -26,12 +27,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ingest_parquet")
 
 DEFAULT_BATCH_SIZE = 100_000
+DEFAULT_CHUNK_SIZE = 1_000_000  # Stream parquet file in chunks of 1M rows
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Ingest Parquet to TimescaleDB")
     p.add_argument("--parquet", required=True, help="Path to master_dataset_15T.parquet")
     p.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    p.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument(
         "--create-dataset-version",
@@ -43,8 +46,7 @@ def parse_args():
 
 def get_db_conn():
     url = os.getenv("DATABASE_URL")
-    if not url:
-        raise SystemExit("DATABASE_URL not set in .env")
+    assert url is not None, "DATABASE_URL environment variable is not set in .env"
     return psycopg2.connect(url)
 
 
@@ -71,13 +73,16 @@ def get_git_metadata():
         return "unknown", "unknown"
 
 
-def ingest_traffic_readings(df: pd.DataFrame, conn, batch_size: int, dry_run: bool):
+def ingest_traffic_readings_chunk(df: pd.DataFrame, conn, batch_size: int, dry_run: bool, chunk_idx: int):
     """
-    Bulk insert traffic readings using psycopg2 execute_values.
+    Bulk insert a single chunk of traffic readings using psycopg2 execute_values.
 
     Schema: (dt, sensor_id, veh_class, direction, count)
     Parquet columns: dt, location, veh_class, dir, value
     """
+    assert set(["dt", "location", "veh_class", "dir", "value"]).issubset(df.columns), \
+        f"Missing columns in dataframe chunk. Found: {list(df.columns)}"
+
     # Filter to core traffic columns
     df_traffic = df[["dt", "location", "veh_class", "dir", "value"]].copy()
     df_traffic = df_traffic.dropna(subset=["dt", "location", "veh_class", "dir", "value"])
@@ -85,12 +90,17 @@ def ingest_traffic_readings(df: pd.DataFrame, conn, batch_size: int, dry_run: bo
     # Rename to match schema
     df_traffic.columns = ["dt", "sensor_id", "veh_class", "direction", "count"]
 
+    # Convert dt to python datetime objects so to_records does not cast to bigint,
+    # using map to preserve the index alignment after dropna.
+    df_traffic['dt'] = df_traffic['dt'].map(lambda x: x.to_pydatetime())
+
+
     # Convert to records
     records = df_traffic.to_records(index=False).tolist()
     total = len(records)
 
     if dry_run:
-        logger.info(f"[DRY RUN] Would insert {total:,} rows in {batch_size:,}-row batches")
+        logger.info(f"[DRY RUN] [Chunk {chunk_idx}] Would insert {total:,} rows in {batch_size:,}-row batches")
         return total
 
     cursor = conn.cursor()
@@ -107,13 +117,10 @@ def ingest_traffic_readings(df: pd.DataFrame, conn, batch_size: int, dry_run: bo
             batch,
             template="(%s, %s, %s, %s, %s)",
         )
-        inserted += cursor.rowcount
-        if (i + batch_size) % (batch_size * 10) == 0 or i + batch_size >= total:
-            logger.info(f"  Inserted {inserted:,} / {total:,} rows ({100*inserted/total:.1f}%)")
-
     conn.commit()
-    logger.info(f"Committed {inserted:,} rows (duplicates skipped via ON CONFLICT)")
-    return inserted
+    logger.info(f"[Chunk {chunk_idx}] Processed and committed {total:,} rows (ON CONFLICT DO NOTHING applied)")
+    return total
+
 
 
 def create_dataset_version(conn, parquet_path: str, row_count: int):
@@ -150,16 +157,30 @@ def create_dataset_version(conn, parquet_path: str, row_count: int):
 def main():
     args = parse_args()
 
-    logger.info(f"Loading parquet from {args.parquet}")
-    df = pd.read_parquet(args.parquet, columns=["dt", "location", "veh_class", "dir", "value"])
-    logger.info(f"Loaded {len(df):,} rows")
-
+    logger.info(f"Opening parquet file: {args.parquet}")
+    parquet_file = pq.ParquetFile(args.parquet)
+    
     conn = get_db_conn()
+    total_processed_rows = 0
+    total_inserted = 0
+    chunk_idx = 1
+    
     try:
-        inserted = ingest_traffic_readings(df, conn, args.batch_size, args.dry_run)
+        # Use pyarrow to stream the dataset in memory-efficient chunks
+        for batch in parquet_file.iter_batches(batch_size=args.chunk_size, columns=["dt", "location", "veh_class", "dir", "value"]):
+            df_chunk = batch.to_pandas()
+            chunk_len = len(df_chunk)
+            total_processed_rows += chunk_len
+            
+            logger.info(f"Processing chunk {chunk_idx} ({chunk_len:,} rows). Total so far: {total_processed_rows:,}")
+            inserted = ingest_traffic_readings_chunk(df_chunk, conn, args.batch_size, args.dry_run, chunk_idx)
+            total_inserted += inserted
+            chunk_idx += 1
+
+        logger.info(f"Successfully processed all chunks. Total rows: {total_processed_rows:,}, Total inserted: {total_inserted:,}")
 
         if args.create_dataset_version and not args.dry_run:
-            create_dataset_version(conn, args.parquet, inserted)
+            create_dataset_version(conn, args.parquet, total_inserted)
     finally:
         conn.close()
 
@@ -168,3 +189,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
