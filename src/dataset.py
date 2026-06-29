@@ -18,36 +18,27 @@ class RealIoTDataset(Dataset):
     Loads real parquet data efficiently using memory-friendly time filters.
     Groups data by location, applies sliding window extraction, and injects NaN masking.
     """
-    def __init__(self, 
-                 parquet_path: str, 
-                 start_date: str, 
-                 end_date: str, 
-                 seq_len: int = 12, 
+    def __init__(self,
+                 parquet_path: str,
+                 start_date: str,
+                 end_date: str,
+                 seq_len: int = 12,
                  mask_prob: float = 0.15,
                  target_veh_class: str = 'person',
-                 target_dir: str = 'all'):
-        
-        logger.info(f"Loading data from {parquet_path} between {start_date} and {end_date}")
-        
+                 target_dir: str = 'all',
+                 use_database: bool = False):
+
+        logger.info(f"Loading data from {parquet_path if not use_database else 'DATABASE'} "
+                    f"between {start_date} and {end_date}")
+
         # 1. Load Data with Time Filter Constraints
         start_dt = pd.Timestamp(start_date)
         end_dt = pd.Timestamp(end_date)
-        
-        df = pd.read_parquet(
-            parquet_path,
-            filters=[
-                ('dt', '>=', start_dt),
-                ('dt', '<', end_dt)
-            ],
-            columns=[
-                'dt', 'location', 'value', 'Humidity', 'Solar Radiation',
-                'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-                'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-                'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-                'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking',
-                'veh_class', 'dir'
-            ]
-        )
+
+        if use_database:
+            df = self._load_from_database(start_dt, end_dt, target_veh_class, target_dir)
+        else:
+            df = self._load_from_parquet(parquet_path, start_dt, end_dt, target_veh_class, target_dir)
         
         if df.empty:
             raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
@@ -158,6 +149,78 @@ class RealIoTDataset(Dataset):
         logger.info(f"Static features scaled: mean≈0, std≈1 over {stat_np.shape[0]} nodes.")
         
         logger.info(f"Feature dimensions established. Static: {self.static_feat_dim}, Dynamic: {self.time_series_dim}")
+
+    def _load_from_parquet(self, parquet_path, start_dt, end_dt, veh_class, direction):
+        """Existing Parquet loading logic (unchanged)."""
+        df = pd.read_parquet(
+            parquet_path,
+            filters=[
+                ('dt', '>=', start_dt),
+                ('dt', '<', end_dt)
+            ],
+            columns=[
+                'dt', 'location', 'value', 'Humidity', 'Solar Radiation',
+                'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
+                'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
+                'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
+                'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking',
+                'veh_class', 'dir'
+            ]
+        )
+        return df
+
+    def _load_from_database(self, start_dt, end_dt, veh_class, direction):
+        """
+        Load traffic readings from TimescaleDB and join with static features cache.
+
+        Returns a DataFrame matching the Parquet schema.
+        """
+        import psycopg2
+        import os
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            raise ValueError("DATABASE_URL not set — cannot use database mode")
+
+        conn = psycopg2.connect(db_url)
+        cursor = conn.cursor()
+
+        # Query traffic readings with filters
+        query = """
+            SELECT dt, sensor_id, veh_class, direction, count
+            FROM traffic_readings
+            WHERE dt >= %s AND dt < %s
+              AND veh_class = %s
+            ORDER BY dt, sensor_id
+        """
+        params = [start_dt, end_dt, veh_class]
+
+        if direction != 'all':
+            query = query.replace("ORDER BY", "AND direction = %s ORDER BY")
+            params.append(direction)
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            raise ValueError(f"No database rows for {start_dt} to {end_dt}, veh_class={veh_class}")
+
+        df = pd.DataFrame(rows, columns=["dt", "location", "veh_class", "dir", "value"])
+
+        # Join with static features cache (weather + spatial metadata)
+        # This requires a separate table or JSON cache — for MVP, fall back to Parquet
+        logger.warning("Database mode: static features still loaded from Parquet cache")
+        static_cache_path = "data/external/static_features_cache.parquet"
+        if os.path.exists(static_cache_path):
+            static_df = pd.read_parquet(static_cache_path)
+            df = df.merge(static_df, on=["dt", "location"], how="left")
+        else:
+            raise FileNotFoundError(f"Static features cache not found: {static_cache_path}")
+
+        return df
 
     def __len__(self) -> int:
         return max(0, len(self.times) - self.seq_len)

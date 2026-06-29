@@ -67,3 +67,32 @@ services:
     environment:
       - WANDB_API_KEY=${WANDB_API_KEY}
       - GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}
+
+  # TimescaleDB for training database (Phase 2)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: ml-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-riotuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-riotpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-riot_traffic}
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - ml-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-riotuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  timescaledb_data:
+    driver: local
+
+networks:
+  ml-network:
+    driver: bridge

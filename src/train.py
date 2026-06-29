@@ -35,6 +35,11 @@ def parse_args():
         action="store_true",
         help="Use mock data instead of real parquet data",
     )
+    parser.add_argument(
+        "--use-database",
+        action="store_true",
+        help="Load data from TimescaleDB instead of Parquet (Phase 2)",
+    )
     return parser.parse_args()
 
 
@@ -214,15 +219,34 @@ def run_training(
         logger.info(f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}")
         parquet_path = "data/processed/master_dataset_15T.parquet"
         try:
-            full_dataset = RealIoTDataset(
-                parquet_path,
-                data_cfg["start_date"],
-                data_cfg["end_date"],
-                seq_len=data_cfg["seq_len"],
-                mask_prob=data_cfg.get("mask_prob", 0.15),
-                target_veh_class=data_cfg["target_veh_class"],
-                target_dir=data_cfg["target_dir"],
-            )
+            # Try database first if flag is set, fall back to Parquet on error
+            use_db = getattr(args, 'use_database', False)
+            try:
+                full_dataset = RealIoTDataset(
+                    parquet_path,
+                    data_cfg["start_date"],
+                    data_cfg["end_date"],
+                    seq_len=data_cfg["seq_len"],
+                    mask_prob=data_cfg.get("mask_prob", 0.15),
+                    target_veh_class=data_cfg["target_veh_class"],
+                    target_dir=data_cfg["target_dir"],
+                    use_database=use_db,
+                )
+            except Exception as db_exc:
+                if use_db:
+                    logger.warning(f"Database backend failed ({db_exc}), falling back to Parquet")
+                    full_dataset = RealIoTDataset(
+                        parquet_path,
+                        data_cfg["start_date"],
+                        data_cfg["end_date"],
+                        seq_len=data_cfg["seq_len"],
+                        mask_prob=data_cfg.get("mask_prob", 0.15),
+                        target_veh_class=data_cfg["target_veh_class"],
+                        target_dir=data_cfg["target_dir"],
+                        use_database=False,
+                    )
+                else:
+                    raise
 
             train_size = int(0.8 * len(full_dataset))
             val_size = len(full_dataset) - train_size

@@ -40,7 +40,10 @@
       "Bash(node -e \"try{require.resolve\\('puppeteer'\\);console.log\\('puppeteer available'\\)}catch\\(e\\){try{require.resolve\\('playwright'\\);console.log\\('playwright available'\\)}catch\\(e2\\){console.log\\('no headless browser module'\\)}}\")",
       "Bash(curl -s \"https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs/dark-brook-37/2026-05-15/page.json\")",
       "Bash(curl -s \"https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs/pretty-glitter-29/2026-05-15/page.json\")",
-      "Bash(awk *)"
+      "Bash(awk *)",
+      "Bash(alembic init *)",
+      "Bash(chmod +x *)",
+      "Bash(bash *)"
     ]
   }
 }
