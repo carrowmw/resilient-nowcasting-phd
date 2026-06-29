@@ -26,7 +26,7 @@ def upgrade():
         sa.Column('sensor_id', sa.Text(), nullable=False),
         sa.Column('veh_class', sa.Text(), nullable=False),
         sa.Column('direction', sa.Text(), nullable=False),
-        sa.Column('count', sa.Real(), nullable=False),
+        sa.Column('count', sa.Float(), nullable=False),
         sa.PrimaryKeyConstraint('dt', 'sensor_id', 'veh_class', 'direction')
     )
     op.execute(
@@ -77,12 +77,12 @@ def upgrade():
         sa.Column('git_branch', sa.Text(), nullable=False),
         sa.Column('config_yaml', JSONB, nullable=False),
         sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('NOW()')),
-        sa.Column('val_rmse', sa.Real()),
-        sa.Column('val_mae', sa.Real()),
-        sa.Column('val_zero_acc', sa.Real()),
-        sa.Column('val_loss', sa.Real()),
+        sa.Column('val_rmse', sa.Float()),
+        sa.Column('val_mae', sa.Float()),
+        sa.Column('val_zero_acc', sa.Float()),
+        sa.Column('val_loss', sa.Float()),
         sa.Column('batch_size', sa.Integer()),
-        sa.Column('learning_rate', sa.Real()),
+        sa.Column('learning_rate', sa.Float()),
         sa.Column('num_epochs', sa.Integer()),
         sa.Column('dataset_version_id', sa.Integer(), sa.ForeignKey('dataset_versions.version_id'))
     )
