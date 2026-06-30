@@ -116,18 +116,45 @@ class RealIoTDataset(Dataset):
         # convert these to signed floats and corrupt the loss domain.
         self.unscaled_traffic = val_arr.copy()  # [num_times, num_nodes]
 
-        # [num_times, num_nodes, 3]
-        self.dynamic_data = np.stack([val_arr, hum_arr, sol_arr], axis=-1)
+        # PHASE 1: Separate scaling for traffic (ch 0) vs weather (ch 1-2)
+        # to enable TRUE MSLE on raw counts via inverse transform in loss computation.
+
+        num_times = len(self.times)
+        num_nodes_d = len(self.locations)
+
+        # Traffic channel: Fit dedicated scaler and expose statistics
+        traffic_flat = val_arr.reshape(-1, 1)  # [T*N, 1]
+        self.traffic_scaler = StandardScaler()
+        traffic_scaled_flat = self.traffic_scaler.fit_transform(traffic_flat)
+        traffic_scaled = traffic_scaled_flat.reshape(num_times, num_nodes_d)  # [T, N]
+
+        # Extract and expose scaler statistics for pipeline buffers
+        self.traffic_mean = float(self.traffic_scaler.mean_[0])
+        self.traffic_std = float(self.traffic_scaler.scale_[0])
+
+        # OFFENSIVE ASSERTIONS
+        assert self.traffic_std > 0, "CRITICAL: Traffic std is zero (constant values)"
+        assert not np.isnan(self.traffic_mean), "CRITICAL: Traffic mean is NaN"
+        assert not np.isnan(self.traffic_std), "CRITICAL: Traffic std is NaN"
+
+        # Weather channels: Separate scaler for humidity and solar radiation
+        weather_arr = np.stack([hum_arr, sol_arr], axis=-1)  # [T, N, 2]
+        weather_flat = weather_arr.reshape(-1, 2)  # [T*N, 2]
+        self.weather_scaler = StandardScaler()
+        weather_scaled_flat = self.weather_scaler.fit_transform(weather_flat)
+        weather_scaled = weather_scaled_flat.reshape(num_times, num_nodes_d, 2)  # [T, N, 2]
+
+        # Stack: [T, N, 3] where dim 0=traffic, dim 1-2=weather
+        self.dynamic_data = np.stack([
+            traffic_scaled,
+            weather_scaled[:, :, 0],  # Humidity
+            weather_scaled[:, :, 1]   # Solar Radiation
+        ], axis=-1)
+
         self.time_series_dim = self.dynamic_data.shape[-1]
 
-        # Scale dynamic features across the full dataset so the model receives
-        # zero-mean, unit-variance inputs — critical for stable gradient flow.
-        num_times, num_nodes_d, n_dyn_features = self.dynamic_data.shape
-        dyn_flat = self.dynamic_data.reshape(-1, n_dyn_features)
-        self.scaler = StandardScaler()
-        dyn_scaled = self.scaler.fit_transform(dyn_flat)
-        self.dynamic_data = dyn_scaled.reshape(num_times, num_nodes_d, n_dyn_features)
-        logger.info(f"Dynamic features scaled: mean≈0, std≈1 over {num_times * num_nodes_d} samples.")
+        logger.info(f"Traffic scaler: mean={self.traffic_mean:.2f}, std={self.traffic_std:.2f}")
+        logger.info(f"Dynamic features scaled separately: traffic (ch0) + weather (ch1-2) over {num_times * num_nodes_d} samples.")
 
         # Static features
         stat_cols = [

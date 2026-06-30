@@ -66,6 +66,31 @@ class ResilientIoTPipeline(nn.Module):
         )
         logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, dropout={dropout}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
 
+        # PHASE 1: Scaler buffers (initialized to sentinel values, set by train.py)
+        self.register_buffer('traffic_mean', torch.tensor(0.0))
+        self.register_buffer('traffic_std', torch.tensor(1.0))
+        logger.info("Registered traffic scaler buffers (traffic_mean, traffic_std)")
+
+    def set_scaler_stats(self, traffic_mean: float, traffic_std: float):
+        """
+        Called by train.py after dataset initialization to populate scaler buffers.
+
+        Args:
+            traffic_mean: Mean of traffic channel from dataset scaler
+            traffic_std: Standard deviation of traffic channel from dataset scaler
+        """
+        import numpy as np
+
+        # OFFENSIVE ASSERTIONS
+        assert traffic_std > 0, f"CRITICAL: Cannot set traffic_std to {traffic_std} (must be positive)"
+        assert not np.isnan(traffic_mean), "CRITICAL: Cannot set traffic_mean to NaN"
+        assert not np.isnan(traffic_std), "CRITICAL: Cannot set traffic_std to NaN"
+
+        self.traffic_mean.fill_(traffic_mean)
+        self.traffic_std.fill_(traffic_std)
+
+        logger.info(f"Scaler buffers set: mean={traffic_mean:.4f}, std={traffic_std:.4f}, device={self.traffic_mean.device}")
+
     def forward(
         self,
         batch: dict,
@@ -144,7 +169,11 @@ class ResilientIoTPipeline(nn.Module):
             mu=mu,
             theta=theta,
             pi=pi,
-            target_forecast=target_forecast
+            target_forecast=target_forecast,
+            traffic_mean=self.traffic_mean,  # PHASE 1: scaler buffers
+            traffic_std=self.traffic_std,    # PHASE 1: scaler buffers
+            w_impute=batch.get('w_impute', 1.0),
+            w_forecast=batch.get('w_forecast', 1.0)
         )
 
         # CRITICAL SAFEGUARD

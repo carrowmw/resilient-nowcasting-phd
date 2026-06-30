@@ -212,28 +212,53 @@ def compute_loss(imputed_features: torch.Tensor,
                  theta: torch.Tensor,
                  pi: torch.Tensor,
                  target_forecast: torch.Tensor,
+                 traffic_mean: torch.Tensor,      # PHASE 1: scaler buffer
+                 traffic_std: torch.Tensor,       # PHASE 1: scaler buffer
                  w_impute: float = 1.0,
                  w_forecast: float = 1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Joint Loss: MSE for Imputation + ZINB NLL for Forecasting.
+    Joint Loss with Channel-Specific Treatment (PHASE 1):
+    - Traffic (channel 0): MSLE on raw counts (inverse transform)
+    - Weather (channels 1-2): MSE on scaled features
+    - Forecasting: ZINB NLL on raw counts
     """
-    # 1. Imputation Loss (MSE)
-    # NSTAR_BACKEND_ARCHITECTURE.md: "strictly on the artificially masked nodes"
-    # Note: In a real scenario, we'd use a mask here.
-    loss_impute = F.mse_loss(imputed_features, target_impute)
 
-    # 2. Forecasting Loss (ZINB NLL)
+    # --- 1. Imputation Loss: Split Traffic vs Weather ---
+
+    # Extract traffic channel (dim 0)
+    traffic_pred_scaled = imputed_features[:, :, :, 0]      # [B, N, T]
+    traffic_target_scaled = target_impute[:, :, :, 0]       # [B, N, T]
+
+    # Inverse transform to raw counts
+    traffic_pred_raw = (traffic_pred_scaled * traffic_std) + traffic_mean
+    traffic_target_raw = (traffic_target_scaled * traffic_std) + traffic_mean
+
+    # Clamp to non-negative (count domain)
+    traffic_pred_raw = torch.clamp(traffic_pred_raw, min=0.0)
+    traffic_target_raw = torch.clamp(traffic_target_raw, min=0.0)
+
+    # Compute TRUE MSLE on raw counts
+    loss_impute_traffic = scale_invariant_mse(traffic_pred_raw, traffic_target_raw)
+
+    # Weather channels: MSE on scaled features (no inverse transform)
+    weather_pred = imputed_features[:, :, :, 1:]      # [B, N, T, 2]
+    weather_target = target_impute[:, :, :, 1:]       # [B, N, T, 2]
+    loss_impute_weather = F.mse_loss(weather_pred, weather_target)
+
+    # Combined imputation loss
+    loss_impute = loss_impute_traffic + loss_impute_weather
+
+    # --- 2. Forecasting Loss (ZINB NLL) - UNCHANGED ---
     loss_forecast = compute_zinb_nll(target_forecast, mu, theta, pi)
 
-    # 3. Total Weighted Loss
+    # --- 3. Total Weighted Loss ---
     total_loss = (w_impute * loss_impute) + (w_forecast * loss_forecast)
 
-    # --- Tripwires (Rule 5 & NSTAR_BACKEND_ARCHITECTURE.md) ---
-    if torch.isnan(total_loss).any():
-        # Print stats for debugging before crashing
-        print(f"DEBUG: mu min={mu.min()}, max={mu.max()}")
-        print(f"DEBUG: theta min={theta.min()}, max={theta.max()}")
-        print(f"DEBUG: pi min={pi.min()}, max={pi.max()}")
-        raise ValueError("CRITICAL FAILURE: Loss is NaN. Mathematical tripwire triggered.")
+    # --- 4. OFFENSIVE ASSERTIONS (Tripwires) ---
+    assert not torch.isnan(loss_impute_traffic), "CRITICAL: Traffic MSLE is NaN"
+    assert not torch.isnan(loss_impute_weather), "CRITICAL: Weather MSE is NaN"
+    assert not torch.isnan(loss_forecast), "CRITICAL: Forecast loss is NaN"
+    assert not torch.isnan(total_loss), "CRITICAL: Total loss is NaN"
+    assert not torch.isinf(total_loss), "CRITICAL: Total loss is Inf"
 
     return total_loss, loss_impute, loss_forecast

@@ -265,6 +265,12 @@ def run_training(
             train_dataset.static_feat_dim = full_dataset.static_feat_dim
             train_dataset.time_series_dim = full_dataset.time_series_dim
 
+            # PHASE 1: Propagate scaler statistics for scale-invariant loss
+            train_dataset.traffic_mean = full_dataset.traffic_mean
+            train_dataset.traffic_std = full_dataset.traffic_std
+            val_dataset.traffic_mean = full_dataset.traffic_mean
+            val_dataset.traffic_std = full_dataset.traffic_std
+
             train_loader = DataLoader(
                 train_dataset,
                 batch_size=train_cfg["batch_size"],
@@ -299,6 +305,34 @@ def run_training(
         dim_feedforward=model_cfg.get("dim_feedforward", 256),
         zinb_eps=model_cfg.get("zinb_eps", 1e-6)
     ).to(device)
+
+    # PHASE 1: Set scaler buffers AFTER moving model to device
+    if not use_mock_data:
+        traffic_mean = train_dataset.traffic_mean
+        traffic_std = train_dataset.traffic_std
+
+        logger.info(f"Extracted scaler stats from train_dataset: mean={traffic_mean:.4f}, std={traffic_std:.4f}")
+
+        model.set_scaler_stats(traffic_mean, traffic_std)
+
+        # DEFENSIVE CHECK: Validation set should have similar statistics
+        # (both subsets reference the same full_dataset, so they should be identical)
+        val_mean_diff = abs(val_dataset.traffic_mean - traffic_mean)
+        val_std_diff = abs(val_dataset.traffic_std - traffic_std)
+        relative_mean_diff = val_mean_diff / traffic_mean if traffic_mean != 0 else float('inf')
+        relative_std_diff = val_std_diff / traffic_std if traffic_std != 0 else float('inf')
+
+        if relative_mean_diff > 0.2 or relative_std_diff > 0.2:
+            logger.warning(
+                f"Train/val scaler mismatch detected: "
+                f"Δmean={val_mean_diff:.2f} ({relative_mean_diff*100:.1f}%), "
+                f"Δstd={val_std_diff:.2f} ({relative_std_diff*100:.1f}%)"
+            )
+        else:
+            logger.info(
+                f"Train/val scaler stats are consistent: "
+                f"Δmean={val_mean_diff:.4f}, Δstd={val_std_diff:.4f}"
+            )
 
     logger.info(
         f"Model initialised — num_nodes={train_dataset.num_nodes}, "
