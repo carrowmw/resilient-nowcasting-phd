@@ -162,6 +162,68 @@ def scale_invariant_mse(pred: torch.Tensor, target: torch.Tensor, eps: float = 1
     return F.mse_loss(log_pred, log_target)
 
 
+def compute_kriging_loss(kriging_pred: torch.Tensor,
+                         target_impute: torch.Tensor,
+                         holdout_mask: torch.Tensor,
+                         traffic_mean: torch.Tensor,
+                         traffic_std: torch.Tensor) -> torch.Tensor:
+    """
+    Spatial-kriging reconstruction loss on the held-out nodes (Component 2, docs §5.5).
+
+    Mirrors the imputation head's channel-specific treatment so the two losses are
+    directly comparable:
+      - Traffic (channel 0): TRUE MSLE on raw counts (inverse-transformed from scaled).
+      - Weather (channels 1-2): MSE on scaled features.
+
+    Args:
+        kriging_pred:  [B, K, T, D] reconstructed series for held-out nodes
+                       (K = holdout_mask.sum()).
+        target_impute: [B, N, T, D] ground-truth series over the full spatial grid.
+        holdout_mask:  [N] boolean, True = held out.
+        traffic_mean:  scalar scaler buffer (raw-count mean).
+        traffic_std:   scalar scaler buffer (raw-count std).
+
+    Returns:
+        Scalar kriging loss (traffic MSLE + weather MSE). Returns 0.0 when no nodes
+        are held out (avoids NaN from F.mse_loss over an empty tensor).
+    """
+    target_holdout = target_impute[:, holdout_mask, :, :]  # [B, K, T, D]
+
+    assert kriging_pred.shape == target_holdout.shape, \
+        f"CRITICAL: kriging shape mismatch: pred {tuple(kriging_pred.shape)} " \
+        f"vs target {tuple(target_holdout.shape)}"
+
+    # Empty-holdout guard: a random training mask can select zero nodes on small N.
+    # F.mse_loss over an empty tensor returns NaN, so short-circuit to a clean zero
+    # that still participates in the graph on the correct device.
+    if kriging_pred.numel() == 0:
+        return torch.zeros((), device=kriging_pred.device)
+
+    # Traffic channel (ch 0): inverse transform to raw counts, then TRUE MSLE.
+    traffic_pred_scaled = kriging_pred[:, :, :, 0]
+    traffic_target_scaled = target_holdout[:, :, :, 0]
+
+    traffic_pred_raw = (traffic_pred_scaled * traffic_std) + traffic_mean
+    traffic_target_raw = (traffic_target_scaled * traffic_std) + traffic_mean
+
+    traffic_pred_raw = torch.clamp(traffic_pred_raw, min=0.0)
+    traffic_target_raw = torch.clamp(traffic_target_raw, min=0.0)
+
+    loss_traffic = scale_invariant_mse(traffic_pred_raw, traffic_target_raw)
+
+    # Weather channels (ch 1-2): MSE on scaled features (no inverse transform).
+    weather_pred = kriging_pred[:, :, :, 1:]
+    weather_target = target_holdout[:, :, :, 1:]
+    loss_weather = F.mse_loss(weather_pred, weather_target)
+
+    loss_kriging = loss_traffic + loss_weather
+
+    # OFFENSIVE ASSERTION
+    assert not torch.isnan(loss_kriging), "CRITICAL: Kriging loss is NaN"
+
+    return loss_kriging
+
+
 def compute_zinb_nll(y_true: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
     """
     Negative Log-Likelihood for Zero-Inflated Negative Binomial Distribution.
@@ -214,13 +276,21 @@ def compute_loss(imputed_features: torch.Tensor,
                  target_forecast: torch.Tensor,
                  traffic_mean: torch.Tensor,      # PHASE 1: scaler buffer
                  traffic_std: torch.Tensor,       # PHASE 1: scaler buffer
+                 kriging_pred: Optional[torch.Tensor] = None,          # PHASE 2
+                 spatial_holdout_mask: Optional[torch.Tensor] = None,  # PHASE 2
                  w_impute: float = 1.0,
-                 w_forecast: float = 1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                 w_forecast: float = 1.0,
+                 w_kriging: float = 0.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Joint Loss with Channel-Specific Treatment (PHASE 1):
+    Joint Loss with Channel-Specific Treatment (PHASE 1 + PHASE 2):
     - Traffic (channel 0): MSLE on raw counts (inverse transform)
     - Weather (channels 1-2): MSE on scaled features
     - Forecasting: ZINB NLL on raw counts
+    - Kriging (PHASE 2): MSLE/MSE on spatially held-out nodes (active when w_kriging > 0)
+
+    Returns:
+        (total_loss, loss_impute, loss_forecast, loss_kriging)
+        loss_kriging is 0.0 when w_kriging == 0.0 (kriging path bypassed).
     """
 
     # --- 1. Imputation Loss: Split Traffic vs Weather ---
@@ -251,14 +321,29 @@ def compute_loss(imputed_features: torch.Tensor,
     # --- 2. Forecasting Loss (ZINB NLL) - UNCHANGED ---
     loss_forecast = compute_zinb_nll(target_forecast, mu, theta, pi)
 
-    # --- 3. Total Weighted Loss ---
-    total_loss = (w_impute * loss_impute) + (w_forecast * loss_forecast)
+    # --- 3. Kriging Loss (PHASE 2, conditional on w_kriging > 0) ---
+    loss_kriging = torch.zeros((), device=imputed_features.device)
+    if w_kriging > 0.0:
+        assert kriging_pred is not None, "CRITICAL: w_kriging > 0 but kriging_pred is None"
+        assert spatial_holdout_mask is not None, \
+            "CRITICAL: w_kriging > 0 but spatial_holdout_mask is None"
+        loss_kriging = compute_kriging_loss(
+            kriging_pred=kriging_pred,
+            target_impute=target_impute,
+            holdout_mask=spatial_holdout_mask,
+            traffic_mean=traffic_mean,
+            traffic_std=traffic_std,
+        )
 
-    # --- 4. OFFENSIVE ASSERTIONS (Tripwires) ---
+    # --- 4. Total Weighted Loss ---
+    total_loss = (w_impute * loss_impute) + (w_forecast * loss_forecast) + (w_kriging * loss_kriging)
+
+    # --- 5. OFFENSIVE ASSERTIONS (Tripwires) ---
     assert not torch.isnan(loss_impute_traffic), "CRITICAL: Traffic MSLE is NaN"
     assert not torch.isnan(loss_impute_weather), "CRITICAL: Weather MSE is NaN"
     assert not torch.isnan(loss_forecast), "CRITICAL: Forecast loss is NaN"
+    assert not torch.isnan(loss_kriging), "CRITICAL: Kriging loss is NaN"
     assert not torch.isnan(total_loss), "CRITICAL: Total loss is NaN"
     assert not torch.isinf(total_loss), "CRITICAL: Total loss is Inf"
 
-    return total_loss, loss_impute, loss_forecast
+    return total_loss, loss_impute, loss_forecast, loss_kriging

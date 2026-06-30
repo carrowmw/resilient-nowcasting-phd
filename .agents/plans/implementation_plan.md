@@ -1,236 +1,150 @@
-# Implementation Plan — Phase 2 (Layer 2: Kriging Integration)
+# Implementation Plan — Phase 3 (Layer 3: Edge Features)
 
 **Implementer:** Claude (Senior ML Engineer)
 **Date:** 2026-06-30
-**Source spec:** `.agents/plans/architect_plan.md` §3.2 (Layer 2) + §3.4 (loss wiring)
+**Source spec:** `.agents/plans/architect_plan.md` §3.3 (Layer 3) + §8.4 checklist
 **Target branch:** `main`
-**Predecessor:** Phase 1 (Scale-Invariant Loss) — COMPLETE & merged (commit `b7c6399`).
+**Predecessors:** Phase 1 (Scale-Invariant Loss) ✅ merged; Phase 2 (Kriging) ✅ merged.
 
 ---
 
-## 0. Context & Scoping (what I found in the codebase)
+## 0. Reconnaissance (current state on `main`)
 
-Layer 2 is **mostly a wiring job**, not a from-scratch build. The dormant
-infrastructure from `feat/kriging-infrastructure` already lives on `main`:
+- **`src/decoders.py` is NOT touched in Phase 3.** `compute_loss` already returns the 4-tuple
+  and `pipeline.forward` already returns the 10-tuple (done in Phase 2).
+- `src/graph_learner.py`: `DynamicGraphLearner.forward(static_features)` returns
+  `(edge_index, edge_weight)`. No cache logic.
+- `src/encoder.py`: `MaskedSpatiotemporalEncoder` hardcodes `GATv2Conv(edge_dim=1)` and batches a
+  1-D `edge_weight` via `.repeat(num_graphs)`.
+- `src/pipeline.py`: `graph_learner(static_features)` → optional `simulated_nodes_mask` edge
+  filtering → `encoder(dynamic, edge_index, edge_weight, ...)`. No `edge_features_cache_path`.
+- `src/dataset.py`: `__getitem__` returns 5 keys (no `location_ids`); `custom_collate_real` collates those 5.
+- Cache `data/external/edge_features_cache.json`: **104 sources × 103 dests = 10,712 pairs**.
 
-| Already present (dormant) | Location |
-|---|---|
-| `SpatialKrigingDecoder` (`[B,N,T,H] + mask[N] → [B,K,T,D]`) | `src/decoders.py:87` |
-| `scale_invariant_mse` (MSLE) | `src/decoders.py:132` |
-| `compute_msle`, `calculate_kriging_metrics` | `src/metrics.py:63,77` |
-| Config keys `data.spatial_holdout_prob`, `loss.w_kriging` (both `0.0`) | `configs/train/train.yaml`, `train_test.yaml` |
-| Shape/edge-case unit tests | `tests/test_kriging_infra.py` |
-| MSLE/decoder desk check | `scripts/desk_check_kriging.py` |
+## ⚠️ Deviations from architect_plan.md §3.3.1 pseudocode (REQUIRE acknowledgement)
 
-**What is missing (the actual Phase 2 work) — activate the dormant path:**
-1. Holdout-mask generation + application helpers (`dataset.py`).
-2. `compute_kriging_loss` + 4-output `compute_loss` (`decoders.py`).
-3. Kriging decoder instantiation + mask threading + loss wiring (`pipeline.py`).
-4. Mask creation, holdout application, loss/metric logging in the loop (`train.py`).
-5. Test + desk-check updates for the now-live path.
+The plan's pseudocode does not match the real cache. Three concrete corrections, all verified:
 
-**Pre-existing regression I will also fix:** `tests/test_decoders.py::test_decoupled_decoders_and_loss`
-currently **FAILS** — Phase 1 added required `traffic_mean`/`traffic_std` args to
-`compute_loss` but never updated this test. Confirmed by running it:
-`TypeError: compute_loss() missing 2 required positional arguments: 'traffic_mean'
-and 'traffic_std'`. (Current suite: **1 failed, 14 passed**.) Phase 2 touches this
-exact signature, so I will repair the test in the same change.
+1. **Cache key names.** Real keys are `pedestrian`, `residential`, `tertiary`, `secondary`,
+   `primary`, `service` — NOT the `*_fraction` names in the pseudocode. The 9 physical features:
+   `shortest_path_distance`, `euclidean_distance`, `directness` (3 distance/geometry) + the 6 road
+   fractions above. (10th dim = learned similarity from `edge_weight`.)
 
-**Design guardrails (keep Layer 2 isolated & reversible):**
-- **Default-off:** `w_kriging=0.0` and no `spatial_holdout_mask` in batch ⇒ numerically
-  identical to today. All mock-data tests (which pass no mask) keep working unchanged.
-- The kriging head only runs when a holdout mask is present in the batch.
-- **Empty-holdout safety:** a random mask can select 0 nodes on small `N`; the loss path
-  must return `0.0` (not NaN from `mse_loss` on an empty tensor).
+2. **Road fractions are NOT always ≈1.0.** Verified across all 10,712 pairs: 10,674 sum to 1.0
+   (±1e-3); **38 sum to exactly 0.0** (disconnected pairs — no OSM path). The plan's assertion
+   `allclose(road_sums, ones, atol=1e-3)` **would crash on the real cache.**
+   → **Corrected assertion:** each edge's road-sum ≈1.0 **OR** ≈0.0:
+   `((road_sums - 1).abs() < 1e-3) | (road_sums.abs() < 1e-3)`.
 
----
+3. **Performance — no per-edge Python loop.** The pseudocode loops over E edges with `.item()` +
+   dict lookups *every forward pass* (~10k edges/batch) — a severe training bottleneck. Physical
+   features are static; only the 10th dim changes. → **Corrected design:** precompute a dense
+   `[N, N, 9]` physical-feature tensor **once** (memoized on first forward, keyed by `location_ids`),
+   then vectorized-gather `[E, 9]` via `edge_index` and `torch.cat` the learned `edge_weight` as
+   column 9. Pure tensor ops, no Python loop.
 
-## 1. File-by-File Changes
+## 🔵 Decision point (recommendation — will follow plan literally if you prefer)
 
-### 1.1 `src/dataset.py` — holdout mask helpers (NEW, module-level)
-
-Add two pure functions (architect §3.2.1), placed near `custom_collate_real`:
-
-```python
-def make_spatial_holdout_mask(num_nodes, holdout_prob, device='cpu', seed=None) -> torch.Tensor
-def apply_spatial_holdout(dynamic_features, holdout_mask) -> torch.Tensor
-```
-
-- `make_spatial_holdout_mask`: `np.random.RandomState(seed)` (deterministic when seed
-  set, e.g. validation); returns `torch.bool` `[N]` on `device`.
-  Assertions: `0.0 <= holdout_prob <= 1.0`, `num_nodes > 0`.
-- `apply_spatial_holdout`: clone `[B,N,T,D]`, zero `masked[:, mask, :, :] = 0.0`.
-  Assertions: 4-D input, 1-D bool mask, `mask.shape[0] == features.shape[1]`.
-
-Module-level functions (not methods) so `train.py`/tests import them directly — matches
-the architect's call sites and leaves `RealIoTDataset.__init__` / `__getitem__` /
-`custom_collate_real` untouched. (location_ids + edge features are **Layer 3**, out of scope.)
-
-### 1.2 `src/decoders.py` — kriging loss + 4-output `compute_loss`
-
-**(a) NEW `compute_kriging_loss(kriging_pred, target_impute, holdout_mask, traffic_mean, traffic_std)`** (architect §3.2.2):
-- `target_holdout = target_impute[:, holdout_mask, :, :]`; assert shape equals `kriging_pred`.
-- **Empty-holdout guard:** `if kriging_pred.numel() == 0: return zeros((), device=...)`.
-- Traffic ch0: inverse-transform pred & target to raw counts, clamp `min=0`,
-  `scale_invariant_mse` → MSLE (identical treatment to the imputation head, so the two
-  losses are directly comparable).
-- Weather ch1-2: `F.mse_loss` on scaled features.
-- Return `loss_traffic + loss_weather`; assert not NaN.
-
-**(b) MODIFY `compute_loss` → return 4 values** (architect §3.4). New params after the
-existing scaler args, all defaulted so only call sites we own must change:
-```python
-def compute_loss(..., traffic_mean, traffic_std,
-                 kriging_pred: Optional[Tensor] = None,
-                 spatial_holdout_mask: Optional[Tensor] = None,
-                 w_impute=1.0, w_forecast=1.0, w_kriging=0.0
-) -> Tuple[Tensor, Tensor, Tensor, Tensor]:   # + loss_kriging
-```
-- `loss_kriging` computed only when `w_kriging > 0.0` (then assert `kriging_pred` and
-  `spatial_holdout_mask` are not None → `compute_kriging_loss`), else
-  `zeros((), device=imputed_features.device)`.
-- `total = w_impute*loss_impute + w_forecast*loss_forecast + w_kriging*loss_kriging`.
-- Keep all existing NaN/Inf tripwires; add one for `loss_kriging`.
-- **Returns `(total_loss, loss_impute, loss_forecast, loss_kriging)`.**
-
-### 1.3 `src/pipeline.py` — instantiate + thread + wire
-
-- **`__init__`:** instantiate `self.kriging_decoder = SpatialKrigingDecoder(hidden_dim,
-  time_series_dim, dropout)`; import `SpatialKrigingDecoder`, `compute_kriging_loss`.
-  (Adds params but zero behaviour change when no mask / `w_kriging=0`.)
-- **`forward` (normal mode):**
-  - `holdout_mask = batch.get('spatial_holdout_mask')`.
-  - After encoder+decoders: `kriging_pred = self.kriging_decoder(latent_embeddings,
-    holdout_mask) if holdout_mask is not None else None`.
-  - `compute_loss(..., kriging_pred=kriging_pred, spatial_holdout_mask=holdout_mask,
-    w_kriging=batch.get('w_kriging', 0.0))`, unpack **4** values.
-  - **Return 10-tuple** (Q2 = full metrics ⇒ surface `kriging_pred`):
-    `(loss, loss_impute, loss_forecast, loss_kriging, imputed_features, mu, theta, pi,
-    tripwires, kriging_pred)`. `kriging_pred` is `None` when no mask is present.
-- **`forward` (analysis mode):** add `'kriging_pred'` to the dict (computed iff mask
-  present, else `None`) — non-breaking for existing analysis consumers.
-- **`__main__` smoke block:** update unpack to the new 9-tuple.
-
-### 1.4 `src/train.py` — masks, application, logging
-
-- Read `spatial_holdout_prob = data_cfg.get('spatial_holdout_prob', 0.0)` and
-  `w_kriging = config.get('loss', {}).get('w_kriging', 0.0)`.
-- **Validation mask (deterministic):** built once after model init iff `prob > 0.0`:
-  `val_holdout_mask = make_spatial_holdout_mask(num_nodes, prob, device, seed=42)`; log count.
-- **Train loop (per batch):** if `prob > 0.0`, build a *fresh random* mask (`seed=None`),
-  set `batch['spatial_holdout_mask']`, and
-  `batch['dynamic_features'] = apply_spatial_holdout(batch['dynamic_features'], mask)`.
-  Always set `batch['w_kriging'] = w_kriging`.
-- **Val loop (per batch):** if `val_holdout_mask is not None`, set it + apply holdout;
-  set `batch['w_kriging'] = w_kriging`.
-- **Unpack 10-tuple** at both call sites. Accumulate `epoch_loss_kriging` / `val_loss_kriging`.
-- **W&B logging (Q2 = full metrics):** add `train_loss_kriging`, `val_loss_kriging`,
-  `val_kriging_nodes` (`= val_holdout_mask.sum()`), **plus** `val_kriging_rmse`,
-  `val_kriging_mae`, `val_kriging_msle` via `calculate_kriging_metrics(kriging_pred,
-  target_impute[:, val_holdout_mask])` accumulated across val batches. All kriging logging
-  gated behind `w_kriging > 0.0`.
-- Mock-data path: never sets a mask ⇒ `loss_kriging == 0`, `kriging_pred = None`, fully
-  backward-compatible.
-
-### 1.5 `configs/` — ACTIVATE defaults (Q1 = activate)
-
-Flip the committed defaults so kriging trains by default:
-- `configs/train/train.yaml`: `data.spatial_holdout_prob: 0.15`, `loss.w_kriging: 0.5`.
-- `configs/train/train_test.yaml`: same (`spatial_holdout_prob: 0.15`, `w_kriging: 0.5`)
-  so the mandated verification command exercises the **live** kriging path directly — no
-  separate temp config needed. (Update the now-stale "Inactive at 0.0 on main" comments.)
-
-### 1.6 Tests
-
-- **`tests/test_decoders.py`:** FIX Phase-1 regression — pass `traffic_mean=tensor(0.0)`,
-  `traffic_std=tensor(1.0)`, unpack **4** values; assert `loss_kriging == 0` at `w_kriging=0`.
-- **`tests/test_pipeline.py`:** update unpack to 10-tuple; add a test passing a
-  `spatial_holdout_mask` + `w_kriging>0` asserting `loss_kriging > 0`, finite, and grads
-  flow into `kriging_decoder`.
-- **`tests/test_kriging_infra.py`** (Q3 = extend in place): add live-path tests alongside
-  the existing dormant-infra tests, under a new section header:
-  - `make_spatial_holdout_mask`: `[N]` bool, determinism under fixed seed, `prob=0→all
-    False`, `prob=1→all True`.
-  - `apply_spatial_holdout`: held-out nodes zeroed; others byte-identical.
-  - `compute_kriging_loss`: shape match, empty-holdout → `0.0` (no NaN), MSLE-on-raw sanity.
-  - `compute_loss` 4-output contract; `w_kriging=0` short-circuits the kriging path.
-
-### 1.7 `scripts/desk_check_kriging.py` — extend (Part 3, Layer-2 wiring)
-
-- Holdout masking: held-out nodes zeroed, complement untouched.
-- Decoder shape `K == mask.sum()`.
-- `compute_kriging_loss` desk numbers with extreme values (0, 1e6) + empty mask → exactly 0.
-- End-to-end `compute_loss` returns 4 finite values with a synthetic kriging path; grads
-  reach all heads when `w_kriging>0`, and kriging grad is `None` when `w_kriging=0`.
+- **Distance normalization.** Plan normalizes only `shortest_path_distance` by global `max_distance`
+  (=7670.55). `euclidean_distance` is also in metres (up to ~7.7k) and would enter the GAT raw,
+  dwarfing the [0,1] fractions. **Recommendation:** normalize BOTH `shortest_path_distance` and
+  `euclidean_distance` by `max_distance`; `directness` is already [0,1]. Flag if you want plan-literal
+  (shortest-path only).
 
 ---
 
-## 2. Desk Checks (run BEFORE training — prove correctness)
+## 1. File-by-file changes
 
-`python scripts/desk_check_kriging.py` must print & pass:
-1. Inverse-transform identity (re-asserted in kriging context).
-2. Holdout masking: `(masked[:, mask] == 0).all()` and `allclose(masked[:, ~mask], orig)`.
-3. Decoder shape `== (B, mask.sum(), T, D)`.
-4. **Empty holdout → exactly `0.0`, finite** (the critical NaN trap).
-5. MSLE finite for raw counts up to 1e6.
-6. `total_loss.backward()` populates `kriging_head` grads at `w_kriging>0`; `None` at 0.
+### 1.1 `src/graph_learner.py`
+- Imports: add `json`, `from pathlib import Path`, `from typing import Optional, List`.
+- `__init__(..., edge_features_cache_path: Optional[str] = None)`:
+  - If provided: assert file exists (fail-fast `FileNotFoundError`), `json.load` →
+    `self.edge_features_cache`; compute `self.max_distance` = max `shortest_path_distance` over all
+    pairs, assert `> 0`. If `None`: `self.edge_features_cache = None` (learned-only fallback).
+  - Memoization slots: `self._phys_dense = None`, `self._phys_location_ids = None`.
+- New `_build_physical_dense(location_ids, device) -> Tensor [N, N, 9]` (built once, numpy→tensor):
+  - For each (i, j), i≠j: fail-fast `ValueError` (`"CRITICAL: Missing cache for source/edge ..."`)
+    if `src_loc`/`dst_loc` absent; fill 9 features. Diagonal left zero (self-pairs never become edges).
+  - Column order `[sp_norm, eucl_norm, directness, pedestrian, residential, tertiary, secondary,
+    primary, service]` (per Decision Point).
+- New `_build_edge_attr(edge_index, edge_weight, location_ids) -> Tensor [E, 10]`:
+  - Cache `None` → return `edge_weight.unsqueeze(1)` (`[E, 1]` fallback).
+  - Else: ensure dense built/memoized (rebuild if `location_ids` or device changed);
+    `phys = self._phys_dense[edge_index[0], edge_index[1]]` (`[E, 9]`);
+    `torch.cat([phys, edge_weight.unsqueeze(1)], dim=1)` (`[E, 10]`).
+  - Offensive asserts: `shape == (E, 10)`; `not isnan().any()`; corrected road-sum invariant on cols 3:9.
+- `forward(static_features, location_ids: Optional[List[str]] = None)`:
+  - Existing similarity/sparsity → `(edge_index, edge_weight)` unchanged.
+  - `edge_attr = _build_edge_attr(...)` if `location_ids and cache`, else `edge_weight.unsqueeze(1)`.
+  - **Return `(edge_index, edge_weight, edge_attr)`** (3-tuple — signature change).
 
-## 3. Test Suite
+### 1.2 `src/encoder.py`
+- `__init__(..., edge_dim: int = 1)`; pass `edge_dim=edge_dim` to `GATv2Conv`.
+- `forward`: 3rd param `edge_weight` → `edge_attr` (accept `[E]` or `[E, D]`; if 1-D, `unsqueeze(1)`).
+  Batch as `edge_attr.repeat(num_graphs, 1)` → `[E*num_graphs, D]`; pass `edge_attr=` to `self.gat`
+  in both branches. Assert `batched_edge_attr.shape[0] == batched_edge_index.shape[1]`.
+  Backward-compatible: existing `test_encoder.py` passes 1-D `edge_weight` with default `edge_dim=1`.
 
-`python -m pytest tests/ -q` — all green, including repaired `test_decoders.py` and the
-new kriging-integration tests.
+### 1.3 `src/pipeline.py`
+- `__init__(..., edge_features_cache_path: Optional[str] = None)`:
+  - Pass to `DynamicGraphLearner(...)`.
+  - `encoder_edge_dim = 10 if edge_features_cache_path else 1`; pass `edge_dim=encoder_edge_dim`
+    to `MaskedSpatiotemporalEncoder(...)`.
+- `forward`:
+  - `location_ids = batch.get('location_ids')`.
+  - `edge_index, edge_weight, edge_attr = self.graph_learner(static_features, location_ids=location_ids)`.
+  - In `simulated_nodes_mask` block: also `edge_attr = edge_attr[valid_edges]` (row-alignment).
+  - Pass `edge_attr` (not `edge_weight`) to both `self.encoder(...)` calls (analysis + normal).
 
-## 4. Integration Verification (database mode, as instructed)
+### 1.4 `src/dataset.py`
+- `__getitem__`: add `'location_ids': self.locations` to the returned dict.
+- `custom_collate_real`: add `'location_ids': batch_list[0]['location_ids']` (constant across batch;
+  list[str] passes through train.py's `.to(device)` untouched).
 
-The mandated command now exercises the **live** kriging path directly (defaults activated):
-```bash
-docker compose exec agent-workspace python src/train.py --use-database \
-  --config configs/train/train_test.yaml   # spatial_holdout_prob=0.15, w_kriging=0.5
-```
-Expected: 1 epoch completes, no NaN, logs `val_loss_kriging` (finite, > 0),
-`val_kriging_nodes > 0`, and `val_kriging_rmse/mae/msle`.
+### 1.5 `src/train.py`
+- Read `edge_features_cache_path = model_cfg.get('edge_features_cache_path')` and pass to
+  `ResilientIoTPipeline(...)`. Default `None` → mock path & configs without the key fall back to learned-only.
 
-Regression sanity (kriging disabled) — confirm the default-off path is still clean:
-```bash
-docker compose exec agent-workspace python src/train.py --use-mock_data  # no mask → loss_kriging==0
-```
-
----
-
-## 5. Execution Order (after your approval)
-
-0. **Git safety:** `git add . && git commit -m "Auto-commit before Phase 2"`.
-1. `dataset.py` helpers.
-2. `decoders.py` (`compute_kriging_loss` + 4-output `compute_loss`).
-3. `pipeline.py` (instantiate + thread + 9-tuple) + fix `__main__`.
-4. `train.py` (masks, apply, unpack, logging).
-5. Fix `tests/test_decoders.py`, update `test_pipeline.py`, add kriging integration tests.
-6. Extend `scripts/desk_check_kriging.py`; run it.
-7. `pytest tests/` green.
-8. Integration runs (§4); capture metrics.
-9. Update `EXPERIMENTS.md` with the Layer-2 entry + desk-check/verification results.
-
----
-
-## 6. Risks & Mitigations
-
-| Risk | Mitigation |
-|---|---|
-| `mse_loss` on empty holdout → NaN | Explicit `numel()==0 → 0.0` guard in `compute_kriging_loss`. |
-| Return-arity change breaks callers | Audited 6 unpack sites (pipeline fwd + `__main__`, train ×2, tests ×2); all updated to the 10-tuple this phase. |
-| Kriging loss dominates training | Separate logged term; `w_kriging` tunable; activated to `0.5` per Q1 — watched in verification, rollback to `0.0` if it overwhelms imputation/forecast. |
-| Holdout zeroing vs temporal NaN mask | Safe order: holdout zeros nodes → pipeline `nan_to_num` handles residual NaNs; kriging target is the pre-mask `target_impute`. |
-| Train/val mask leakage | Val mask deterministic (seed=42); train mask re-randomised per batch. |
+### 1.6 `configs/train/train.yaml` + `train_test.yaml`
+- Add under `model:`: `edge_features_cache_path: "data/external/edge_features_cache.json"`.
 
 ---
 
-## 7. Open Questions — RESOLVED
+## 2. New script `scripts/desk_check_edge_features.py` (mirrors existing desk-check style)
+Using a small temp mock cache:
+1. `edge_attr` shape `[E, 10]`; road fractions (cols 3:9) ≈1.0 per connected edge.
+2. **Disconnected-pair tolerance:** all-zero road fractions pass the corrected assertion.
+3. Distance normalization in `[0, 1]` (cols 0–1).
+4. Fail-fast: missing cache entry raises `ValueError` containing `"CRITICAL: Missing cache"`.
+5. Fallback: `cache_path=None` → `edge_attr` shape `[E, 1]` equals `edge_weight`.
+6. Vectorized-gather matches a reference per-edge dict lookup.
+Run: `python scripts/desk_check_edge_features.py` (all asserts pass before tests).
 
-- **Q1 — `main` defaults:** ✅ **Activate.** Commit `w_kriging=0.5`,
-  `spatial_holdout_prob=0.15` in `train.yaml` + `train_test.yaml`.
-- **Q2 — Kriging val metrics:** ✅ **Full metrics.** Log loss + node count +
-  RMSE/MAE/MSLE; surface `kriging_pred` from the forward pass (10-tuple).
-- **Q3 — Test file:** ✅ **Extend `tests/test_kriging_infra.py`** in place.
+## 3. Tests to update
+- `tests/test_graph_learner.py`: unpack **3 returns**; assert `edge_attr.shape == (E, 1)` no-cache.
+  Add `test_edge_attr_with_cache` (temp 3-node cache incl. one all-zero disconnected pair → `[E,10]`,
+  road-sum invariant, norm range) and `test_missing_cache_fail_fast` (`ValueError`).
+- `tests/test_encoder.py`: keep existing `edge_dim=1` test; add `test_encoder_edge_dim_10`
+  (`edge_dim=10`, `edge_attr=[E,10]`, assert output shape + gradient flow).
+- `tests/test_pipeline.py`: existing tests use no cache → still pass (fallback); verify green.
+Run: `pytest tests/test_graph_learner.py tests/test_encoder.py tests/test_pipeline.py`.
+
+## 4. Verification sequence
+0. **Git safety:** `git add . && git commit -m "Auto-commit before Phase 3"` (at start of implementation).
+1. `python scripts/desk_check_edge_features.py` → all asserts pass.
+2. `pytest tests/test_graph_learner.py tests/test_encoder.py tests/test_pipeline.py` → green.
+3. `pytest tests/` → full suite green (no regressions).
+4. Smoke test (1 epoch, DB mode, real cache):
+   `docker compose exec agent-workspace python src/train.py --use-database --config configs/train/train_test.yaml`
+   → finite loss, no NaN, kriging telemetry present, cache loaded (104 sources logged).
+5. Update `EXPERIMENTS.md` with the Phase 3 entry + desk-check/verification results.
+
+## 5. Risks / watch-items
+- **location_id ↔ cache-key match:** dataset `self.locations` must be a subset of cache keys; fail-fast
+  `ValueError` surfaces any mismatch at the first batch (caught in smoke test step 4).
+- **edge_dim consistency:** guaranteed — pipeline derives `edge_dim` from the same
+  `edge_features_cache_path` condition that drives graph-learner output width.
+- **Memoization device:** dense tensor rebuilt if `location_ids`/device changes; safe for single-GPU.
 
 ---
 

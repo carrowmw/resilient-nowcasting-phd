@@ -5,7 +5,7 @@ import logging
 
 from graph_learner import DynamicGraphLearner
 from encoder import MaskedSpatiotemporalEncoder
-from decoders import DecoupledDecoders, compute_loss
+from decoders import DecoupledDecoders, SpatialKrigingDecoder, compute_loss
 from dataset import RealIoTDataset
 
 from typing import Dict, Tuple, Union
@@ -66,6 +66,15 @@ class ResilientIoTPipeline(nn.Module):
         )
         logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, dropout={dropout}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
 
+        # PHASE 2: Spatial Kriging Decoder (dormant unless a holdout mask is supplied
+        # in the batch and loss.w_kriging > 0). Reconstructs held-out nodes' series.
+        self.kriging_decoder = SpatialKrigingDecoder(
+            hidden_dim=hidden_dim,
+            time_series_dim=time_series_dim,
+            dropout=dropout
+        )
+        logger.info(f"Initialized SpatialKrigingDecoder with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, total_params={sum(p.numel() for p in self.kriging_decoder.parameters())}")
+
         # PHASE 1: Scaler buffers (initialized to sentinel values, set by train.py)
         self.register_buffer('traffic_mean', torch.tensor(0.0))
         self.register_buffer('traffic_std', torch.tensor(1.0))
@@ -109,12 +118,15 @@ class ResilientIoTPipeline(nn.Module):
                 structure, attention weights, and ZINB distribution parameters for
                 post-hoc interpretability and UI payload generation.
         Returns:
-            Normal mode: (total_loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi, tripwire_logs)
+            Normal mode: (total_loss, loss_impute, loss_forecast, loss_kriging,
+                          imputed_features, mu, theta, pi, tripwire_logs, kriging_pred)
             Analysis mode: {'edge_index', 'edge_weight', 'attention_weights',
-                            'imputed_features', 'mu', 'theta', 'pi', 'tripwire_logs'}
+                            'imputed_features', 'kriging_pred', 'mu', 'theta', 'pi', 'tripwire_logs'}
         """
         static_features = batch['static_features']
         dynamic_features = batch['dynamic_features']
+        # PHASE 2: spatial holdout mask [N] bool (None when kriging inactive).
+        holdout_mask = batch.get('spatial_holdout_mask')
 
         # Defensive Data Handling
         # Replace NaNs (injected by our Dataset masking or simulated nodes) with 0.0
@@ -142,11 +154,18 @@ class ResilientIoTPipeline(nn.Module):
             # 3. Decoders (complete the full pass to get ZINB parameters)
             imputed_features, mu, theta, pi, tripwires = self.decoders(latent_embeddings)
 
+            # PHASE 2: Kriging reconstruction for held-out nodes (if a mask is supplied)
+            kriging_pred = (
+                self.kriging_decoder(latent_embeddings, holdout_mask)
+                if holdout_mask is not None else None
+            )
+
             return {
                 'edge_index': edge_index,
                 'edge_weight': edge_weight,
                 'attention_weights': alpha,
                 'imputed_features': imputed_features,
+                'kriging_pred': kriging_pred,
                 'mu': mu,
                 'theta': theta,
                 'pi': pi,
@@ -162,8 +181,14 @@ class ResilientIoTPipeline(nn.Module):
         # 3. Decoders
         imputed_features, mu, theta, pi, tripwires = self.decoders(latent_embeddings)
 
+        # PHASE 2: Kriging reconstruction for held-out nodes (if a mask is supplied)
+        kriging_pred = (
+            self.kriging_decoder(latent_embeddings, holdout_mask)
+            if holdout_mask is not None else None
+        )
+
         # 4. Compute Joint Loss
-        loss, loss_impute, loss_forecast = compute_loss(
+        loss, loss_impute, loss_forecast, loss_kriging = compute_loss(
             imputed_features=imputed_features,
             target_impute=target_impute,
             mu=mu,
@@ -172,14 +197,17 @@ class ResilientIoTPipeline(nn.Module):
             target_forecast=target_forecast,
             traffic_mean=self.traffic_mean,  # PHASE 1: scaler buffers
             traffic_std=self.traffic_std,    # PHASE 1: scaler buffers
+            kriging_pred=kriging_pred,                 # PHASE 2
+            spatial_holdout_mask=holdout_mask,         # PHASE 2
             w_impute=batch.get('w_impute', 1.0),
-            w_forecast=batch.get('w_forecast', 1.0)
+            w_forecast=batch.get('w_forecast', 1.0),
+            w_kriging=batch.get('w_kriging', 0.0)      # PHASE 2
         )
 
         # CRITICAL SAFEGUARD
         assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
 
-        return loss, loss_impute, loss_forecast, imputed_features, mu, theta, pi, tripwires
+        return loss, loss_impute, loss_forecast, loss_kriging, imputed_features, mu, theta, pi, tripwires, kriging_pred
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -261,7 +289,7 @@ if __name__ == "__main__":
             optimizer.zero_grad()
 
             # Forward Pass
-            loss, _, _, _, _, _, _, _ = model(batch)
+            loss, *_ = model(batch)
 
             # Backward Pass
             loss.backward()

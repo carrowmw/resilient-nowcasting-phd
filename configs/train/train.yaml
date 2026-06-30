@@ -7,9 +7,9 @@ data:
   target_veh_class: "person"
   target_dir: "all"
   mask_prob: 0.15
-  # Spatial kriging holdout fraction (Component 2). Inactive at 0.0 on main;
-  # activated on exp/spatial-kriging-head (e.g. 0.15).
-  spatial_holdout_prob: 0.0
+  # Spatial kriging holdout fraction (Component 2, Phase 2). Active: 15% of nodes are
+  # spatially held out each step for the kriging head to reconstruct (IGNNK-style).
+  spatial_holdout_prob: 0.15
 
 model:
   num_nodes: 81
@@ -36,6 +36,6 @@ training:
 loss:
   w_forecast: 1.0
   w_impute: 1.0
-  # Spatial kriging loss weight (Component 2). Inactive at 0.0 on main;
-  # activated on exp/spatial-kriging-head (e.g. 0.5).
-  w_kriging: 0.0
+  # Spatial kriging loss weight (Component 2, Phase 2). Active: weights the kriging
+  # reconstruction loss in the joint objective.
+  w_kriging: 0.5

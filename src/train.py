@@ -11,9 +11,14 @@ import wandb
 import yaml
 from torch.utils.data import DataLoader
 
-from dataset import RealIoTDataset, custom_collate_real
+from dataset import (
+    RealIoTDataset,
+    custom_collate_real,
+    make_spatial_holdout_mask,
+    apply_spatial_holdout,
+)
 from logger import setup_logger
-from metrics import calculate_metrics
+from metrics import calculate_metrics, calculate_kriging_metrics
 from pipeline import ResilientIoTPipeline
 
 
@@ -167,6 +172,14 @@ def run_training(
     data_cfg = config["data"]
     model_cfg = config["model"]
     train_cfg = config["training"]
+    loss_cfg = config.get("loss", {})
+
+    # PHASE 2: Spatial kriging configuration
+    spatial_holdout_prob = data_cfg.get("spatial_holdout_prob", 0.0)
+    w_kriging = loss_cfg.get("w_kriging", 0.0)
+    w_impute = loss_cfg.get("w_impute", 1.0)
+    w_forecast = loss_cfg.get("w_forecast", 1.0)
+    kriging_active = w_kriging > 0.0 and spatial_holdout_prob > 0.0
 
     if train_loader is not None and val_loader is not None:
         logger.info("Using provided data loaders.")
@@ -344,6 +357,27 @@ def run_training(
         f"num_heads={model_cfg.get('num_heads', 4)}"
     )
 
+    # PHASE 2: Fixed validation holdout mask (deterministic seed for stable metric
+    # tracking across epochs). Training masks are re-rolled randomly per batch below.
+    val_holdout_mask = None
+    if kriging_active:
+        val_holdout_mask = make_spatial_holdout_mask(
+            num_nodes=train_dataset.num_nodes,
+            holdout_prob=spatial_holdout_prob,
+            device=device,
+            seed=42,
+        )
+        logger.info(
+            f"PHASE 2 kriging ACTIVE: w_kriging={w_kriging}, "
+            f"spatial_holdout_prob={spatial_holdout_prob}, "
+            f"validation holdout = {int(val_holdout_mask.sum())}/{train_dataset.num_nodes} nodes"
+        )
+    else:
+        logger.info(
+            f"PHASE 2 kriging INACTIVE (w_kriging={w_kriging}, "
+            f"spatial_holdout_prob={spatial_holdout_prob})"
+        )
+
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["lr"])
 
@@ -375,12 +409,30 @@ def run_training(
         epoch_loss_total = 0.0
         epoch_loss_forecast = 0.0
         epoch_loss_impute = 0.0
+        epoch_loss_kriging = 0.0
 
         for batch in train_loader:
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
 
+            # PHASE 2: Re-roll a random spatial holdout per batch and blank the held-out
+            # nodes' dynamic features so the encoder must rely on neighbour message passing.
+            if kriging_active:
+                train_holdout_mask = make_spatial_holdout_mask(
+                    num_nodes=train_dataset.num_nodes,
+                    holdout_prob=spatial_holdout_prob,
+                    device=device,
+                    seed=None,
+                )
+                batch["spatial_holdout_mask"] = train_holdout_mask
+                batch["dynamic_features"] = apply_spatial_holdout(
+                    batch["dynamic_features"], train_holdout_mask
+                )
+            batch["w_impute"] = w_impute
+            batch["w_forecast"] = w_forecast
+            batch["w_kriging"] = w_kriging
+
             optimizer.zero_grad()
-            loss, loss_impute, loss_forecast, _, _, _, _, _ = model(batch)
+            loss, loss_impute, loss_forecast, loss_kriging, *_ = model(batch)
             loss.backward()
 
             # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
@@ -391,23 +443,39 @@ def run_training(
             epoch_loss_total += loss.item()
             epoch_loss_impute += loss_impute.item()
             epoch_loss_forecast += loss_forecast.item()
+            epoch_loss_kriging += loss_kriging.item()
 
         avg_train_loss = epoch_loss_total / len(train_loader)
         avg_train_impute = epoch_loss_impute / len(train_loader)
         avg_train_forecast = epoch_loss_forecast / len(train_loader)
+        avg_train_kriging = epoch_loss_kriging / len(train_loader)
 
         # Validation Loop
         model.eval()
         val_loss_total = 0.0
+        val_loss_kriging_total = 0.0
         val_metrics_accum = {"rmse": 0.0, "mae": 0.0, "impute_mse": 0.0}
+        val_kriging_accum = {"kriging_msle": 0.0, "kriging_rmse": 0.0, "kriging_mae": 0.0}
         zero_true_total = 0
         zero_correct_total = 0
 
         with torch.no_grad():
             for batch in val_loader:
                 batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
-                loss, _, _, imputed_features, mu, _, pi, _ = model(batch)
+
+                # PHASE 2: Apply the fixed validation holdout for deterministic scoring.
+                if kriging_active:
+                    batch["spatial_holdout_mask"] = val_holdout_mask
+                    batch["dynamic_features"] = apply_spatial_holdout(
+                        batch["dynamic_features"], val_holdout_mask
+                    )
+                batch["w_impute"] = w_impute
+                batch["w_forecast"] = w_forecast
+                batch["w_kriging"] = w_kriging
+
+                loss, _, _, loss_kriging, imputed_features, mu, _, pi, _, kriging_pred = model(batch)
                 val_loss_total += loss.item()
+                val_loss_kriging_total += loss_kriging.item()
 
                 batch_metrics = calculate_metrics(
                     target_forecast=batch["target_forecast"],
@@ -422,16 +490,32 @@ def run_training(
                 zero_true_total += batch_metrics["zero_true_count"]
                 zero_correct_total += batch_metrics["zero_correct_count"]
 
+                # PHASE 2: Full kriging reconstruction metrics on held-out nodes.
+                if kriging_active and kriging_pred is not None:
+                    kriging_target = batch["target_impute"][:, val_holdout_mask, :, :]
+                    km = calculate_kriging_metrics(kriging_pred, kriging_target)
+                    for k in val_kriging_accum:
+                        val_kriging_accum[k] += km[k]
+
         avg_val_loss = val_loss_total / len(val_loader)
+        avg_val_kriging = val_loss_kriging_total / len(val_loader)
         val_rmse = val_metrics_accum["rmse"] / len(val_loader)
         val_mae = val_metrics_accum["mae"] / len(val_loader)
         val_zero_acc = zero_correct_total / zero_true_total if zero_true_total > 0 else 0.0
         val_impute_mse = val_metrics_accum["impute_mse"] / len(val_loader)
+        val_kriging_msle = val_kriging_accum["kriging_msle"] / len(val_loader)
+        val_kriging_rmse = val_kriging_accum["kriging_rmse"] / len(val_loader)
+        val_kriging_mae = val_kriging_accum["kriging_mae"] / len(val_loader)
 
         # Offensive Assertion for Divergence
         if torch.isnan(torch.tensor(avg_val_loss)):
             raise DivergenceError("Validation loss is NaN! The Burn Test Failed.")
 
+        kriging_log = (
+            f", Kriging(train={avg_train_kriging:.4f}, val={avg_val_kriging:.4f}, "
+            f"RMSE={val_kriging_rmse:.2f}, MAE={val_kriging_mae:.2f}, MSLE={val_kriging_msle:.4f})"
+            if kriging_active else ""
+        )
         logger.info(
             f"Epoch {epoch+1}/{epochs} - "
             f"Train Loss: {avg_train_loss:.4f} | "
@@ -439,6 +523,7 @@ def run_training(
             f"(RMSE: {val_rmse:.2f}, MAE: {val_mae:.2f}, "
             f"ZeroAcc: {val_zero_acc:.4f} [{zero_correct_total}/{zero_true_total}], "
             f"ImputeMSE: {val_impute_mse:.4f})"
+            f"{kriging_log}"
         )
 
         # Checkpointing and Early Stopping
@@ -455,21 +540,30 @@ def run_training(
 
         # W&B Logging
         if init_wandb or (wandb.run is not None):
-            wandb.log(
-                {
-                    "train_loss_total": avg_train_loss,
-                    "train_loss_impute": avg_train_impute,
-                    "train_loss_forecast": avg_train_forecast,
-                    "val_loss_total": avg_val_loss,
-                    "val_rmse": val_rmse,
-                    "val_mae": val_mae,
-                    "val_zero_acc": val_zero_acc,
-                    "val_zero_true_count": zero_true_total,
-                    "val_zero_correct_count": zero_correct_total,
-                    "val_impute_mse": val_impute_mse,
-                    "epoch": epoch + 1,
-                }
-            )
+            log_payload = {
+                "train_loss_total": avg_train_loss,
+                "train_loss_impute": avg_train_impute,
+                "train_loss_forecast": avg_train_forecast,
+                "val_loss_total": avg_val_loss,
+                "val_rmse": val_rmse,
+                "val_mae": val_mae,
+                "val_zero_acc": val_zero_acc,
+                "val_zero_true_count": zero_true_total,
+                "val_zero_correct_count": zero_correct_total,
+                "val_impute_mse": val_impute_mse,
+                "epoch": epoch + 1,
+            }
+            # PHASE 2: full kriging telemetry (only when the kriging path is active)
+            if kriging_active:
+                log_payload.update({
+                    "train_loss_kriging": avg_train_kriging,
+                    "val_loss_kriging": avg_val_kriging,
+                    "val_kriging_nodes": int(val_holdout_mask.sum().item()),
+                    "val_kriging_rmse": val_kriging_rmse,
+                    "val_kriging_mae": val_kriging_mae,
+                    "val_kriging_msle": val_kriging_msle,
+                })
+            wandb.log(log_payload)
 
         if epochs_no_improve >= early_stop_patience:
             logger.info(f"Early stopping triggered after {epoch + 1} epochs.")

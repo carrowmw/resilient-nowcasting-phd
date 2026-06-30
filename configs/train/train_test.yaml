@@ -7,7 +7,8 @@ data:
   target_veh_class: "person"
   target_dir: "all"
   mask_prob: 0.15
-  spatial_holdout_prob: 0.0
+  # PHASE 2: spatial kriging holdout (15% of nodes) — exercises the live kriging path.
+  spatial_holdout_prob: 0.15
 
 model:
   num_nodes: 81
@@ -34,4 +35,5 @@ training:
 loss:
   w_forecast: 1.0
   w_impute: 1.0
-  w_kriging: 0.0
+  # PHASE 2: active kriging loss weight.
+  w_kriging: 0.5

@@ -285,6 +285,61 @@ class RealIoTDataset(Dataset):
             'node_mask': node_mask
         }
 
+def make_spatial_holdout_mask(num_nodes: int,
+                              holdout_prob: float,
+                              device: str = 'cpu',
+                              seed: int = None) -> torch.Tensor:
+    """
+    Create a boolean mask marking spatially held-out nodes (IGNNK-style node masking,
+    Spatial Estimation Architecture Component 2, docs §4).
+
+    Held-out nodes have their dynamic features blanked before the encoder so their
+    latent embeddings are shaped purely by message passing from observable neighbours;
+    the kriging head must then reconstruct their series.
+
+    Args:
+        num_nodes:    Total sensor count.
+        holdout_prob: Fraction of nodes to hold out, e.g. 0.15 for 15%.
+        device:       Target device for the returned mask.
+        seed:         None -> fresh randomness (training, re-rolled per batch);
+                      int  -> deterministic mask (validation, stable metric tracking).
+
+    Returns:
+        mask: [num_nodes] boolean tensor, True = held out.
+    """
+    assert 0.0 <= holdout_prob <= 1.0, \
+        f"CRITICAL: holdout_prob must be in [0, 1], got {holdout_prob}"
+    assert num_nodes > 0, f"CRITICAL: num_nodes must be positive, got {num_nodes}"
+
+    rng = np.random.RandomState(seed) if seed is not None else np.random.RandomState()
+    mask = rng.rand(num_nodes) < holdout_prob
+    return torch.from_numpy(mask).bool().to(device)
+
+
+def apply_spatial_holdout(dynamic_features: torch.Tensor,
+                          holdout_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Zero out dynamic features for held-out nodes across all timesteps and channels.
+
+    Args:
+        dynamic_features: [B, N, T, D]
+        holdout_mask:     [N] boolean, True = held out.
+
+    Returns:
+        masked_features: [B, N, T, D] with held-out nodes zeroed (input left untouched).
+    """
+    assert dynamic_features.dim() == 4, \
+        f"CRITICAL: expected 4D [B, N, T, D], got {tuple(dynamic_features.shape)}"
+    assert holdout_mask.dim() == 1, \
+        f"CRITICAL: holdout_mask must be 1D, got {tuple(holdout_mask.shape)}"
+    assert holdout_mask.shape[0] == dynamic_features.shape[1], \
+        f"CRITICAL: mask len {holdout_mask.shape[0]} != num_nodes {dynamic_features.shape[1]}"
+
+    masked = dynamic_features.clone()
+    masked[:, holdout_mask, :, :] = 0.0
+    return masked
+
+
 def custom_collate_real(batch_list):
     """Collate function to maintain node structural dimensions."""
     return {
