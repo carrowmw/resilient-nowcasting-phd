@@ -219,8 +219,7 @@ def run_training(
         logger.info(f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}")
         parquet_path = "data/processed/master_dataset_15T.parquet"
         try:
-            # Try database first if flag is set, fall back to Parquet on error
-            use_db = getattr(args, 'use_database', False)
+            use_db = config.get("use_database", False)
             try:
                 full_dataset = RealIoTDataset(
                     parquet_path,
@@ -493,6 +492,10 @@ def main():
             import os
             os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
             logger.info(f"Isolated training execution to GPU(s): {selected_gpus}")
+
+    # Set use_database override from CLI args if present
+    if args.use_database:
+        config["use_database"] = True
 
     run_training(config, init_wandb=True, use_mock_data=args.use_mock_data)
 
