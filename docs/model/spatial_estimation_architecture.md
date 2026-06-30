@@ -383,6 +383,9 @@ def scale_invariant_mse(pred: torch.Tensor, target: torch.Tensor, eps: float = 1
 >
 > **Approach:** Apply MSLE only to the **first channel** (traffic counts) of the imputation/kriging outputs. For the auxiliary channels (Humidity, Solar Radiation), standard MSE on scaled values remains appropriate since these are continuous-valued meteorological readings, not count data.
 
+> [!NOTE]
+> **Resolution (shipped, Phases 1–3).** The implementation takes the *mathematically clean* inverse-transform path — **not** pseudo-MSLE on clamped scaled features (Open Question #4, now RESOLVED). The traffic channel (ch 0) of both the imputation and kriging predictions/targets is inverse-transformed back to raw counts via `traffic_raw = traffic_scaled * traffic_std + traffic_mean`, clamped to `>= 0`, then passed through `scale_invariant_mse` (`mean((log1p(pred) - log1p(target))^2)`). `traffic_mean`/`traffic_std` are computed once in `RealIoTDataset` and registered as `nn.Module` buffers on `ResilientIoTPipeline` (device-safe — they move to GPU with the model). Weather channels (1–2) use `F.mse_loss` on the scaled values, unchanged. The inverse transform is a constant affine map, so gradients flow through it without special handling. Every loss term carries a `CRITICAL:` NaN tripwire. See `src/decoders.py::compute_loss` / `compute_kriging_loss` and the ADR [`docs/adr/0001-eliminate-pseudo-msle.md`](../adr/0001-eliminate-pseudo-msle.md).
+
 ### 5.6 Hybrid Loss Formula
 
 The final joint loss becomes:
@@ -453,7 +456,7 @@ Depends on the OSMnx graph already being cached.
 
 3. **Computational cost of all-pairs shortest paths.** For 66 nodes × 66 nodes = 4,356 Dijkstra calls on a 33k-node walking graph. Estimated ~10 minutes (one-time, cached). Is this acceptable, or should we use approximate methods?
 
-4. **MSLE on scaled vs. unscaled data.** Should we inverse-transform the imputation predictions back to raw count space before computing MSLE, or should we compute a "pseudo-MSLE" on the scaled features? The former is mathematically cleaner but requires careful handling of the inverse transform within the backward pass.
+4. **MSLE on scaled vs. unscaled data.** ✅ **RESOLVED (Phase 1).** We inverse-transform the traffic channel back to raw count space (via registered `traffic_mean`/`traffic_std` buffers) before computing MSLE — the mathematically clean path, not pseudo-MSLE on clamped scaled features. The inverse transform is a constant affine map, so the backward pass needs no special handling. See §5.5 *Resolution (shipped)* and the ADR [`docs/adr/0001-eliminate-pseudo-msle.md`](../adr/0001-eliminate-pseudo-msle.md).
 
 5. **Weight tuning.** The three-way loss weighting ($w_f$, $w_i$, $w_k$) introduces a new hyperparameter. Should we add this to the existing Optuna sweep configuration?
 

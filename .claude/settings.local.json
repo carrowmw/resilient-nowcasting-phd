@@ -45,7 +45,9 @@
       "Bash(chmod +x *)",
       "Bash(bash *)",
       "Bash(WANDB_MODE=offline timeout 300 python src/train.py --use-database --config configs/train/train_test.yaml)",
-      "Bash(WANDB_MODE=disabled timeout 540 python src/train.py --use-database --config configs/train/train_test.yaml)"
+      "Bash(WANDB_MODE=disabled timeout 540 python src/train.py --use-database --config configs/train/train_test.yaml)",
+      "Bash(WANDB_MODE=offline timeout 540 python src/train.py --use-database --config configs/train/train_test.yaml)",
+      "Bash(WANDB_MODE=offline WANDB_NAME=phase4_dbcheck timeout 540 python src/train.py --use-database --config configs/train/train_test.yaml)"
     ]
   }
 }

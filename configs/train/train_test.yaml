@@ -7,8 +7,8 @@ data:
   target_veh_class: "person"
   target_dir: "all"
   mask_prob: 0.15
-  # PHASE 2: spatial kriging holdout (15% of nodes) — exercises the live kriging path.
-  spatial_holdout_prob: 0.15
+  # PHASE 2: spatial kriging holdout (20% of nodes, aligned with prod) — exercises the live kriging path.
+  spatial_holdout_prob: 0.2
 
 model:
   num_nodes: 81
