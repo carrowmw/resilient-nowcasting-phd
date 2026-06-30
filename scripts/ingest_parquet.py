@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -62,6 +63,11 @@ def compute_parquet_sha256(path: str) -> str:
 def get_git_metadata():
     """Extract current git branch and commit."""
     try:
+        # Avoid "dubious ownership" fatal error when running inside container
+        subprocess.run(
+            ["git", "config", "--global", "--add", "safe.directory", "/workspace"],
+            capture_output=True,
+        )
         branch = subprocess.check_output(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
         ).strip()
@@ -71,6 +77,7 @@ def get_git_metadata():
         return branch, commit
     except Exception:
         return "unknown", "unknown"
+
 
 
 def ingest_traffic_readings_chunk(df: pd.DataFrame, conn, batch_size: int, dry_run: bool, chunk_idx: int):
@@ -141,7 +148,7 @@ def create_dataset_version(conn, parquet_path: str, row_count: int):
             git_branch,
             git_commit,
             f"Bulk ingest from {Path(parquet_path).name}",
-            {"source": "master_dataset_15T.parquet", "seq_len": 12, "mask_prob": 0.15},
+            json.dumps({"source": "master_dataset_15T.parquet", "seq_len": 12, "mask_prob": 0.15}),
             sha256,
             row_count,
         ),
