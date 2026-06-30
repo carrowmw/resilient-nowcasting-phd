@@ -1,7 +1,7 @@
 # Phase 2 & 3 Quick Start Guide
 
-> **Status**: ✅ Code Complete (Pending Runtime Verification)  
-> **Date**: 2026-06-29  
+> **Status**: ✅ Code Complete (Pending Runtime Verification)
+> **Date**: 2026-06-29
 > **Full Details**: [.agents/IMPLEMENTATION_SUMMARY.md](file:///Users/administrator/Code/ml-agent-workspace/.agents/IMPLEMENTATION_SUMMARY.md)
 
 ---
@@ -77,7 +77,7 @@ Before starting, understand how the containers interact:
 
 **Note**: All dependencies (alembic, psycopg2-binary, python-dotenv) are installed in the `agent-workspace` container. You must rebuild the container after pulling these changes:
 ```bash
-docker-compose build agent-workspace
+docker compose build agent-workspace
 ```
 
 ---
@@ -90,7 +90,7 @@ docker-compose build agent-workspace
 
 ```bash
 # Rebuild agent-workspace with new dependencies
-docker-compose build agent-workspace
+docker compose build agent-workspace
 
 # This will take a few minutes the first time
 # Output should show: "Successfully built..." and "Successfully tagged..."
@@ -100,7 +100,7 @@ docker-compose build agent-workspace
 
 ```bash
 # Start database container
-docker-compose up -d timescaledb
+docker compose up -d timescaledb
 
 # Watch logs
 docker logs -f ml-timescaledb
@@ -115,10 +115,10 @@ docker logs -f ml-timescaledb
 
 ```bash
 # Start agent-workspace container if not already running
-docker-compose up -d agent-workspace
+docker compose up -d agent-workspace
 
 # Run Alembic migration inside agent-workspace
-docker-compose exec agent-workspace alembic upgrade head
+docker compose exec agent-workspace alembic upgrade head
 
 # Verify tables
 docker exec ml-timescaledb psql -U riotuser -d riot_traffic -c "\dt"
@@ -126,7 +126,7 @@ docker exec ml-timescaledb psql -U riotuser -d riot_traffic -c "\dt"
 
 **Expected output**:
 ```
- Schema |       Name        | Type  |  Owner   
+ Schema |       Name        | Type  |  Owner
 --------+-------------------+-------+----------
  public | alembic_version   | table | riotuser
  public | dataset_versions  | table | riotuser
@@ -134,7 +134,7 @@ docker exec ml-timescaledb psql -U riotuser -d riot_traffic -c "\dt"
  public | traffic_readings  | table | riotuser
 ```
 
-**Architecture Note**: 
+**Architecture Note**:
 - **TimescaleDB container**: Database server only (PostgreSQL + TimescaleDB extension)
 - **agent-workspace container**: Python environment with Alembic, psycopg2, and migration scripts
 - **Connection**: Alembic in agent-workspace → TimescaleDB via `DATABASE_URL` over `ml-network`
@@ -148,14 +148,14 @@ docker exec ml-timescaledb psql -U riotuser -d riot_traffic -c "\dt"
 mkdir -p logs
 
 # Dry run first (check row count)
-docker-compose exec agent-workspace python scripts/ingest_parquet.py \
+docker compose exec agent-workspace python scripts/ingest_parquet.py \
     --parquet data/processed/master_dataset_15T.parquet \
     --dry-run
 
 # Expected: "Would insert 121,198,026 rows in 100,000-row batches"
 
 # Full ingestion (background job in container)
-docker-compose exec -d agent-workspace sh -c \
+docker compose exec -d agent-workspace sh -c \
   "python scripts/ingest_parquet.py \
     --parquet data/processed/master_dataset_15T.parquet \
     --create-dataset-version > logs/ingestion.log 2>&1"
@@ -176,7 +176,7 @@ docker exec ml-timescaledb psql -U riotuser -d riot_traffic \
 
 ```bash
 # Test with default config
-docker-compose exec agent-workspace python src/train.py \
+docker compose exec agent-workspace python src/train.py \
     --use-database \
     --config configs/train/train.yaml
 
@@ -194,17 +194,17 @@ docker-compose exec agent-workspace python src/train.py \
 
 ```bash
 # Temporarily hide .env inside container
-docker-compose exec agent-workspace mv .env .env.bak
+docker compose exec agent-workspace mv .env .env.bak
 
 # Run without database (should fall back to Parquet)
-docker-compose exec agent-workspace python src/train.py \
+docker compose exec agent-workspace python src/train.py \
     --use-database \
     --config configs/train/train.yaml
 
 # Look for: "Database backend failed (...), falling back to Parquet"
 
 # Restore .env
-docker-compose exec agent-workspace mv .env.bak .env
+docker compose exec agent-workspace mv .env.bak .env
 ```
 
 **What to expect**: Even with `--use-database` flag, the system automatically falls back to Parquet when the database is unreachable. This ensures training never breaks due to database issues.
