@@ -216,6 +216,11 @@ class RealIoTDataset(Dataset):
         static_cache_path = "data/external/static_features_cache.parquet"
         if os.path.exists(static_cache_path):
             static_df = pd.read_parquet(static_cache_path)
+            # Ensure timezone alignment for dt column to prevent merge errors
+            if df["dt"].dt.tz is not None:
+                static_df["dt"] = pd.to_datetime(static_df["dt"]).dt.tz_localize("UTC")
+            else:
+                static_df["dt"] = pd.to_datetime(static_df["dt"]).dt.tz_localize(None)
             df = df.merge(static_df, on=["dt", "location"], how="left")
         else:
             raise FileNotFoundError(f"Static features cache not found: {static_cache_path}")
