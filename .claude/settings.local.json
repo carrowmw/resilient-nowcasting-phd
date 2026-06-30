@@ -44,7 +44,8 @@
       "Bash(alembic init *)",
       "Bash(chmod +x *)",
       "Bash(bash *)",
-      "Bash(WANDB_MODE=offline timeout 300 python src/train.py --use-database --config configs/train/train_test.yaml)"
+      "Bash(WANDB_MODE=offline timeout 300 python src/train.py --use-database --config configs/train/train_test.yaml)",
+      "Bash(WANDB_MODE=disabled timeout 540 python src/train.py --use-database --config configs/train/train_test.yaml)"
     ]
   }
 }

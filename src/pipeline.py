@@ -29,7 +29,8 @@ class ResilientIoTPipeline(nn.Module):
                  num_heads: int = 4,
                  dropout: float = 0.1,
                  dim_feedforward: int = None,
-                 zinb_eps: float = 1.0e-6):
+                 zinb_eps: float = 1.0e-6,
+                 edge_features_cache_path: str = None):
         super(ResilientIoTPipeline, self).__init__()
 
         # Default dim_feedforward to 4x hidden_dim if not specified or invalid
@@ -37,12 +38,18 @@ class ResilientIoTPipeline(nn.Module):
             dim_feedforward = hidden_dim * 4
 
         # 1. Topology Inference
+        # PHASE 3: pass the edge features cache so the graph learner can build [E, 10] edge_attr.
         self.graph_learner = DynamicGraphLearner(
             static_feat_dim=static_feat_dim,
             embedding_dim=embedding_dim,
-            sparsity_threshold=sparsity_threshold
+            sparsity_threshold=sparsity_threshold,
+            edge_features_cache_path=edge_features_cache_path
         )
-        logger.info(f"Initialized DynamicGraphLearner with static_feat_dim={static_feat_dim}, embedding_dim={embedding_dim}, sparsity_threshold={sparsity_threshold}, total_params={sum(p.numel() for p in self.graph_learner.parameters())}")
+        logger.info(f"Initialized DynamicGraphLearner with static_feat_dim={static_feat_dim}, embedding_dim={embedding_dim}, sparsity_threshold={sparsity_threshold}, edge_features_cache_path={edge_features_cache_path}, total_params={sum(p.numel() for p in self.graph_learner.parameters())}")
+
+        # PHASE 3: edge_dim matches the graph learner's edge_attr width — 10 when the
+        # physical cache is loaded, else 1 (learned-similarity-only fallback).
+        encoder_edge_dim = 10 if edge_features_cache_path else 1
 
         # 2. Spatiotemporal Feature Extraction
         self.encoder = MaskedSpatiotemporalEncoder(
@@ -53,7 +60,8 @@ class ResilientIoTPipeline(nn.Module):
             num_layers=num_layers,
             num_heads=num_heads,
             dropout=dropout,
-            dim_feedforward=dim_feedforward
+            dim_feedforward=dim_feedforward,
+            edge_dim=encoder_edge_dim
         )
         logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, num_heads={num_heads}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
 
@@ -127,13 +135,17 @@ class ResilientIoTPipeline(nn.Module):
         dynamic_features = batch['dynamic_features']
         # PHASE 2: spatial holdout mask [N] bool (None when kriging inactive).
         holdout_mask = batch.get('spatial_holdout_mask')
+        # PHASE 3: per-node location identifiers for physical edge feature lookup.
+        location_ids = batch.get('location_ids')
 
         # Defensive Data Handling
         # Replace NaNs (injected by our Dataset masking or simulated nodes) with 0.0
         dynamic_features_clean = torch.nan_to_num(dynamic_features, nan=0.0)
 
-        # 1. Graph Learner
-        edge_index, edge_weight = self.graph_learner(static_features)
+        # 1. Graph Learner — PHASE 3 returns enriched edge_attr [E, 10] (or [E, 1] fallback).
+        edge_index, edge_weight, edge_attr = self.graph_learner(
+            static_features, location_ids=location_ids
+        )
 
         # --- Strict Topology Masking ---
         # Prevent "ghost clustering" and pollution by dropping outgoing edges from simulated nodes
@@ -143,11 +155,13 @@ class ResilientIoTPipeline(nn.Module):
             valid_edges = ~sim_mask[sources]
             edge_index = edge_index[:, valid_edges]
             edge_weight = edge_weight[valid_edges]
+            # PHASE 3: keep edge_attr row-aligned with the filtered edges.
+            edge_attr = edge_attr[valid_edges]
 
         # 2. Encoder — request attention weights when in analysis mode
         if return_analysis:
             latent_embeddings, alpha = self.encoder(
-                dynamic_features_clean, edge_index, edge_weight,
+                dynamic_features_clean, edge_index, edge_attr,
                 return_attention_weights=True,
             )
 
@@ -176,7 +190,7 @@ class ResilientIoTPipeline(nn.Module):
         target_forecast = batch['target_forecast']
         target_impute = batch['target_impute']
 
-        latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_weight)
+        latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_attr)
 
         # 3. Decoders
         imputed_features, mu, theta, pi, tripwires = self.decoders(latent_embeddings)

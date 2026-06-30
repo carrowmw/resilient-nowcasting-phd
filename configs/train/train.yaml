@@ -23,6 +23,8 @@ model:
   dropout: 0.1
   dim_feedforward: null # defaults to hidden_dim * 4
   zinb_eps: 1.0e-6
+  # PHASE 3: physical edge features (9 physical + 1 learned -> GATv2 edge_dim=10).
+  edge_features_cache_path: "data/external/edge_features_cache.json"
 
 training:
   epochs: 100

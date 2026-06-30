@@ -316,7 +316,11 @@ def run_training(
         num_heads=model_cfg.get("num_heads", 4),
         dropout=model_cfg.get("dropout", 0.1),
         dim_feedforward=model_cfg.get("dim_feedforward", 256),
-        zinb_eps=model_cfg.get("zinb_eps", 1e-6)
+        zinb_eps=model_cfg.get("zinb_eps", 1e-6),
+        # PHASE 3: physical edge features cache (None for mock data / learned-only fallback).
+        edge_features_cache_path=(
+            None if use_mock_data else model_cfg.get("edge_features_cache_path")
+        ),
     ).to(device)
 
     # PHASE 1: Set scaler buffers AFTER moving model to device

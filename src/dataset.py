@@ -282,7 +282,9 @@ class RealIoTDataset(Dataset):
             'dynamic_features': dyn_masked,
             'target_impute': target_impute,
             'target_forecast': target_tensor,
-            'node_mask': node_mask
+            'node_mask': node_mask,
+            # PHASE 3: ordered node identifiers for physical edge feature lookup.
+            'location_ids': self.locations
         }
 
 def make_spatial_holdout_mask(num_nodes: int,
@@ -347,5 +349,7 @@ def custom_collate_real(batch_list):
         'dynamic_features': torch.stack([b['dynamic_features'] for b in batch_list]),
         'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
         'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
-        'node_mask': torch.stack([b['node_mask'] for b in batch_list])
+        'node_mask': torch.stack([b['node_mask'] for b in batch_list]),
+        # PHASE 3: location_ids constant across the batch (same node ordering).
+        'location_ids': batch_list[0]['location_ids']
     }

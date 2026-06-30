@@ -20,26 +20,30 @@ class MaskedSpatiotemporalEncoder(nn.Module):
                  num_heads: int = 4, 
                  num_layers: int = 2,
                  dropout: float = 0.1,
-                 dim_feedforward: int = 256):
+                 dim_feedforward: int = 256,
+                 edge_dim: int = 1):
         super(MaskedSpatiotemporalEncoder, self).__init__()
-        
+
         # Reproducibility at initialization
         torch.manual_seed(42)
-        
+
         self.num_nodes = num_nodes
         self.seq_len = seq_len
         self.time_series_dim = time_series_dim
         self.hidden_dim = hidden_dim
+        # PHASE 3: edge_dim=1 -> learned similarity only; edge_dim=10 -> enriched
+        # physical + learned edge features from the cache.
+        self.edge_dim = edge_dim
 
         # 1. Spatial Processing: GATv2Conv
-        # We use a single layer for simplicity as per common IoT patterns, 
+        # We use a single layer for simplicity as per common IoT patterns,
         # or can be extended to multiple.
         self.gat = GATv2Conv(
             in_channels=time_series_dim,
             out_channels=hidden_dim // num_heads,
             heads=num_heads,
             dropout=dropout,
-            edge_dim=1 # For edge_weight
+            edge_dim=edge_dim  # PHASE 3: 1 (learned-only) or 10 (enriched edge_attr)
         )
 
         # 2. Temporal Processing: Transformer
@@ -56,20 +60,27 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         self,
         dynamic_features: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_weight: torch.Tensor,
+        edge_attr: torch.Tensor,
         return_attention_weights: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
             dynamic_features: [batch_size, num_nodes, seq_len, time_series_dim]
             edge_index: [2, E]
-            edge_weight: [E]
+            edge_attr: [E] (1-D learned similarity) or [E, edge_dim] (enriched).
+                A 1-D tensor is unsqueezed to [E, 1] for backward compatibility.
             return_attention_weights: If True, also return the GAT attention
                 coefficients alpha [batched_E, num_heads] for downstream analysis.
         Returns:
             latent_embeddings: [batch_size, num_nodes, seq_len, hidden_dim]
             alpha (optional): [batched_E, num_heads] — only when return_attention_weights=True.
         """
+        # PHASE 3: accept either a 1-D edge_weight [E] or a 2-D edge_attr [E, D].
+        if edge_attr.dim() == 1:
+            edge_attr = edge_attr.unsqueeze(1)
+        assert edge_attr.dim() == 2, f"Expected edge_attr [E, D], got {edge_attr.shape}"
+        assert edge_attr.shape[1] == self.edge_dim, \
+            f"edge_attr dim {edge_attr.shape[1]} != encoder edge_dim {self.edge_dim}"
         # --- Defensive Data Handling (Rule 2) ---
         assert dynamic_features.dim() == 4, f"Expected 4D features, got {dynamic_features.shape}"
         batch_size, num_nodes, seq_len, ts_dim = dynamic_features.shape
@@ -95,20 +106,24 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         # offsets shape: [num_graphs, 1]. Repeat for each edge in the graph.
         offsets = offsets.repeat(1, E).view(-1) # [num_graphs * E]
         batched_edge_index = batched_edge_index + offsets
-        
-        # edge_weight also needs repeating
-        batched_edge_weight = edge_weight.repeat(num_graphs)
+
+        # edge_attr also needs repeating: [E, D] -> [E * num_graphs, D]
+        batched_edge_attr = edge_attr.repeat(num_graphs, 1)
+        assert batched_edge_attr.shape[0] == batched_edge_index.shape[1], (
+            f"batched edge_attr rows {batched_edge_attr.shape[0]} != "
+            f"batched edges {batched_edge_index.shape[1]}"
+        )
 
         # Apply GAT — optionally collect attention coefficients for analysis.
         if return_attention_weights:
             # PyG returns (out, (edge_index_used, alpha)) when return_attention_weights=True
             x_spatial, (_, alpha) = self.gat(
                 x, batched_edge_index,
-                edge_attr=batched_edge_weight,
+                edge_attr=batched_edge_attr,
                 return_attention_weights=True,
             )
         else:
-            x_spatial = self.gat(x, batched_edge_index, edge_attr=batched_edge_weight)
+            x_spatial = self.gat(x, batched_edge_index, edge_attr=batched_edge_attr)
             alpha = None
 
         # --- Temporal Processing ---
