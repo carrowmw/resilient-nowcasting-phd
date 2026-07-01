@@ -48,6 +48,7 @@ if os.path.exists(env_path):
                 os.environ.setdefault(key.strip(), val.strip().strip('"\''))
 
 from dataset import RealIoTDataset
+from db_connector import create_connector
 from features import StaticFeatureLoader, REQUIRED_KEYS
 from pipeline import ResilientIoTPipeline
 
@@ -67,7 +68,6 @@ logger = logging.getLogger(__name__)
 #   encoder.gat.lin_l.weight  → [64, 3]  ⟹ hidden_dim=64, time_series_dim=3
 # ---------------------------------------------------------------------------
 SENSORS_PATH = "data/traffic_sensors.json"
-PARQUET_PATH = "data/processed/master_dataset_15T.parquet"
 MASTER_INDEX_PATH = "frontend/public/data/master_index.json"
 NODES_DIR = "frontend/public/data/nodes"
 PLACES_CACHE_PATH = "data/external/places_cache.json"
@@ -121,6 +121,8 @@ def parse_args() -> argparse.Namespace:
                         help="W&B project name to query for model artifacts.")
     parser.add_argument("--wandb_collection", type=str, default="resilient-iot-model-v2",
                         help="W&B artifact collection name to query.")
+    parser.add_argument("--config", type=str, default="configs/analysis/analysis.yaml",
+                        help="Analysis config YAML (drives data_source and connector creation).")
     return parser.parse_args()
 
 
@@ -697,10 +699,20 @@ def main() -> None:
     logger.info(f"Device: {device}")
 
     # ------------------------------------------------------------------
+    # 0. Build connector from config
+    # ------------------------------------------------------------------
+    analysis_cfg: dict = {}
+    if os.path.exists(args.config):
+        import yaml as _yaml
+        with open(args.config) as _fh:
+            analysis_cfg = _yaml.safe_load(_fh) or {}
+    connector = create_connector(analysis_cfg)
+
+    # ------------------------------------------------------------------
     # 1. Load real-world sensor coordinates
     # ------------------------------------------------------------------
-    logger.info(f"Loading sensor coordinates from {SENSORS_PATH}")
-    sensor_coords = load_sensor_coords(SENSORS_PATH)
+    sensor_coords = connector.load_sensor_metadata()
+    logger.info(f"Loaded {len(sensor_coords)} sensor coordinates via connector")
 
     # ------------------------------------------------------------------
     # 2. Load dataset for the test day
@@ -716,7 +728,7 @@ def main() -> None:
     # signal: the model's imputation reconstructs the masked timesteps and the UI
     # can visualise the "self-healing" behaviour at the masked positions.
     dataset = RealIoTDataset(
-        parquet_path=PARQUET_PATH,
+        connector,
         start_date=args.start_date,
         end_date=args.end_date,
         seq_len=args.seq_len,
@@ -728,8 +740,8 @@ def main() -> None:
     # Inverse-transform parameters for channel 0 (traffic count). StandardScaler
     # stores mean_ and scale_ as length-time_series_dim vectors.
     # x_raw = x_scaled * scale_[0] + mean_[0]
-    traffic_mean: float = float(dataset.scaler.mean_[0])
-    traffic_scale: float = float(dataset.scaler.scale_[0])
+    traffic_mean: float = float(dataset.traffic_scaler.mean_[0])
+    traffic_scale: float = float(dataset.traffic_scaler.scale_[0])
     assert traffic_scale > 0, (
         f"TRIPWIRE: dataset.scaler.scale_[0]={traffic_scale} must be > 0 "
         f"to inverse-transform without divergence."

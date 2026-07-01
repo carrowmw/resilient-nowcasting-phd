@@ -9,7 +9,7 @@
 #   Layer 3 (Edge Features): 9 physical OSM features + 1 learned similarity feed
 #     GATv2 (edge_dim=10) — model.edge_features_cache_path.
 # ============================================================================
-use_database: true
+data_source: "database"  # "database" | "parquet"
 
 wandb:
   project: "resilient-iot-v2"

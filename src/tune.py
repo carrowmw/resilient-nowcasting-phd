@@ -14,6 +14,7 @@ from optuna.integration.wandb import WeightsAndBiasesCallback
 from logger import setup_logger
 from train import load_config, run_training
 from dataset import RealIoTDataset
+from db_connector import create_connector
 
 
 def set_nested_value(d: dict, keys: list, value):
@@ -430,10 +431,10 @@ if __name__ == "__main__":
     full_dataset = None
     if not cli_args.use_mock_data:
         data_cfg = base_config["data"]
-        parquet_path = "data/processed/master_dataset_15T.parquet"
         logger.info(f"Worker level: Pre-loading RealIoTDataset once...")
+        connector = create_connector(base_config)
         full_dataset = RealIoTDataset(
-            parquet_path,
+            connector,
             data_cfg["start_date"],
             data_cfg["end_date"],
             seq_len=data_cfg["seq_len"],

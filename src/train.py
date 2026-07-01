@@ -17,6 +17,7 @@ from dataset import (
     make_spatial_holdout_mask,
     apply_spatial_holdout,
 )
+from db_connector import create_connector
 from logger import setup_logger
 from metrics import calculate_metrics, calculate_kriging_metrics
 from pipeline import ResilientIoTPipeline
@@ -39,11 +40,6 @@ def parse_args():
         "--use_mock_data",
         action="store_true",
         help="Use mock data instead of real parquet data",
-    )
-    parser.add_argument(
-        "--use-database",
-        action="store_true",
-        help="Load data from TimescaleDB instead of Parquet (Phase 2)",
     )
     return parser.parse_args()
 
@@ -236,35 +232,17 @@ def run_training(
         )
     else:
         logger.info(f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}")
-        parquet_path = "data/processed/master_dataset_15T.parquet"
+        connector = create_connector(config)
         try:
-            use_db = config.get("use_database", False)
-            try:
-                full_dataset = RealIoTDataset(
-                    parquet_path,
-                    data_cfg["start_date"],
-                    data_cfg["end_date"],
-                    seq_len=data_cfg["seq_len"],
-                    mask_prob=data_cfg.get("mask_prob", 0.15),
-                    target_veh_class=data_cfg["target_veh_class"],
-                    target_dir=data_cfg["target_dir"],
-                    use_database=use_db,
-                )
-            except Exception as db_exc:
-                if use_db:
-                    logger.warning(f"Database backend failed ({db_exc}), falling back to Parquet")
-                    full_dataset = RealIoTDataset(
-                        parquet_path,
-                        data_cfg["start_date"],
-                        data_cfg["end_date"],
-                        seq_len=data_cfg["seq_len"],
-                        mask_prob=data_cfg.get("mask_prob", 0.15),
-                        target_veh_class=data_cfg["target_veh_class"],
-                        target_dir=data_cfg["target_dir"],
-                        use_database=False,
-                    )
-                else:
-                    raise
+            full_dataset = RealIoTDataset(
+                connector,
+                data_cfg["start_date"],
+                data_cfg["end_date"],
+                seq_len=data_cfg["seq_len"],
+                mask_prob=data_cfg.get("mask_prob", 0.15),
+                target_veh_class=data_cfg["target_veh_class"],
+                target_dir=data_cfg["target_dir"],
+            )
 
             train_size = int(0.8 * len(full_dataset))
             val_size = len(full_dataset) - train_size
@@ -302,6 +280,7 @@ def run_training(
                 collate_fn=custom_collate_real,
             )
         except Exception as e:
+            connector.close()
             logger.error(f"Failed to load RealIoTDataset: {e}")
             raise
 
@@ -630,10 +609,6 @@ def main():
             import os
             os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
             logger.info(f"Isolated training execution to GPU(s): {selected_gpus}")
-
-    # Set use_database override from CLI args if present
-    if args.use_database:
-        config["use_database"] = True
 
     run_training(config, init_wandb=True, use_mock_data=args.use_mock_data)
 

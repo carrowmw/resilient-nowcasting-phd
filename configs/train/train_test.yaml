@@ -1,4 +1,4 @@
-use_database: true
+data_source: "database"  # "database" | "parquet"
 
 wandb:
   project: "resilient-iot-v2-test"

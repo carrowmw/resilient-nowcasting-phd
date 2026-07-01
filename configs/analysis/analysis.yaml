@@ -1,2 +1,6 @@
+data_source: "database"  # "database" | "parquet"
 holdout_start: 2026-05-01
 holdout_end: 2026-06-01
+veh_class: "person"
+dir: "all"
+seq_len: 12

@@ -75,9 +75,9 @@ from export_ui_payload import (  # noqa: E402
     NUM_TIMESTEPS_TARGET,
     TOP_K_EGO_EDGES,
     SENSORS_PATH,
-    PARQUET_PATH,
 )
 from dataset import RealIoTDataset  # noqa: E402
+from db_connector import create_connector, DataConnector  # noqa: E402
 from pipeline import ResilientIoTPipeline  # noqa: E402
 
 logger = logging.getLogger("export_paginated_payload")
@@ -778,7 +778,8 @@ def upload_run_artifact(out_dir: str, run_id: str, entity: Optional[str], projec
 # ---------------------------------------------------------------------------
 
 def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespace,
-                          device: torch.device, sensor_coords: Dict) -> Dict:
+                          device: torch.device, sensor_coords: Dict,
+                          connector: DataConnector) -> Dict:
     """Generate the full per-day payload tree for a single W&B artifact."""
     start_date, end_date = cfg["start_date"], cfg["end_date"]
     seq_len, num_simulated = cfg["seq_len"], cfg["num_simulated"]
@@ -798,7 +799,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     # gracefully instead of shifting node ids. The look-back day (start - 1) supplies
     # seq_len context for the first target day.
     full_ds = RealIoTDataset(
-        parquet_path=PARQUET_PATH,
+        connector,
         start_date=(dt.date.fromisoformat(start_date) - dt.timedelta(days=1)).isoformat(),
         end_date=end_date,
         seq_len=seq_len, mask_prob=0.15,
@@ -918,14 +919,21 @@ def main() -> None:
         logger.info("--dry_run set; exiting before inference.")
         return
 
-    sensor_coords = load_sensor_coords(SENSORS_PATH)
+    connector = create_connector(cfg)
+    sensor_coords = connector.load_sensor_metadata()
+    logger.info(f"Loaded {len(sensor_coords)} sensor coordinates via connector")
 
     summaries = []
-    for artifact_name in artifacts:
-        try:
-            summaries.append(generate_for_artifact(artifact_name, cfg, args, device, sensor_coords))
-        except Exception:
-            logger.exception(f"Artifact {artifact_name} FAILED — continuing with the next.")
+    try:
+        for artifact_name in artifacts:
+            try:
+                summaries.append(
+                    generate_for_artifact(artifact_name, cfg, args, device, sensor_coords, connector)
+                )
+            except Exception:
+                logger.exception(f"Artifact {artifact_name} FAILED — continuing with the next.")
+    finally:
+        connector.close()
 
     logger.info(f"DONE. Generated {len(summaries)}/{len(artifacts)} run(s):")
     for s in summaries:

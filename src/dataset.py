@@ -5,12 +5,22 @@ import pandas as pd
 import logging
 from sklearn.preprocessing import StandardScaler
 
+from db_connector import DataConnector
+
 # Standard random seed initialization
 np.random.seed(42)
 torch.manual_seed(42)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+STATIC_FEATURE_COLS = [
+    'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
+    'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
+    'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
+    'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking',
+]
+
 
 class RealIoTDataset(Dataset):
     """
@@ -19,26 +29,31 @@ class RealIoTDataset(Dataset):
     Groups data by location, applies sliding window extraction, and injects NaN masking.
     """
     def __init__(self,
-                 parquet_path: str,
+                 connector: DataConnector,
                  start_date: str,
                  end_date: str,
                  seq_len: int = 12,
                  mask_prob: float = 0.15,
                  target_veh_class: str = 'person',
-                 target_dir: str = 'all',
-                 use_database: bool = False):
+                 target_dir: str = 'all'):
 
-        logger.info(f"Loading data from {parquet_path if not use_database else 'DATABASE'} "
+        logger.info(f"Loading data via connector {type(connector).__name__} "
                     f"between {start_date} and {end_date}")
 
         # 1. Load Data with Time Filter Constraints
         start_dt = pd.Timestamp(start_date)
         end_dt = pd.Timestamp(end_date)
 
-        if use_database:
-            df = self._load_from_database(start_dt, end_dt, target_veh_class, target_dir)
-        else:
-            df = self._load_from_parquet(parquet_path, start_dt, end_dt, target_veh_class, target_dir)
+        traffic_df = connector.load_traffic(start_dt, end_dt, target_veh_class, target_dir)
+        weather_df = connector.load_weather(start_dt, end_dt, traffic_df['location'].unique().tolist())
+        static_df = connector.load_static_features(traffic_df['location'].unique().tolist())
+        df = traffic_df.merge(weather_df, on=['dt', 'location'], how='left')
+        df = df.merge(static_df, on='location', how='left')
+
+        assert df['Humidity'].notna().all(), "CRITICAL: NaN Humidity after weather join"
+        assert df['Solar Radiation'].notna().all(), "CRITICAL: NaN Solar Radiation after weather join"
+        for _col in STATIC_FEATURE_COLS:
+            assert _col in df.columns, f"CRITICAL: Missing static feature column '{_col}'"
         
         if df.empty:
             raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
@@ -157,13 +172,7 @@ class RealIoTDataset(Dataset):
         logger.info(f"Dynamic features scaled separately: traffic (ch0) + weather (ch1-2) over {num_times * num_nodes_d} samples.")
 
         # Static features
-        stat_cols = [
-            'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-            'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-            'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-            'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking'
-        ]
-        stat_df = df[stat_cols].groupby('location').first()
+        stat_df = df[STATIC_FEATURE_COLS].groupby('location').first()
         stat_df['is_school_zone'] = stat_df['is_school_zone'].astype(float).fillna(0.0)
         stat_df = stat_df.reindex(locations_idx).fillna(0.0)
 
@@ -176,83 +185,6 @@ class RealIoTDataset(Dataset):
         logger.info(f"Static features scaled: mean≈0, std≈1 over {stat_np.shape[0]} nodes.")
         
         logger.info(f"Feature dimensions established. Static: {self.static_feat_dim}, Dynamic: {self.time_series_dim}")
-
-    def _load_from_parquet(self, parquet_path, start_dt, end_dt, veh_class, direction):
-        """Existing Parquet loading logic (unchanged)."""
-        df = pd.read_parquet(
-            parquet_path,
-            filters=[
-                ('dt', '>=', start_dt),
-                ('dt', '<', end_dt)
-            ],
-            columns=[
-                'dt', 'location', 'value', 'Humidity', 'Solar Radiation',
-                'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-                'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-                'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-                'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking',
-                'veh_class', 'dir'
-            ]
-        )
-        return df
-
-    def _load_from_database(self, start_dt, end_dt, veh_class, direction):
-        """
-        Load traffic readings from TimescaleDB and join with static features cache.
-
-        Returns a DataFrame matching the Parquet schema.
-        """
-        import psycopg2
-        import os
-        from dotenv import load_dotenv
-
-        load_dotenv()
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            raise ValueError("DATABASE_URL not set — cannot use database mode")
-
-        conn = psycopg2.connect(db_url)
-        cursor = conn.cursor()
-
-        # Query traffic readings with filters
-        query = """
-            SELECT dt, sensor_id, veh_class, direction, count
-            FROM traffic_readings
-            WHERE dt >= %s AND dt < %s
-              AND veh_class = %s
-            ORDER BY dt, sensor_id
-        """
-        params = [start_dt, end_dt, veh_class]
-
-        if direction != 'all':
-            query = query.replace("ORDER BY", "AND direction = %s ORDER BY")
-            params.append(direction)
-
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
-
-        if not rows:
-            raise ValueError(f"No database rows for {start_dt} to {end_dt}, veh_class={veh_class}")
-
-        df = pd.DataFrame(rows, columns=["dt", "location", "veh_class", "dir", "value"])
-
-        # Join with static features cache (weather + spatial metadata)
-        # This requires a separate table or JSON cache — for MVP, fall back to Parquet
-        logger.warning("Database mode: static features still loaded from Parquet cache")
-        static_cache_path = "data/external/static_features_cache.parquet"
-        if os.path.exists(static_cache_path):
-            static_df = pd.read_parquet(static_cache_path)
-            # Ensure timezone alignment for dt column to prevent merge errors
-            if df["dt"].dt.tz is not None:
-                static_df["dt"] = pd.to_datetime(static_df["dt"]).dt.tz_localize("UTC")
-            else:
-                static_df["dt"] = pd.to_datetime(static_df["dt"]).dt.tz_localize(None)
-            df = df.merge(static_df, on=["dt", "location"], how="left")
-        else:
-            raise FileNotFoundError(f"Static features cache not found: {static_cache_path}")
-
-        return df
 
     def __len__(self) -> int:
         return max(0, len(self.times) - self.seq_len)
