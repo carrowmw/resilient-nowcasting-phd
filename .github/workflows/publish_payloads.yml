@@ -30,8 +30,12 @@ jobs:
       - name: Link host data directory
         run: |
           if [ -d "/data" ]; then
-            ln -sf /data ./data
-            echo "Successfully linked /data to ./data"
+            for dir in /data/*; do
+              if [ -d "$dir" ]; then
+                ln -sf "$dir" "./data/$(basename "$dir")"
+              fi
+            done
+            echo "Successfully linked /data subdirectories into ./data/"
           else
             echo "No /data volume found. Running with default data directory."
           fi
