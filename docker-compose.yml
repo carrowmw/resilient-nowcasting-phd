@@ -18,6 +18,8 @@ services:
     tty: true
     networks:
       - ml-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Isolated Frontend Environment
   frontend-dev:
@@ -48,6 +50,8 @@ services:
       - .:/workspace
     networks:
       - ml-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # This block maps the physical server GPUs into the container
     deploy:
       resources:
@@ -69,6 +73,8 @@ services:
       - .:/workspace
     networks:
       - ml-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # TimescaleDB for training database (Phase 2)
   timescaledb:
@@ -102,6 +108,8 @@ services:
     volumes:
       # Mount host's data directory read-only into container's root /data
       - ./data:/data:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
