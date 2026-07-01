@@ -10,14 +10,6 @@ on:
         description: "Process all artifacts in collection"
         type: boolean
         default: false
-      start_date:
-        description: "Analysis start date (YYYY-MM-DD)"
-        required: false
-        default: "2026-06-01"
-      end_date:
-        description: "Analysis end date (YYYY-MM-DD)"
-        required: false
-        default: "2026-07-01"
 
 jobs:
   build-and-upload:
@@ -53,9 +45,7 @@ jobs:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
         run: |
           ARGS="--config configs/analysis/analysis.yaml \
-                --output_dir frontend/public/data/runs \
-                --start_date ${{ github.event.inputs.start_date }} \
-                --end_date ${{ github.event.inputs.end_date }}"
+                --output_dir frontend/public/data/runs"
 
           if [ "${{ github.event.inputs.all_artifacts }}" == "true" ]; then
             ARGS="$ARGS --all_artifacts"
