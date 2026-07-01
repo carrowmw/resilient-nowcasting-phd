@@ -30,7 +30,8 @@ class ResilientIoTPipeline(nn.Module):
                  dropout: float = 0.1,
                  dim_feedforward: int = None,
                  zinb_eps: float = 1.0e-6,
-                 edge_features_cache_path: str = None):
+                 edge_features_cache_path: str = None,
+                 simulated_edge_features_cache_path: str = None):
         super(ResilientIoTPipeline, self).__init__()
 
         # Default dim_feedforward to 4x hidden_dim if not specified or invalid
@@ -43,9 +44,10 @@ class ResilientIoTPipeline(nn.Module):
             static_feat_dim=static_feat_dim,
             embedding_dim=embedding_dim,
             sparsity_threshold=sparsity_threshold,
-            edge_features_cache_path=edge_features_cache_path
+            edge_features_cache_path=edge_features_cache_path,
+            simulated_edge_features_cache_path=simulated_edge_features_cache_path,
         )
-        logger.info(f"Initialized DynamicGraphLearner with static_feat_dim={static_feat_dim}, embedding_dim={embedding_dim}, sparsity_threshold={sparsity_threshold}, edge_features_cache_path={edge_features_cache_path}, total_params={sum(p.numel() for p in self.graph_learner.parameters())}")
+        logger.info(f"Initialized DynamicGraphLearner with static_feat_dim={static_feat_dim}, embedding_dim={embedding_dim}, sparsity_threshold={sparsity_threshold}, edge_features_cache_path={edge_features_cache_path}, simulated_edge_features_cache_path={simulated_edge_features_cache_path}, total_params={sum(p.numel() for p in self.graph_learner.parameters())}")
 
         # PHASE 3: edge_dim matches the graph learner's edge_attr width — 10 when the
         # physical cache is loaded, else 1 (learned-similarity-only fallback).

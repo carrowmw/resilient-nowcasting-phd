@@ -47,7 +47,8 @@ class DynamicGraphLearner(nn.Module):
                  static_feat_dim: int,
                  embedding_dim: int = 32,
                  sparsity_threshold: float = 0.5,
-                 edge_features_cache_path: Optional[str] = None):
+                 edge_features_cache_path: Optional[str] = None,
+                 simulated_edge_features_cache_path: Optional[str] = None):
         super(DynamicGraphLearner, self).__init__()
         # Ensure random seeds are handled globally or at the top of the script
 
@@ -63,6 +64,12 @@ class DynamicGraphLearner(nn.Module):
         # PHASE 3: load physical edge features cache (fail-fast on missing file).
         self.edge_features_cache = None
         self.max_distance = None
+
+        if simulated_edge_features_cache_path is not None and edge_features_cache_path is None:
+            raise ValueError(
+                "CRITICAL: simulated_edge_features_cache_path requires edge_features_cache_path to also be set"
+            )
+
         if edge_features_cache_path is not None:
             cache_path = Path(edge_features_cache_path)
             if not cache_path.exists():
@@ -72,7 +79,25 @@ class DynamicGraphLearner(nn.Module):
             with open(cache_path, 'r') as f:
                 self.edge_features_cache = json.load(f)
 
+            if simulated_edge_features_cache_path is not None:
+                sim_path = Path(simulated_edge_features_cache_path)
+                if not sim_path.exists():
+                    raise FileNotFoundError(
+                        f"CRITICAL: Simulated edge features cache not found: {sim_path}"
+                    )
+                with open(sim_path, 'r') as f:
+                    sim_cache = json.load(f)
+                for src, dst_dict in sim_cache.items():
+                    if src in self.edge_features_cache:
+                        self.edge_features_cache[src].update(dst_dict)
+                    else:
+                        self.edge_features_cache[src] = dict(dst_dict)
+                logger.info(
+                    f"Merged simulated cache: {len(sim_cache)} additional sources from {sim_path}"
+                )
+
             # Global max shortest_path_distance for normalizing BOTH distance channels.
+            # Recomputed here so it covers the merged cache (real + simulated pairs).
             distances = [
                 pair_data['shortest_path_distance']
                 for pairs in self.edge_features_cache.values()
