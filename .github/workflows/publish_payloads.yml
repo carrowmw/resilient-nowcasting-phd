@@ -27,6 +27,16 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Link host data directory
+        run: |
+          if [ -d "/data" ]; then
+            ln -sf /data ./data
+            echo "Successfully linked /data to ./data"
+          else
+            echo "No /data volume found. Running with default data directory."
+          fi
+
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:

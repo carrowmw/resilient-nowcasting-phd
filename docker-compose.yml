@@ -104,8 +104,8 @@ services:
     env_file:
       - .env
     volumes:
-      # Mount host's data directory read-only into runner workspace data directory
-      - ./data:/actions-runner/_work/ml-agent-workspace/ml-agent-workspace/data:ro
+      # Mount host's data directory read-only into container's root /data
+      - ./data:/data:ro
     environment:
       - GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
