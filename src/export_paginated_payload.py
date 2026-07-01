@@ -130,6 +130,10 @@ def parse_args() -> argparse.Namespace:
                    help="W&B project to query for model artifacts.")
     p.add_argument("--query_collection", type=str, default=WANDB_COLLECTION,
                    help="W&B collection to query for model artifacts.")
+    p.add_argument("--data_source", type=str, default=None, choices=["database", "parquet"],
+                   help="Data source: database or parquet. Overrides config.")
+    p.add_argument("--parquet_path", type=str, default=None,
+                   help="Path to Parquet file if data_source='parquet'. Overrides config.")
     return p.parse_args()
 
 
@@ -177,6 +181,8 @@ def load_analysis_config(path: str, args: argparse.Namespace) -> Dict:
         "dir": pick(args.dir, "dir", default="all"),
         "seq_len": int(pick(args.seq_len, "seq_len", default=12)),
         "num_simulated": int(pick(args.num_simulated, "num_simulated", default=5)),
+        "data_source": pick(args.data_source, "data_source", default=None),
+        "parquet_path": pick(args.parquet_path, "parquet_path", default=None),
     }
     # Tripwire: window must be non-empty and well-ordered.
     assert dt.date.fromisoformat(resolved["start_date"]) < dt.date.fromisoformat(resolved["end_date"]), (
