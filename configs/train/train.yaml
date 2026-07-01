@@ -11,6 +11,11 @@
 # ============================================================================
 use_database: true
 
+wandb:
+  project: "resilient-iot-v2"
+  sweep_project: "resilient-iot-sweeps-v2"
+  collection: "resilient-iot-model-v2"
+
 data:
   start_date: "2024-04-02"
   end_date: "2025-04-02"

@@ -303,10 +303,19 @@ if __name__ == "__main__":
                 storage, study_name, config_path, sweep_config_path
             )
 
+        # Config-driven W&B project retrieval
+        base_cfg = {}
+        if config_path:
+            try:
+                base_cfg = load_config(config_path)
+            except Exception as e:
+                logger.warning(f"Could not load config from {config_path}: {e}")
+        sweep_project = base_cfg.get("wandb", {}).get("sweep_project", "resilient-iot-sweeps-v2")
+
         if study_name is None:
             logger.info("Initializing a temporary WandB run to generate a stable study name...")
             wandb_run = wandb.init(
-                project="resilient-iot-sweeps",
+                project=sweep_project,
                 reinit=True
             )
             study_name = wandb_run.name
@@ -378,13 +387,15 @@ if __name__ == "__main__":
     sweep_config = load_config(sweep_config_path)
     logger.info(f"Sweep config loaded from: {sweep_config_path}")
 
+    sweep_project = base_config.get("wandb", {}).get("sweep_project", "resilient-iot-sweeps-v2")
+
     logger.info("Initializing WandB run...")
     run_name = study_name
     if cli_args.worker_id:
         run_name = f"{study_name}_{cli_args.worker_id}"
 
     wandb_run = wandb.init(
-        project="resilient-iot-sweeps",
+        project=sweep_project,
         name=run_name,
         reinit=True
     )
@@ -402,7 +413,7 @@ if __name__ == "__main__":
     wandbc = WeightsAndBiasesCallback(
         metric_name="val_loss_total",
         wandb_kwargs={
-            "project": "resilient-iot-sweeps",
+            "project": sweep_project,
             "name": run_name,
             "reinit": True
         },

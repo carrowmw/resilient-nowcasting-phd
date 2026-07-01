@@ -117,6 +117,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact", type=str, default=None,
                         help="W&B artifact name (e.g., 'entity/project/name:latest'). "
                              "If provided, overrides --checkpoint.")
+    parser.add_argument("--wandb_project", type=str, default="resilient-iot-v2",
+                        help="W&B project name to query for model artifacts.")
+    parser.add_argument("--wandb_collection", type=str, default="resilient-iot-model-v2",
+                        help="W&B artifact collection name to query.")
     return parser.parse_args()
 
 
@@ -131,15 +135,13 @@ def load_sensor_coords(path: str) -> Dict[str, Dict[str, float]]:
     return {entry["location"]: {"lat": entry["lat"], "lon": entry["lon"]} for entry in raw}
 
 
-def select_artifact_from_wandb() -> str:
+def select_artifact_from_wandb(project: str = "resilient-iot-v2", collection_name: str = "resilient-iot-model-v2") -> str:
     """
-    Connects to W&B, lists all available model artifacts in the resilient-iot project,
+    Connects to W&B, lists all available model artifacts in the configured project,
     and returns the selected or latest artifact name.
     """
     api = wandb.Api()
     entity = api.default_entity
-    project = "resilient-iot"
-    collection_name = "resilient-iot-model"
     collection_path = f"{entity}/{project}/{collection_name}"
 
     logger.info(f"Connecting to W&B to list available model artifacts in project {project}...")
@@ -815,7 +817,10 @@ def main() -> None:
     artifact_name = args.artifact
 
     if not checkpoint_path and not artifact_name:
-        artifact_name = select_artifact_from_wandb()
+        artifact_name = select_artifact_from_wandb(
+            project=args.wandb_project,
+            collection_name=args.wandb_collection
+        )
 
     if artifact_name:
         checkpoint_path, config_path, wandb_run_id = load_model_from_wandb(artifact_name)

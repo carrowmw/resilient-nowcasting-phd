@@ -86,8 +86,8 @@ DEFAULT_CONFIG_PATH = "configs/analysis/analysis.yaml"
 DEFAULT_OUTPUT_DIR = "frontend/public/data/runs"
 
 # W&B collection coordinates for --all_artifacts discovery (DEC-3).
-WANDB_PROJECT = "resilient-iot"
-WANDB_COLLECTION = "resilient-iot-model"
+WANDB_PROJECT = "resilient-iot-v2"
+WANDB_COLLECTION = "resilient-iot-model-v2"
 
 # Candidate validation-metric keys to lift from the producer run's W&B summary.
 METRIC_KEYS = ("val_rmse", "val_mae", "val_zero_acc", "val_loss", "rmse", "mae")
@@ -126,6 +126,10 @@ def parse_args() -> argparse.Namespace:
                    help="W&B entity for --upload (defaults to the logged-in default entity).")
     p.add_argument("--wandb_project", type=str, default="riot-smoke",
                    help="W&B project for --upload (default riot-smoke for isolation).")
+    p.add_argument("--query_project", type=str, default=WANDB_PROJECT,
+                   help="W&B project to query for model artifacts.")
+    p.add_argument("--query_collection", type=str, default=WANDB_COLLECTION,
+                   help="W&B collection to query for model artifacts.")
     return p.parse_args()
 
 
@@ -194,7 +198,7 @@ def resolve_artifacts(args: argparse.Namespace) -> List[str]:
     if args.all_artifacts:
         api = wandb.Api()
         entity = api.default_entity
-        collection_path = f"{entity}/{WANDB_PROJECT}/{WANDB_COLLECTION}"
+        collection_path = f"{entity}/{args.query_project}/{args.query_collection}"
         logger.info(f"Discovering all artifacts in collection {collection_path} …")
         collection = api.artifact_collection("model", collection_path)
         refs = []
@@ -206,7 +210,7 @@ def resolve_artifacts(args: argparse.Namespace) -> List[str]:
         logger.info(f"Resolved {len(refs)} artifacts: {refs}")
         return refs
     # Interactive single selection (mirrors export_ui_payload behaviour).
-    return [select_artifact_from_wandb()]
+    return [select_artifact_from_wandb(project=args.query_project, collection_name=args.query_collection)]
 
 
 def load_model_and_meta(artifact_name: str) -> Tuple[str, str, str, str, Dict]:

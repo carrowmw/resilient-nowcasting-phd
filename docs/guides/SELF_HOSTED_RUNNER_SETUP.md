@@ -63,6 +63,42 @@ Expected output:
 
 ---
 
+## Alternative: Dockerized Runner Setup (No Sudo Required)
+
+If you do not have root or `sudo` privileges on the GPU server, you can run the self-hosted runner inside a Docker container. This setup uses `docker-compose` to run the runner and mounts the host's `data/` directory read-only so that it can access the massive `.gitignored` parquet files.
+
+### 1. Update the `.env` File
+Add the following configuration parameters to your `.env` file on the GPU server:
+```bash
+# GitHub details for the self-hosted runner
+GITHUB_REPOSITORY="YOUR_USERNAME/ml-agent-workspace"
+GITHUB_TOKEN="YOUR_PERSONAL_ACCESS_TOKEN_OR_RUNNER_TOKEN"
+RUNNER_NAME="gpu-docker-runner"
+```
+> [!NOTE]
+> `GITHUB_TOKEN` should be a GitHub Personal Access Token (PAT) with `repo` scopes, or a temporary registration token retrieved from **Settings → Actions → Runners → New self-hosted runner**.
+
+### 2. Build the Runner Image
+Build the container using the configured Dockerfile:
+```bash
+docker compose build github-runner
+```
+
+### 3. Spin up the Container
+Run the container in the background:
+```bash
+docker compose up -d github-runner
+```
+
+### 4. Monitor & Verify Logs
+Check that the runner starts up, registers itself, and transitions to listening for jobs:
+```bash
+docker compose logs -f github-runner
+```
+Once started, check **Settings → Actions → Runners** in GitHub. You should see `gpu-docker-runner` registered with status **"Idle"**.
+
+---
+
 ## GitHub Secrets Configuration
 
 Add the following secrets via **Settings → Secrets and variables → Actions → New repository secret**:

@@ -130,15 +130,20 @@ def run_training(
 
     # Initialize W&B only if requested; pass the full nested config so all
     # hyperparameters (data / model / training / loss) are logged together.
+    wandb_cfg = config.get("wandb", {})
+    wandb_project = wandb_cfg.get("project", "resilient-iot-v2")
+    wandb_sweep_project = wandb_cfg.get("sweep_project", "resilient-iot-sweeps-v2")
+    wandb_collection = wandb_cfg.get("collection", "resilient-iot-model-v2")
+
     if init_wandb:
-        wandb.init(project="resilient-iot", config=config)
+        wandb.init(project=wandb_project, config=config)
 
     # ------------------------------------------------------------------ #
     # Directory Namespacing Strategy (Robust Model Versioning)           #
     # ------------------------------------------------------------------ #
     if study_name:
-        # Sweep Namespace: models/resilient-iot-sweeps/{study_name}/
-        project = "resilient-iot-sweeps"
+        # Sweep Namespace: models/{sweep_project}/{study_name}/
+        project = wandb_sweep_project
         if trial_number is not None:
             run_name = f"{study_name}_trial_{trial_number}"
         else:
@@ -156,6 +161,7 @@ def run_training(
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, "best_model.pt")
     logger.info(f"Checkpointing enabled: {checkpoint_path}")
+
 
     # --- ARCHITECT TWINNING: Co-locate Config copy ---
     config_save_path = os.path.join(checkpoint_dir, "config.yaml")
@@ -582,7 +588,7 @@ def run_training(
         logger.info(f"Uploading model artifact to W&B from {checkpoint_path}")
         try:
             artifact = wandb.Artifact(
-                name="resilient-iot-model",
+                name=wandb_collection,
                 type="model",
                 description=f"Best model from run {wandb.run.name if wandb.run else 'unknown'}",
                 metadata=config
