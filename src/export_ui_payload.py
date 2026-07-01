@@ -894,7 +894,8 @@ def main() -> None:
         num_heads=model_cfg["num_heads"],
         dropout=model_cfg["dropout"],
         dim_feedforward=model_cfg["dim_feedforward"],
-        zinb_eps=model_cfg["zinb_eps"]
+        zinb_eps=model_cfg["zinb_eps"],
+        edge_features_cache_path=model_cfg.get("edge_features_cache_path")
     ).to(device)
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
