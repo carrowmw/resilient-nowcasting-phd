@@ -44,13 +44,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch numpy pandas wandb pyyaml boto3 scikit-learn pyarrow
 
-      - name: Authenticate W&B
+      - name: Export paginated payload
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
-        run: |
-          wandb login --relogin
-
-      - name: Export paginated payload
         run: |
           ARGS="--config configs/analysis/analysis.yaml \
                 --output_dir frontend/public/data/runs \
