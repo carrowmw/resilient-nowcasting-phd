@@ -95,6 +95,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # Self-Hosted GitHub Actions Runner Container (Phase 3 CDN publishing)
+  github-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    container_name: github-runner
+    env_file:
+      - .env
+    volumes:
+      # Mount host's data directory read-only into runner workspace data directory
+      - ./data:/actions-runner/_work/ml-agent-workspace/ml-agent-workspace/data:ro
+    environment:
+      - GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME:-gpu-docker-runner}
+      - RUNNER_LABELS=${RUNNER_LABELS:-self-hosted,gpu,linux,payload-builder}
+    networks:
+      - ml-network
+    restart: unless-stopped
+
+
 volumes:
   timescaledb_data:
     driver: local
