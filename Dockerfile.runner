@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     jq \
+    libicu-dev \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set runner to allow running as root (inside Docker)
