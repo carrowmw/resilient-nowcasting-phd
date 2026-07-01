@@ -405,6 +405,7 @@ def run_day_inference(
     seq_len: int,
     time_series_dim: int,
     device: torch.device,
+    location_ids: List[str],
 ) -> Dict:
     """Run inference for one day and return the per-node / per-edge accumulators."""
     num_nodes_total = num_nodes_real + num_simulated
@@ -454,6 +455,7 @@ def run_day_inference(
                 "static_features": combined_static,
                 "dynamic_features": combined_dynamic,
                 "simulated_nodes_mask": sim_mask,
+                "location_ids": location_ids,
             }
             result = model(batch, return_analysis=True)
 
@@ -819,6 +821,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     time_series_dim = full_ds.time_series_dim
 
     nodes_meta = build_nodes_meta(canonical_locations, num_simulated, sensor_coords)
+    location_ids = [m["location_name"] for m in nodes_meta]
 
     model, loaded_config_data, git_hash = build_model(
         ckpt, cfg_path,
@@ -853,6 +856,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
             combined_static=combined_static, num_nodes_real=num_nodes_real,
             num_simulated=num_simulated, seq_len=seq_len,
             time_series_dim=time_series_dim, device=device,
+            location_ids=location_ids,
         )
         day_metrics = compute_day_metrics(acc, num_nodes_total, num_nodes_real)
 

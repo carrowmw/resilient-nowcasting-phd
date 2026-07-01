@@ -819,6 +819,7 @@ def main() -> None:
             "lon": lon,
             "is_simulated": True,
         })
+    location_ids = [m["location_name"] for m in nodes_meta]
 
     # ------------------------------------------------------------------
     # 5. Load Co-Located Configuration and Initialise Model
@@ -981,6 +982,7 @@ def main() -> None:
                 "static_features": combined_static,
                 "dynamic_features": combined_dynamic,
                 "simulated_nodes_mask": sim_mask,
+                "location_ids": location_ids,
             }
 
             # Forward pass (analysis mode: returns graph + ZINB params + imputation, no loss)
