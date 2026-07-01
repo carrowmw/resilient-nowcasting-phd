@@ -12,6 +12,10 @@ if [ -z "${GITHUB_TOKEN}" ]; then
   exit 1
 fi
 
+# Trim quotes and whitespace from inputs
+GITHUB_REPOSITORY=$(echo "${GITHUB_REPOSITORY}" | tr -d '"'\'' ')
+GITHUB_TOKEN=$(echo "${GITHUB_TOKEN}" | tr -d '"'\'' ')
+
 # Determine organization or repo URL
 RUNNER_URL="https://github.com/${GITHUB_REPOSITORY}"
 RUNNER_NAME="${RUNNER_NAME:-gpu-docker-runner}"
@@ -20,7 +24,7 @@ RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,gpu,linux,payload-builder}"
 # Dynamic token resolution (exchange PAT for registration token if possible)
 echo "Obtaining registration token from GitHub..."
 API_RESPONSE=$(curl -sX POST \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
+  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners/registration-token")
 
@@ -49,7 +53,7 @@ cleanup() {
     echo "Removing runner..."
     # Try to fetch a removal token using the GITHUB_TOKEN
     REMOVE_RESPONSE=$(curl -sX POST \
-      -H "Authorization: token ${GITHUB_TOKEN}" \
+      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners/remove-token")
     REMOVE_TOKEN=$(echo "${REMOVE_RESPONSE}" | jq -r '.token // empty')
