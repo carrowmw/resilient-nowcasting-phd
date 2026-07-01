@@ -44,6 +44,8 @@ services:
     container_name: gpu-executor
     volumes:
       - .:/workspace
+    networks:
+      - ml-network
     # We explicitly pass the WANDB_API_KEY from the server's .env file
     environment:
       - WANDB_API_KEY=${WANDB_API_KEY}
@@ -65,6 +67,8 @@ services:
     container_name: cpu-executor
     volumes:
       - .:/workspace
+    networks:
+      - ml-network
     # We explicitly pass the WANDB_API_KEY from the server's .env file
     environment:
       - WANDB_API_KEY=${WANDB_API_KEY}
