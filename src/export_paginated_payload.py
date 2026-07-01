@@ -411,9 +411,9 @@ def run_day_inference(
     num_timesteps = len(window_indices)
     assert num_timesteps > 0, "TRIPWIRE: day has zero inference windows."
 
-    traffic_mean = float(dataset.scaler.mean_[0])
-    traffic_scale = float(dataset.scaler.scale_[0])
-    assert traffic_scale > 0, f"TRIPWIRE: dataset.scaler.scale_[0]={traffic_scale} must be > 0."
+    traffic_mean = float(dataset.traffic_mean)
+    traffic_scale = float(dataset.traffic_std)
+    assert traffic_scale > 0, f"TRIPWIRE: dataset.traffic_std={traffic_scale} must be > 0."
 
     timeseries_data: List[List[Dict]] = [[] for _ in range(num_nodes_total)]
     ground_truth_series: List[List] = [[] for _ in range(num_nodes_total)]
