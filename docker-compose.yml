@@ -42,14 +42,12 @@ services:
       context: .
       dockerfile: Dockerfile.gpu
     container_name: gpu-executor
+    env_file:
+      - .env
     volumes:
       - .:/workspace
     networks:
       - ml-network
-    # We explicitly pass the WANDB_API_KEY from the server's .env file
-    environment:
-      - WANDB_API_KEY=${WANDB_API_KEY}
-      - GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}
     # This block maps the physical server GPUs into the container
     deploy:
       resources:
@@ -65,14 +63,12 @@ services:
       context: .
       dockerfile: Dockerfile.cpu
     container_name: cpu-executor
+    env_file:
+      - .env
     volumes:
       - .:/workspace
     networks:
       - ml-network
-    # We explicitly pass the WANDB_API_KEY from the server's .env file
-    environment:
-      - WANDB_API_KEY=${WANDB_API_KEY}
-      - GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}
 
   # TimescaleDB for training database (Phase 2)
   timescaledb:
