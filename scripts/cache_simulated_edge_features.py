@@ -167,7 +167,7 @@ def main():
         f"(max {len(SIMULATED_NODE_COORDS)})"
     )
 
-    real_coords = load_sensor_coords(sensors_path=args.sensors_path)
+    real_coords = load_sensor_coords()
     sim_coords = [
         (f"Simulated_Node_{j}", lat, lon)
         for j, (lat, lon) in enumerate(SIMULATED_NODE_COORDS[:args.num_simulated])
