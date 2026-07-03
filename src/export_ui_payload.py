@@ -47,9 +47,10 @@ if os.path.exists(env_path):
                 key, val = line.split('=', 1)
                 os.environ.setdefault(key.strip(), val.strip().strip('"\''))
 
-from dataset import RealIoTDataset
+from dataset import RealIoTDataset, apply_spatial_holdout
 from db_connector import create_connector
 from features import StaticFeatureLoader, REQUIRED_KEYS
+from harness import load_holdout_manifest, mask_from_manifest, manifest_sha
 from pipeline import ResilientIoTPipeline
 
 # ---------------------------------------------------------------------------
@@ -841,6 +842,28 @@ def main() -> None:
         checkpoint_dir = os.path.dirname(checkpoint_path)
         config_path = os.path.join(checkpoint_dir, "config.yaml")
 
+    # HARNESS: inductive holdout manifest co-located with the checkpoint. When
+    # present, those nodes are blanked at inference (zero-shot predictions) and
+    # tagged node_role="holdout" for distinct frontend display.
+    holdout_manifest = load_holdout_manifest(os.path.dirname(checkpoint_path))
+    holdout_locations = set(holdout_manifest["holdout_location_ids"]) if holdout_manifest else set()
+    for meta in nodes_meta:
+        if meta["is_simulated"]:
+            meta["node_role"] = "simulated"
+        else:
+            meta["node_role"] = "holdout" if meta["location_name"] in holdout_locations else "observed"
+    holdout_mask_total: Optional[torch.Tensor] = None
+    if holdout_manifest is not None:
+        logger.info(
+            f"Holdout manifest found: {len(holdout_locations)} holdout nodes, "
+            f"sha={manifest_sha(holdout_manifest)}"
+        )
+        real_holdout_mask = mask_from_manifest(holdout_manifest, real_location_names, device=device)
+        holdout_mask_total = torch.cat([
+            real_holdout_mask,
+            torch.zeros(num_simulated, dtype=torch.bool, device=device),
+        ])
+
     # Defaults in case no config.yaml is found (backward-compatibility fallback)
     model_cfg = {
         "embedding_dim": 16,
@@ -973,6 +996,11 @@ def main() -> None:
 
             # Add batch dimension: [1, num_nodes_total, seq_len, time_series_dim]
             combined_dynamic = combined_dynamic.unsqueeze(0)
+
+            # HARNESS: blank inductive holdout nodes exactly as during training so
+            # their displayed predictions are genuine zero-shot reconstructions.
+            if holdout_mask_total is not None:
+                combined_dynamic = apply_spatial_holdout(combined_dynamic, holdout_mask_total)
 
             # Mask to prevent simulated nodes from sending messages
             sim_mask = torch.zeros(num_nodes_total, dtype=torch.bool, device=device)
@@ -1216,6 +1244,7 @@ def main() -> None:
             "location_name": meta["location_name"],
             "lat": meta["lat"],
             "lon": meta["lon"],
+            "node_role": meta.get("node_role", "simulated" if meta["is_simulated"] else "observed"),
             "is_simulated": meta["is_simulated"],
             "timeseries": timeseries_data[node_id],
             "semantic_tags": semantic_tags.get(meta["location_name"], []),
@@ -1232,6 +1261,8 @@ def main() -> None:
             "num_nodes": num_nodes_total,
             "num_real_nodes": num_nodes_real,
             "num_simulated_nodes": num_simulated,
+            "num_holdout_nodes": len(holdout_locations),
+            "holdout_manifest_sha": manifest_sha(holdout_manifest),
             "timesteps": num_timesteps,
             "seq_len": args.seq_len,
             "veh_class": args.veh_class,
@@ -1358,6 +1389,7 @@ def main() -> None:
             "location_name": meta["location_name"],
             "lat": meta["lat"],
             "lon": meta["lon"],
+            "node_role": meta.get("node_role", "simulated" if meta["is_simulated"] else "observed"),
             "is_simulated": meta["is_simulated"],
             "zinb_series": zinb_series,
             "ground_truth_series": ground_truth_series[node_id],

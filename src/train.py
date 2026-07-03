@@ -19,8 +19,18 @@ from dataset import (
 )
 from db_connector import create_connector
 from logger import setup_logger
-from metrics import calculate_metrics, calculate_kriging_metrics
 from pipeline import ResilientIoTPipeline
+from baselines import LSTMForecaster, GRUForecaster
+from harness import (
+    MetricAccumulator,
+    evaluate_batch,
+    make_fixed_holdout_mask,
+    save_holdout_manifest,
+    load_holdout_manifest,
+    manifest_sha,
+    save_results_manifest,
+)
+from harness.adapters import build_adapter
 
 
 class DivergenceError(Exception):
@@ -176,12 +186,23 @@ def run_training(
     train_cfg = config["training"]
     loss_cfg = config.get("loss", {})
 
+    # HARNESS: model family and evaluation mode.
+    model_type = config.get("model_type", "gnn")
+    eval_mode = config.get("eval_mode", "temporal")
+    assert eval_mode in ("temporal", "inductive"), \
+        f"CRITICAL: eval_mode must be temporal | inductive, got {eval_mode!r}"
+
     # PHASE 2: Spatial kriging configuration
+    # ABLATION-SAFE: kriging_active controls holdout masking, decoder evaluation,
+    # and W&B telemetry. It depends ONLY on spatial_holdout_prob so that the
+    # data masking is identical across ablation runs (w_kriging = 0 vs > 0),
+    # making task-specific metrics directly comparable.
     spatial_holdout_prob = data_cfg.get("spatial_holdout_prob", 0.0)
     w_kriging = loss_cfg.get("w_kriging", 0.0)
     w_impute = loss_cfg.get("w_impute", 1.0)
     w_forecast = loss_cfg.get("w_forecast", 1.0)
-    kriging_active = w_kriging > 0.0 and spatial_holdout_prob > 0.0
+    kriging_active = spatial_holdout_prob > 0.0
+    loss_weights = {"w_impute": w_impute, "w_forecast": w_forecast, "w_kriging": w_kriging}
 
     if train_loader is not None and val_loader is not None:
         logger.info("Using provided data loaders.")
@@ -288,28 +309,46 @@ def run_training(
     # Model                                                                #
     # For real data the dataset determines num_nodes / feat_dims at        #
     # runtime; for mock data the config values are used directly.          #
+    # HARNESS: the train/val loops below talk only to the ModelAdapter.    #
     # ------------------------------------------------------------------ #
-    model = ResilientIoTPipeline(
-        num_nodes=train_dataset.num_nodes,
-        static_feat_dim=train_dataset.static_feat_dim,
-        time_series_dim=train_dataset.time_series_dim,
-        seq_len=data_cfg["seq_len"],
-        embedding_dim=model_cfg["embedding_dim"],
-        hidden_dim=model_cfg["hidden_dim"],
-        sparsity_threshold=model_cfg["sparsity_threshold"],
-        num_layers=model_cfg.get("num_layers", 2),
-        num_heads=model_cfg.get("num_heads", 4),
-        dropout=model_cfg.get("dropout", 0.1),
-        dim_feedforward=model_cfg.get("dim_feedforward", 256),
-        zinb_eps=model_cfg.get("zinb_eps", 1e-6),
-        # PHASE 3: physical edge features cache (None for mock data / learned-only fallback).
-        edge_features_cache_path=(
-            None if use_mock_data else model_cfg.get("edge_features_cache_path")
-        ),
-    ).to(device)
+    if model_type == "gnn":
+        model = ResilientIoTPipeline(
+            num_nodes=train_dataset.num_nodes,
+            static_feat_dim=train_dataset.static_feat_dim,
+            time_series_dim=train_dataset.time_series_dim,
+            seq_len=data_cfg["seq_len"],
+            embedding_dim=model_cfg["embedding_dim"],
+            hidden_dim=model_cfg["hidden_dim"],
+            sparsity_threshold=model_cfg["sparsity_threshold"],
+            num_layers=model_cfg.get("num_layers", 2),
+            num_heads=model_cfg.get("num_heads", 4),
+            dropout=model_cfg.get("dropout", 0.1),
+            dim_feedforward=model_cfg.get("dim_feedforward", 256),
+            zinb_eps=model_cfg.get("zinb_eps", 1e-6),
+            # PHASE 3: physical edge features cache (None for mock data / learned-only fallback).
+            edge_features_cache_path=(
+                None if use_mock_data else model_cfg.get("edge_features_cache_path")
+            ),
+        ).to(device)
+    else:
+        baseline_cls = LSTMForecaster if model_type == "lstm" else GRUForecaster
+        model = baseline_cls(
+            time_series_dim=train_dataset.time_series_dim,
+            hidden_dim=model_cfg["hidden_dim"],
+            num_layers=model_cfg.get("num_layers", 1),
+            dropout=model_cfg.get("dropout", 0.1),
+        ).to(device)
 
-    # PHASE 1: Set scaler buffers AFTER moving model to device
-    if not use_mock_data:
+    adapter = build_adapter(model_type, model)
+    logger.info(
+        f"HARNESS: model_type={model_type}, eval_mode={eval_mode}, "
+        f"capabilities={adapter.capabilities}"
+    )
+
+    # PHASE 1: Set scaler buffers AFTER moving model to device (GNN only — the
+    # baselines carry no scaler buffers; their forecast head trains directly
+    # against raw counts).
+    if not use_mock_data and model_type == "gnn":
         traffic_mean = train_dataset.traffic_mean
         traffic_std = train_dataset.traffic_std
 
@@ -346,12 +385,55 @@ def run_training(
         f"num_heads={model_cfg.get('num_heads', 4)}"
     )
 
-    # PHASE 2: Fixed validation holdout mask (deterministic seed for stable metric
-    # tracking across epochs). Training masks are re-rolled randomly per batch below.
-    val_holdout_mask = None
-    if kriging_active:
+    # ------------------------------------------------------------------ #
+    # HARNESS: holdout configuration                                      #
+    #   temporal  — PHASE 2 behavior: seeded val mask, per-batch re-rolls  #
+    #               during training (when kriging_active).                 #
+    #   inductive — fixed seeded node holdout, blanked in train AND val;   #
+    #               excluded from every gradient-producing loss term       #
+    #               (zero-shot guarantee); scored at val time only.        #
+    # ------------------------------------------------------------------ #
+    num_nodes = train_dataset.num_nodes
+    inductive_holdout_mask = None   # [N] bool — fixed, never trained on
+    loss_node_mask = None           # [N] bool — True = node participates in losses
+    holdout_manifest = None
+
+    if eval_mode == "inductive":
+        inductive_seed = train_cfg.get("random_seed", 42)
+        inductive_frac = data_cfg.get("inductive_holdout_frac", 0.2)
+        inductive_holdout_mask = make_fixed_holdout_mask(
+            num_nodes=num_nodes,
+            holdout_frac=inductive_frac,
+            seed=inductive_seed,
+            device=device,
+        )
+        loss_node_mask = ~inductive_holdout_mask
+
+        # Manifest: resolved location IDs, not just the seed — this is the bridge
+        # to the exporters and the cross-model comparability key.
+        if full_dataset is not None and hasattr(full_dataset, "locations"):
+            location_ids = list(full_dataset.locations)
+        else:
+            location_ids = [f"node_{i}" for i in range(num_nodes)]
+            logger.warning("HARNESS: dataset exposes no location ids; using synthetic names in manifest")
+        manifest_path = save_holdout_manifest(
+            checkpoint_dir, location_ids, inductive_holdout_mask.cpu(),
+            seed=inductive_seed, holdout_frac=inductive_frac,
+        )
+        holdout_manifest = load_holdout_manifest(checkpoint_dir)
+        logger.info(
+            f"HARNESS inductive holdout: {int(inductive_holdout_mask.sum())}/{num_nodes} nodes "
+            f"held out (seed={inductive_seed}), manifest={manifest_path}, "
+            f"sha={manifest_sha(holdout_manifest)}"
+        )
+
+    # Validation-time holdout to score kriging/zero-shot reconstruction against.
+    if eval_mode == "inductive":
+        val_holdout_mask = inductive_holdout_mask
+    elif kriging_active:
+        # PHASE 2: deterministic transductive val mask for stable metric tracking.
         val_holdout_mask = make_spatial_holdout_mask(
-            num_nodes=train_dataset.num_nodes,
+            num_nodes=num_nodes,
             holdout_prob=spatial_holdout_prob,
             device=device,
             seed=42,
@@ -359,9 +441,10 @@ def run_training(
         logger.info(
             f"PHASE 2 kriging ACTIVE: w_kriging={w_kriging}, "
             f"spatial_holdout_prob={spatial_holdout_prob}, "
-            f"validation holdout = {int(val_holdout_mask.sum())}/{train_dataset.num_nodes} nodes"
+            f"validation holdout = {int(val_holdout_mask.sum())}/{num_nodes} nodes"
         )
     else:
+        val_holdout_mask = None
         logger.info(
             f"PHASE 2 kriging INACTIVE (w_kriging={w_kriging}, "
             f"spatial_holdout_prob={spatial_holdout_prob})"
@@ -405,113 +488,123 @@ def run_training(
 
             # PHASE 2: Re-roll a random spatial holdout per batch and blank the held-out
             # nodes' dynamic features so the encoder must rely on neighbour message passing.
+            # HARNESS (inductive): the re-roll draws from participating nodes only —
+            # the fixed inductive holdout supplies no kriging training signal.
+            blank_mask = None
             if kriging_active:
-                train_holdout_mask = make_spatial_holdout_mask(
-                    num_nodes=train_dataset.num_nodes,
+                reroll_mask = make_spatial_holdout_mask(
+                    num_nodes=num_nodes,
                     holdout_prob=spatial_holdout_prob,
                     device=device,
                     seed=None,
                 )
-                batch["spatial_holdout_mask"] = train_holdout_mask
-                batch["dynamic_features"] = apply_spatial_holdout(
-                    batch["dynamic_features"], train_holdout_mask
+                if loss_node_mask is not None:
+                    reroll_mask = reroll_mask & loss_node_mask
+                batch["spatial_holdout_mask"] = reroll_mask
+                blank_mask = reroll_mask
+            if inductive_holdout_mask is not None:
+                blank_mask = (
+                    inductive_holdout_mask if blank_mask is None
+                    else blank_mask | inductive_holdout_mask
                 )
-            batch["w_impute"] = w_impute
-            batch["w_forecast"] = w_forecast
-            batch["w_kriging"] = w_kriging
+            if blank_mask is not None:
+                batch["dynamic_features"] = apply_spatial_holdout(
+                    batch["dynamic_features"], blank_mask
+                )
 
             optimizer.zero_grad()
-            loss, loss_impute, loss_forecast, loss_kriging, *_ = model(batch)
-            loss.backward()
+            losses, _ = adapter.step(batch, loss_weights, loss_node_mask=loss_node_mask)
+            losses.total.backward()
 
             # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
 
             optimizer.step()
 
-            epoch_loss_total += loss.item()
-            epoch_loss_impute += loss_impute.item()
-            epoch_loss_forecast += loss_forecast.item()
-            epoch_loss_kriging += loss_kriging.item()
+            epoch_loss_total += losses.total.item()
+            epoch_loss_impute += losses.impute.item()
+            epoch_loss_forecast += losses.forecast.item()
+            epoch_loss_kriging += losses.kriging.item()
 
         avg_train_loss = epoch_loss_total / len(train_loader)
         avg_train_impute = epoch_loss_impute / len(train_loader)
         avg_train_forecast = epoch_loss_forecast / len(train_loader)
         avg_train_kriging = epoch_loss_kriging / len(train_loader)
 
-        # Validation Loop
+        # Validation Loop — shared harness path (capability-gated metrics).
         model.eval()
         val_loss_total = 0.0
         val_loss_kriging_total = 0.0
-        val_metrics_accum = {"rmse": 0.0, "mae": 0.0, "impute_mse": 0.0}
-        val_kriging_accum = {"kriging_msle": 0.0, "kriging_rmse": 0.0, "kriging_mae": 0.0}
-        zero_true_total = 0
-        zero_correct_total = 0
+        val_accum = MetricAccumulator()
 
         with torch.no_grad():
             for batch in val_loader:
                 batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
 
-                # PHASE 2: Apply the fixed validation holdout for deterministic scoring.
-                if kriging_active:
+                # Apply the fixed validation holdout for deterministic scoring
+                # (inductive fixed mask, or PHASE 2 seeded transductive mask).
+                if val_holdout_mask is not None:
                     batch["spatial_holdout_mask"] = val_holdout_mask
                     batch["dynamic_features"] = apply_spatial_holdout(
                         batch["dynamic_features"], val_holdout_mask
                     )
-                batch["w_impute"] = w_impute
-                batch["w_forecast"] = w_forecast
-                batch["w_kriging"] = w_kriging
 
-                loss, _, _, loss_kriging, imputed_features, mu, _, pi, _, kriging_pred = model(batch)
-                val_loss_total += loss.item()
-                val_loss_kriging_total += loss_kriging.item()
-
-                batch_metrics = calculate_metrics(
-                    target_forecast=batch["target_forecast"],
-                    mu=mu,
-                    pi=pi,
-                    imputed_features=imputed_features,
-                    target_impute=batch["target_impute"],
-                    node_mask=batch["node_mask"],
+                losses, preds = adapter.step(
+                    batch, loss_weights, loss_node_mask=loss_node_mask
                 )
-                for k in val_metrics_accum:
-                    val_metrics_accum[k] += batch_metrics[k]
-                zero_true_total += batch_metrics["zero_true_count"]
-                zero_correct_total += batch_metrics["zero_correct_count"]
+                val_loss_kriging_total += losses.kriging.item()
 
-                # PHASE 2: Full kriging reconstruction metrics on held-out nodes.
-                if kriging_active and kriging_pred is not None:
-                    kriging_target = batch["target_impute"][:, val_holdout_mask, :, :]
-                    km = calculate_kriging_metrics(kriging_pred, kriging_target)
-                    for k in val_kriging_accum:
-                        val_kriging_accum[k] += km[k]
+                # HARNESS (inductive): model selection must not see holdout-node
+                # performance — strip the kriging term from the selection loss.
+                if eval_mode == "inductive":
+                    val_loss_total += losses.total.item() - w_kriging * losses.kriging.item()
+                else:
+                    val_loss_total += losses.total.item()
+
+                val_accum.update(
+                    evaluate_batch(
+                        adapter.capabilities, preds, batch, holdout_mask=val_holdout_mask
+                    )
+                )
 
         avg_val_loss = val_loss_total / len(val_loader)
         avg_val_kriging = val_loss_kriging_total / len(val_loader)
-        val_rmse = val_metrics_accum["rmse"] / len(val_loader)
-        val_mae = val_metrics_accum["mae"] / len(val_loader)
-        val_zero_acc = zero_correct_total / zero_true_total if zero_true_total > 0 else 0.0
-        val_impute_mse = val_metrics_accum["impute_mse"] / len(val_loader)
-        val_kriging_msle = val_kriging_accum["kriging_msle"] / len(val_loader)
-        val_kriging_rmse = val_kriging_accum["kriging_rmse"] / len(val_loader)
-        val_kriging_mae = val_kriging_accum["kriging_mae"] / len(val_loader)
+        val_metrics = val_accum.summary()
+        val_rmse = val_metrics["rmse"]
+        val_mae = val_metrics["mae"]
+        val_zero_acc = val_metrics["zero_acc"]
+        val_impute_mse = val_metrics["impute_mse"]
+        val_kriging_msle = val_metrics["kriging_msle"]
+        val_kriging_rmse = val_metrics["kriging_rmse"]
+        val_kriging_mae = val_metrics["kriging_mae"]
 
         # Offensive Assertion for Divergence
         if torch.isnan(torch.tensor(avg_val_loss)):
             raise DivergenceError("Validation loss is NaN! The Burn Test Failed.")
 
+        # None-safe formatting: None means "model cannot produce this" — shown
+        # as N/A, never as 0.
+        def _fmt(v, p=4):
+            return "N/A" if v is None else f"{v:.{p}f}"
+
         kriging_log = (
             f", Kriging(train={avg_train_kriging:.4f}, val={avg_val_kriging:.4f}, "
-            f"RMSE={val_kriging_rmse:.2f}, MAE={val_kriging_mae:.2f}, MSLE={val_kriging_msle:.4f})"
-            if kriging_active else ""
+            f"RMSE={_fmt(val_kriging_rmse, 2)}, MAE={_fmt(val_kriging_mae, 2)}, "
+            f"MSLE={_fmt(val_kriging_msle)})"
+            if val_holdout_mask is not None else ""
+        )
+        zero_acc_log = (
+            f"{_fmt(val_zero_acc)} "
+            f"[{val_metrics['zero_correct_count']}/{val_metrics['zero_true_count']}]"
+            if val_zero_acc is not None else "N/A"
         )
         logger.info(
             f"Epoch {epoch+1}/{epochs} - "
             f"Train Loss: {avg_train_loss:.4f} | "
             f"Val Loss: {avg_val_loss:.4f} "
-            f"(RMSE: {val_rmse:.2f}, MAE: {val_mae:.2f}, "
-            f"ZeroAcc: {val_zero_acc:.4f} [{zero_correct_total}/{zero_true_total}], "
-            f"ImputeMSE: {val_impute_mse:.4f})"
+            f"(RMSE: {_fmt(val_rmse, 2)}, MAE: {_fmt(val_mae, 2)}, "
+            f"ZeroAcc: {zero_acc_log}, "
+            f"ImputeMSE: {_fmt(val_impute_mse)})"
             f"{kriging_log}"
         )
 
@@ -527,32 +620,39 @@ def run_training(
             epochs_no_improve += 1
             logger.info(f"Early stopping counter: {epochs_no_improve} out of {early_stop_patience}")
 
-        # W&B Logging
+        # W&B Logging — capability-gated: None metrics are absent, never 0.0.
         if init_wandb or (wandb.run is not None):
             log_payload = {
                 "train_loss_total": avg_train_loss,
                 "train_loss_impute": avg_train_impute,
                 "train_loss_forecast": avg_train_forecast,
                 "val_loss_total": avg_val_loss,
-                "val_rmse": val_rmse,
-                "val_mae": val_mae,
-                "val_zero_acc": val_zero_acc,
-                "val_zero_true_count": zero_true_total,
-                "val_zero_correct_count": zero_correct_total,
-                "val_impute_mse": val_impute_mse,
                 "epoch": epoch + 1,
             }
-            # PHASE 2: full kriging telemetry (only when the kriging path is active)
-            if kriging_active:
+            log_payload.update({
+                f"val_{k}": v for k, v in val_metrics.items() if v is not None
+            })
+            # PHASE 2 / inductive: kriging telemetry only when a holdout is scored.
+            if val_holdout_mask is not None:
                 log_payload.update({
                     "train_loss_kriging": avg_train_kriging,
                     "val_loss_kriging": avg_val_kriging,
                     "val_kriging_nodes": int(val_holdout_mask.sum().item()),
-                    "val_kriging_rmse": val_kriging_rmse,
-                    "val_kriging_mae": val_kriging_mae,
-                    "val_kriging_msle": val_kriging_msle,
                 })
             wandb.log(log_payload)
+
+        # HARNESS: standardized cross-model results row, overwritten each epoch.
+        # Joinable across runs on holdout_manifest_sha — identical hash means
+        # identical evaluation conditions.
+        save_results_manifest(checkpoint_dir, {
+            "model_type": model_type,
+            "eval_mode": eval_mode,
+            "epoch": epoch + 1,
+            "seed": train_cfg.get("random_seed", 42),
+            "holdout_manifest_sha": manifest_sha(holdout_manifest),
+            "val_loss_total": avg_val_loss,
+            "metrics": val_metrics,
+        })
 
         if epochs_no_improve >= early_stop_patience:
             logger.info(f"Early stopping triggered after {epoch + 1} epochs.")

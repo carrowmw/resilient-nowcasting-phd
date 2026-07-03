@@ -1,0 +1,69 @@
+# ============================================================================
+# Unified Architecture (Phases 1-3) — PRODUCTION config.
+# Three layers are active by default here:
+#   Layer 1 (Scale-Invariant Loss): TRUE MSLE on raw traffic counts via scaler
+#     buffers (traffic_mean/traffic_std) — see loss.* below and the ADR
+#     docs/adr/0001-eliminate-pseudo-msle.md.
+#   Layer 2 (Spatial Kriging): IGNNK-style spatial holdout reconstructed by the
+#     kriging head — data.spatial_holdout_prob + loss.w_kriging.
+#   Layer 3 (Edge Features): 9 physical OSM features + 1 learned similarity feed
+#     GATv2 (edge_dim=10) — model.edge_features_cache_path.
+# ============================================================================
+data_source: "database"  # "database" | "parquet"
+
+wandb:
+  project: "resilient-iot-v2"
+  sweep_project: "resilient-iot-sweeps-v2"
+  collection: "resilient-iot-model-v2"
+
+data:
+  start_date: "2024-04-02"
+  end_date: "2025-04-02"
+  seq_len: 12
+  target_veh_class: "person"
+  target_dir: "all"
+  mask_prob: 0.15
+  # HARNESS: baselines must never train on holdout-corrupted inputs — transductive
+  # kriging pressure is a GNN-training concern. Inductive evaluation is governed
+  # by eval_mode, not this knob.
+  spatial_holdout_prob: 0.0
+  # Fraction of nodes held out when eval_mode: inductive.
+  inductive_holdout_frac: 0.2
+
+model:
+  num_nodes: 81
+  static_feat_dim: 15
+  time_series_dim: 3
+  embedding_dim: 16
+  hidden_dim: 32
+  sparsity_threshold: 0.5
+  num_layers: 2
+  num_heads: 4
+  dropout: 0.1
+  dim_feedforward: null # defaults to hidden_dim * 4
+  zinb_eps: 1.0e-6
+  # PHASE 3: physical edge features (9 physical + 1 learned -> GATv2 edge_dim=10).
+  edge_features_cache_path: "data/external/edge_features_cache.json"
+  simulated_edge_features_cache_path: "data/external/simulated_edge_features_cache.json"
+
+training:
+  epochs: 1
+  batch_size: 32
+  lr: 0.0003
+  grad_clip_max_norm: 1.0
+  random_seed: 42
+  early_stop_patience: 10
+  early_stop_min_delta: 0.001
+
+loss:
+  w_forecast: 1.0
+  w_impute: 1.0
+  # HARNESS: baselines have no kriging objective (the reconstruction head is
+  # trained via w_impute); keep this 0.
+  w_kriging: 0.0
+
+model_type: lstm
+# temporal (default) | inductive — inductive applies a fixed, seeded node holdout
+# whose targets are excluded from every training loss (zero-shot guarantee).
+eval_mode: temporal
+

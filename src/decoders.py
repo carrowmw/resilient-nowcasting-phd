@@ -280,7 +280,8 @@ def compute_loss(imputed_features: torch.Tensor,
                  spatial_holdout_mask: Optional[torch.Tensor] = None,  # PHASE 2
                  w_impute: float = 1.0,
                  w_forecast: float = 1.0,
-                 w_kriging: float = 0.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                 w_kriging: float = 0.0,
+                 loss_node_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Joint Loss with Channel-Specific Treatment (PHASE 1 + PHASE 2):
     - Traffic (channel 0): MSLE on raw counts (inverse transform)
@@ -288,10 +289,31 @@ def compute_loss(imputed_features: torch.Tensor,
     - Forecasting: ZINB NLL on raw counts
     - Kriging (PHASE 2): MSLE/MSE on spatially held-out nodes (active when w_kriging > 0)
 
+    loss_node_mask ([N] bool, True = node participates): inductive-mode zero-shot
+    guarantee. Excluded nodes' targets contribute to NO gradient-producing loss
+    term. The kriging term always reads full (unsliced) targets: during training
+    the holdout must be drawn from participating nodes only (asserted whenever
+    gradients are enabled); during no-grad validation the holdout is deliberately
+    the loss-excluded fixed inductive set, which is scoring, not leakage.
+
     Returns:
         (total_loss, loss_impute, loss_forecast, loss_kriging)
         loss_kriging is 0.0 when w_kriging == 0.0 (kriging path bypassed).
     """
+    target_impute_full = target_impute
+    if loss_node_mask is not None:
+        assert loss_node_mask.dtype == torch.bool and loss_node_mask.dim() == 1, \
+            f"CRITICAL: loss_node_mask must be 1D bool, got {loss_node_mask.dtype} {tuple(loss_node_mask.shape)}"
+        assert loss_node_mask.any(), "CRITICAL: loss_node_mask excludes every node"
+        if spatial_holdout_mask is not None and torch.is_grad_enabled():
+            assert not (spatial_holdout_mask & ~loss_node_mask).any(), \
+                "CRITICAL: kriging holdout contains loss-excluded (inductive) nodes — target leakage"
+        imputed_features = imputed_features[:, loss_node_mask]
+        target_impute = target_impute[:, loss_node_mask]
+        mu = mu[:, loss_node_mask]
+        theta = theta[:, loss_node_mask]
+        pi = pi[:, loss_node_mask]
+        target_forecast = target_forecast[:, loss_node_mask]
 
     # --- 1. Imputation Loss: Split Traffic vs Weather ---
 
@@ -321,22 +343,28 @@ def compute_loss(imputed_features: torch.Tensor,
     # --- 2. Forecasting Loss (ZINB NLL) - UNCHANGED ---
     loss_forecast = compute_zinb_nll(target_forecast, mu, theta, pi)
 
-    # --- 3. Kriging Loss (PHASE 2, conditional on w_kriging > 0) ---
+    # --- 3. Kriging Loss (ABLATION-SAFE: always computed when predictions exist) ---
+    # loss_kriging is ALWAYS calculated when kriging_pred is supplied so that
+    # W&B telemetry and ablation comparisons work even when w_kriging == 0.0.
+    # It only enters the optimisation objective when w_kriging > 0.0, preserving
+    # the gradient bypass (no autograd path to kriging decoder when ablated).
     loss_kriging = torch.zeros((), device=imputed_features.device)
-    if w_kriging > 0.0:
-        assert kriging_pred is not None, "CRITICAL: w_kriging > 0 but kriging_pred is None"
+    if kriging_pred is not None:
         assert spatial_holdout_mask is not None, \
-            "CRITICAL: w_kriging > 0 but spatial_holdout_mask is None"
+            "CRITICAL: kriging_pred supplied but spatial_holdout_mask is None"
         loss_kriging = compute_kriging_loss(
             kriging_pred=kriging_pred,
-            target_impute=target_impute,
+            target_impute=target_impute_full,
             holdout_mask=spatial_holdout_mask,
             traffic_mean=traffic_mean,
             traffic_std=traffic_std,
         )
 
     # --- 4. Total Weighted Loss ---
-    total_loss = (w_impute * loss_impute) + (w_forecast * loss_forecast) + (w_kriging * loss_kriging)
+    # Only add kriging term when w_kriging > 0 to keep the autograd graph clean.
+    total_loss = (w_impute * loss_impute) + (w_forecast * loss_forecast)
+    if w_kriging > 0.0:
+        total_loss = total_loss + (w_kriging * loss_kriging)
 
     # --- 5. OFFENSIVE ASSERTIONS (Tripwires) ---
     assert not torch.isnan(loss_impute_traffic), "CRITICAL: Traffic MSLE is NaN"

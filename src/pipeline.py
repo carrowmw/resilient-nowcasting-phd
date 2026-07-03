@@ -217,7 +217,8 @@ class ResilientIoTPipeline(nn.Module):
             spatial_holdout_mask=holdout_mask,         # PHASE 2
             w_impute=batch.get('w_impute', 1.0),
             w_forecast=batch.get('w_forecast', 1.0),
-            w_kriging=batch.get('w_kriging', 0.0)      # PHASE 2
+            w_kriging=batch.get('w_kriging', 0.0),     # PHASE 2
+            loss_node_mask=batch.get('loss_node_mask')  # HARNESS: inductive zero-shot guarantee
         )
 
         # CRITICAL SAFEGUARD

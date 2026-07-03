@@ -292,12 +292,31 @@ def test_compute_loss_kriging_on_contributes():
     assert torch.isfinite(total)
 
 
-def test_compute_loss_kriging_on_without_pred_raises():
+def test_compute_loss_kriging_pred_none_w_kriging_positive_is_valid():
+    """Under the decoupled contract, kriging_pred=None with w_kriging>0 is valid
+    (loss_kriging stays 0.0, total is finite). This supports configurations where
+    holdout masking is off but a weight is set."""
     imputed, target_impute, mu, theta, pi, tf = _loss_inputs()
-    with pytest.raises(AssertionError):
+    total, _, _, l_kr = compute_loss(
+        imputed_features=imputed, target_impute=target_impute,
+        mu=mu, theta=theta, pi=pi, target_forecast=tf,
+        traffic_mean=torch.tensor(0.0), traffic_std=torch.tensor(1.0),
+        kriging_pred=None, spatial_holdout_mask=None, w_kriging=0.5,
+    )
+    assert l_kr.item() == 0.0
+    assert torch.isfinite(total)
+
+
+def test_compute_loss_kriging_pred_without_mask_raises():
+    """If kriging_pred is supplied but spatial_holdout_mask is None, the CRITICAL
+    assertion must fire (fail fast)."""
+    b, n, t, d = 2, 10, 6, 3
+    imputed, target_impute, mu, theta, pi, tf = _loss_inputs(b, n, t, d)
+    kriging_pred = torch.randn(b, 2, t, d)
+    with pytest.raises(AssertionError, match="CRITICAL"):
         compute_loss(
             imputed_features=imputed, target_impute=target_impute,
             mu=mu, theta=theta, pi=pi, target_forecast=tf,
             traffic_mean=torch.tensor(0.0), traffic_std=torch.tensor(1.0),
-            kriging_pred=None, spatial_holdout_mask=None, w_kriging=0.5,
+            kriging_pred=kriging_pred, spatial_holdout_mask=None, w_kriging=0.0,
         )

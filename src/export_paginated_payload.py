@@ -76,8 +76,9 @@ from export_ui_payload import (  # noqa: E402
     TOP_K_EGO_EDGES,
     SENSORS_PATH,
 )
-from dataset import RealIoTDataset  # noqa: E402
+from dataset import RealIoTDataset, apply_spatial_holdout  # noqa: E402
 from db_connector import create_connector, DataConnector  # noqa: E402
+from harness import load_holdout_manifest, mask_from_manifest, manifest_sha  # noqa: E402
 from pipeline import ResilientIoTPipeline  # noqa: E402
 
 logger = logging.getLogger("export_paginated_payload")
@@ -334,15 +335,25 @@ def build_nodes_meta(
     real_location_names: List[str],
     num_simulated: int,
     sensor_coords: Dict[str, Dict[str, float]],
+    holdout_locations: Optional[set] = None,
 ) -> List[Dict]:
+    """node_role — three-tier display taxonomy for the frontend:
+      observed:  normal sensor (prediction + ground truth)
+      holdout:   real sensor masked throughout training — genuine zero-shot
+                 prediction WITH ground truth available for comparison
+      simulated: zero-baseline synthetic node (prediction, no ground truth)
+    is_simulated is kept for backward compatibility, derived from node_role."""
+    holdout_locations = holdout_locations or set()
     nodes_meta: List[Dict] = []
     for i, loc in enumerate(real_location_names):
         coords = sensor_coords.get(loc, {"lat": float("nan"), "lon": float("nan")})
+        role = "holdout" if loc in holdout_locations else "observed"
         nodes_meta.append({
             "id": i,
             "location_name": loc,
             "lat": coords["lat"],
             "lon": coords["lon"],
+            "node_role": role,
             "is_simulated": False,
         })
     num_nodes_real = len(real_location_names)
@@ -353,6 +364,7 @@ def build_nodes_meta(
             "location_name": f"Simulated_Node_{j}",
             "lat": lat,
             "lon": lon,
+            "node_role": "simulated",
             "is_simulated": True,
         })
     return nodes_meta
@@ -407,8 +419,13 @@ def run_day_inference(
     time_series_dim: int,
     device: torch.device,
     location_ids: List[str],
+    holdout_mask: Optional[torch.Tensor] = None,
 ) -> Dict:
-    """Run inference for one day and return the per-node / per-edge accumulators."""
+    """Run inference for one day and return the per-node / per-edge accumulators.
+
+    holdout_mask ([num_nodes_total] bool): inductive holdout nodes from the run's
+    holdout_manifest.json. Their dynamic features are blanked exactly as during
+    training, so their displayed predictions are genuine zero-shot reconstructions."""
     num_nodes_total = num_nodes_real + num_simulated
     num_timesteps = len(window_indices)
     assert num_timesteps > 0, "TRIPWIRE: day has zero inference windows."
@@ -451,6 +468,8 @@ def run_day_inference(
                 (num_simulated, seq_len, time_series_dim), float("nan"), device=device
             )
             combined_dynamic = torch.cat([real_dynamic, sim_dynamic], dim=0).unsqueeze(0)
+            if holdout_mask is not None:
+                combined_dynamic = apply_spatial_holdout(combined_dynamic, holdout_mask)
 
             batch = {
                 "static_features": combined_static,
@@ -729,6 +748,7 @@ def write_node_detail_jsons(out_dir: str, run_id: str, date_str: str, acc: Dict,
             "location_name": meta["location_name"],
             "lat": meta["lat"],
             "lon": meta["lon"],
+            "node_role": meta.get("node_role", "simulated" if meta["is_simulated"] else "observed"),
             "is_simulated": meta["is_simulated"],
             "zinb_series": zinb_series,
             "ground_truth_series": ground_truth_series[node_id],
@@ -753,6 +773,7 @@ def write_spatial_json(out_dir: str, run_id: str, nodes_meta: List[Dict],
             "location_name": m["location_name"],
             "lat": m["lat"],
             "lon": m["lon"],
+            "node_role": m.get("node_role", "simulated" if m["is_simulated"] else "observed"),
             "is_simulated": m["is_simulated"],
             "semantic_tags": semantic_tags.get(m["location_name"], []),
         }
@@ -798,6 +819,17 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     ckpt, cfg_path, wandb_run_id, run_id, metrics_summary = load_model_and_meta(artifact_name)
     logger.info(f"=== Run '{run_id}' (wandb_run_id={wandb_run_id}) from {artifact_name} ===")
 
+    # HARNESS: inductive holdout manifest co-located with the checkpoint. When
+    # present, those nodes are blanked at inference (zero-shot predictions) and
+    # tagged node_role="holdout" for distinct frontend display.
+    holdout_manifest = load_holdout_manifest(os.path.dirname(ckpt))
+    holdout_locations = set(holdout_manifest["holdout_location_ids"]) if holdout_manifest else set()
+    if holdout_manifest:
+        logger.info(
+            f"Holdout manifest found: {len(holdout_locations)} holdout nodes, "
+            f"sha={manifest_sha(holdout_manifest)}"
+        )
+
     dates = list(daterange(start_date, end_date))
     assert dates, "TRIPWIRE: empty analysis window."
 
@@ -821,8 +853,19 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     static_feat_dim = full_ds.static_feat_dim
     time_series_dim = full_ds.time_series_dim
 
-    nodes_meta = build_nodes_meta(canonical_locations, num_simulated, sensor_coords)
+    nodes_meta = build_nodes_meta(
+        canonical_locations, num_simulated, sensor_coords, holdout_locations=holdout_locations
+    )
     location_ids = [m["location_name"] for m in nodes_meta]
+
+    # [num_nodes_total] bool: manifest holdout over real nodes, False for simulated.
+    holdout_mask_total: Optional[torch.Tensor] = None
+    if holdout_manifest is not None:
+        real_holdout_mask = mask_from_manifest(holdout_manifest, canonical_locations, device=device)
+        holdout_mask_total = torch.cat([
+            real_holdout_mask,
+            torch.zeros(num_simulated, dtype=torch.bool, device=device),
+        ])
 
     model, loaded_config_data, git_hash = build_model(
         ckpt, cfg_path,
@@ -858,6 +901,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
             num_simulated=num_simulated, seq_len=seq_len,
             time_series_dim=time_series_dim, device=device,
             location_ids=location_ids,
+            holdout_mask=holdout_mask_total,
         )
         day_metrics = compute_day_metrics(acc, num_nodes_total, num_nodes_real)
 
@@ -888,6 +932,8 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
         "num_nodes": num_nodes_total,
         "num_real_nodes": num_nodes_real,
         "num_simulated_nodes": num_simulated,
+        "num_holdout_nodes": len(holdout_locations),
+        "holdout_manifest_sha": manifest_sha(holdout_manifest),
         "available_dates": available_dates,
         "veh_class": veh_class,
         "dir": direction,

@@ -1,191 +1,154 @@
-# Implementation Plan — Phase 4 (Final Integration, Verification & Documentation)
+# Generic Evaluation Harness & Cross-Model Standardization
 
-**Implementer:** Claude (Senior ML Engineer)
-**Date:** 2026-06-30
-**Source spec:** `.agents/plans/architect_plan.md` §6 (desk checks), §7 (testing), §8.5–8.7 (final integration, docs, merge), §10 (success criteria)
-**Target branch:** `main`
-**Predecessors:** Phase 1 (Scale-Invariant Loss) ✅ merged · Phase 2 (Kriging) ✅ merged · Phase 3 (Edge Features) ✅ merged.
+This plan builds a single evaluation harness shared by **three consumers** — `train.py` (train/val loops), and the two payload exporters (`export_ui_payload.py`, `export_paginated_payload.py`) — so that every model produces a standardized, reproducible set of results, and so that spatially held-out nodes flow through to the frontend as a first-class node category.
 
----
+## User Review Required
+> [!IMPORTANT]
+> **Dummy values must never become numbers.** The original idea (baselines emit `dispersion=1`, `P(zero)=0`) crashes inference today — `export_paginated_payload.py:478` asserts `pi > 0` strictly — and worse, dummy-derived metrics and uncertainty bands would render on the frontend as if real. This plan replaces "dummy values" with two honest alternatives per capability: a **genuine naive attempt** (real, deliberately bad numbers) or a **null** (metric reported as `N/A`). Dummy tensors exist only internally to satisfy shape contracts and are never scored or exported.
 
-## 0. Reconnaissance (verified current state on `main`)
-
-Phase 4 is **documentation + verification**, not new functional model code. The three model layers are
-already wired and active. Confirmed by reading the live files:
-
-- **`src/decoders.py`** — `compute_loss(...)` already returns the 4-tuple
-  `(total, impute, forecast, kriging)`; channel-split TRUE MSLE on raw traffic counts + MSE on weather;
-  `compute_kriging_loss` + `scale_invariant_mse` present with empty-holdout guard and NaN tripwires.
-- **`configs/train/train.yaml`** — already "unified production" and **active**:
-  `data.spatial_holdout_prob: 0.15`, `loss.w_kriging: 0.5`, `loss.w_impute/w_forecast: 1.0`,
-  `model.edge_features_cache_path: "data/external/edge_features_cache.json"`, `training.epochs: 100`.
-- **`configs/train/train_test.yaml`** — same settings, `epochs: 1`, narrow date window (2024-04-02→03).
-- **Desk checks present:** `scripts/desk_check_{scale_invariant,kriging,edge_features}.py`.
-  **Missing:** `scripts/desk_check_unified_loss.py` (the Layer-4 end-to-end trace — a Phase 4 deliverable).
-- **Docs that exist and need updates:** `EXPERIMENTS.md`, `NSTAR_BACKEND_ARCHITECTURE.md` (§3 loss logic),
-  `docs/model/spatial_estimation_architecture.md` (§5.5 + §8 open-question #4), `README.md`.
-- **No ADR directory exists** — `docs/adr/` must be created.
-
-**Implication:** the only *code* I will write is one new desk-check script. Everything else is config
-reconciliation, verification runs, and documentation. No model/training logic changes are planned.
-
-### Resolved decisions (user, 2026-06-30)
-1. **`spatial_holdout_prob` → `0.2`** (align to architect §4.1). Both `train.yaml` and `train_test.yaml`
-   change `0.15 → 0.2`, and the DB verification is **re-run** to confirm NaN-free at the new value.
-2. **GPU verification → document-as-deferred** if this environment is CPU-only (rely on the CUDA-guarded
-   device-consistency desk check; defer the real GPU run to the GPU server).
+> [!IMPORTANT]
+> **Three node roles reach the frontend.** `observed` (normal sensors), `holdout` (real sensors masked throughout training — genuine zero-shot predictions *with* ground truth available for display), and `simulated` (zero-baseline synthetic nodes — predictions with *no* ground truth). This requires a payload schema change and coordinated frontend work.
 
 ---
 
-## 1. Git safety (first action on approval)
+## 0. The Contracts
 
-```bash
-git add .
-git commit -m "Auto-commit before Phase 4"
+### 0.1 Contract In — the batch schema
+The harness guarantees the batch dict contains exactly these **data** keys (matching `custom_collate_real`, `dataset.py:277-287`):
+`static_features [N, S]`, `dynamic_features [B, N, T, D]`, `target_impute [B, N, T, D]`, `target_forecast [B, N]`, `node_mask [B, N, T, D]`, `location_ids`, and optionally `spatial_holdout_mask [N]` and `simulated_nodes_mask [N]`.
+
+Loss weights (`w_impute`, `w_forecast`, `w_kriging`) are **removed from the batch** at the harness boundary — they are hyperparameters, not data. The RIoT wrapper (§0.3) re-injects them into the batch it hands to the unmodified `ResilientIoTPipeline.forward()`, absorbing the impedance mismatch so `pipeline.py` needs no signature change.
+
+### 0.2 Contract Out — predictions, not internals
+#### [NEW] `src/harness/contract.py`
+```python
+class Predictions(NamedTuple):
+    mu: torch.Tensor                        # [B, N] point forecast (all models)
+    theta: Optional[torch.Tensor]           # [B, N] dispersion — None if no uncertainty
+    pi: Optional[torch.Tensor]              # [B, N] zero-inflation prob — None if unsupported
+    imputed: Optional[torch.Tensor]         # [B, N, T, D] reconstruction — None if unsupported
+    kriging_pred: Optional[torch.Tensor]    # [B, K, T, D] holdout reconstruction — None if unsupported
+    edge_index: Optional[torch.Tensor]      # graph models only
+    attention: Optional[torch.Tensor]       # graph models only
+    tripwires: list                         # always present, may be empty
+
+class Losses(NamedTuple):
+    total: torch.Tensor                     # backprop target — always a device tensor
+    impute: torch.Tensor                    # zero TENSOR (never a float) when unsupported
+    forecast: torch.Tensor
+    kriging: torch.Tensor
 ```
-(Per task guidelines. Already on `main`; no new branch requested by the task — Phases 1–3 committed
-directly to `main`, so Phase 4 follows the same convention unless you direct otherwise.)
+Absence is expressed as `None` in `Predictions`, and as a **device-placed zero tensor** in `Losses` (the train loop calls `.item()` on every component — `train.py:437-439`).
+
+### 0.3 The ModelAdapter protocol
+#### [NEW] `src/harness/adapters.py`
+Every model participates through a thin wrapper — this is where model-specific wrangling lives, keeping the harness and exporters model-agnostic:
+```python
+class ModelAdapter(ABC):
+    capabilities: Capabilities   # frozen dataclass of bools:
+                                 # uncertainty, zero_inflation, imputation, kriging, graph
+    def step(self, batch, weights, loss_node_mask=None) -> (Losses, Predictions): ...
+    def predict(self, batch: dict) -> Predictions: ...   # inference-only (exporters)
+```
+(`step()` produces losses and predictions in a single forward — separate
+`predict()`/`loss()` calls would double the compute for the RIoT pipeline.)
+- **`RIoTAdapter`**: wraps `ResilientIoTPipeline` unchanged. `predict()` calls `forward(batch, return_analysis=True)` semantics; `loss()` calls the existing forward and repacks the 10-tuple. All capabilities `True`.
+- **`RecurrentBaselineAdapter`** (LSTM/GRU): see §1.
+- Loss functions legitimately differ per model (ZINB NLL vs MSE). Therefore `val_loss` is **per-model only** (used for early stopping / checkpointing within a run) and is explicitly excluded from cross-model comparison — cross-model comparison happens exclusively through the metrics manifest (§4).
+
+### 0.4 Capability-gated metrics
+#### [NEW] `src/harness/evaluate.py`
+One function, used verbatim by the val loop and the exporters:
+```python
+def evaluate(adapter, batch, holdout_mask) -> dict
+```
+- Computes each metric **only if the adapter's capability supports it**; otherwise emits `None` (serialized as `null` in the manifest, rendered as "N/A" downstream, logged to W&B as absent — never as `0.0`).
+  - `rmse`/`mae`: always (from `mu`).
+  - `zero_acc`: gated on `zero_inflation` — a baseline with dummy `pi` must show `null`, not a fabricated 0%.
+  - `impute_mse`: gated on `imputation`.
+  - `kriging_msle/rmse/mae`: gated on `kriging` (a *naive* kriging head — §1 — counts as capable: real numbers, honestly bad).
+- The existing ZINB tripwire assertions in the exporters (`mu > 0`, `0 < pi < 1`, attention NaN checks) move here and fire **only when the corresponding capability is claimed**. This is the change that stops dummy values from crashing inference.
 
 ---
 
-## 2. File-by-file plan
+## 1. Simple Baselines (LSTM / GRU)
 
-### 2.1 `configs/train/train.yaml` (UPDATE)
-- Set `data.spatial_holdout_prob: 0.2` (was 0.15 — decision #1).
-- Add a short top-of-file comment block declaring this the "Unified Architecture (Phases 1–3)" production
-  config, enumerating the three active layers, so the file is self-documenting.
-- Verify all other unified settings remain coherent.
+#### [NEW] `src/baselines.py`
+`LSTMForecaster` / `GRUForecaster`: per-node recurrent encoders over `dynamic_features`, ignoring all spatial structure.
+- **Forecast head** → `mu [B, N]`. Trained with MSE against `target_forecast`.
+- **Reconstruction head** (small linear head over per-timestep hidden states) → `imputed [B, N, T, D]`, trained with masked MSE. This makes the imputation and kriging attempts **genuine**: `kriging_pred` is `imputed` sliced at the holdout mask. Because the harness blanked those nodes' inputs, the reconstruction is honestly terrible — which is the ablation story we want, backed by real numbers instead of fabricated ones.
+- `theta = None`, `pi = None`, `edge_index = None`, `attention = None`. **No dummy `theta=1`/`pi=0`** — those produced fabricated ZINB variance (`mu + mu²` uncertainty bands on the frontend) and tripwire crashes.
+- Capabilities: `uncertainty=False, zero_inflation=False, imputation=True (naive), kriging=True (naive), graph=False`.
+- `Losses`: `forecast` = MSE, `impute` = masked reconstruction MSE, `kriging` = zero tensor (the reconstruction loss already covers it), `total` = weighted sum — all device tensors.
 
-### 2.2 `configs/train/train_test.yaml` (UPDATE)
-- Set `data.spatial_holdout_prob: 0.2` (was 0.15 — decision #1) to keep the smoke config aligned with prod.
-- Otherwise mirrors production at `epochs: 1`.
+#### [MODIFY] `src/train.py`
+- `model_type: gnn | lstm | gru` selects the adapter; the train/val loops talk **only** to the adapter + `evaluate()`. The val-loop metric block (`train.py:446-501`) is replaced by the shared `evaluate()` call.
 
-### 2.3 `scripts/desk_check_unified_loss.py` (NEW — the only new code)
-Mirrors the structure/return-code conventions of the existing desk checks (self-contained,
-`main()` → `sys.exit`, `✓`/`❌` prints, AssertionError handling). It imports the **real** production
-functions from `src.decoders` (not local copies) and traces the full unified loss:
-
-1. **Build synthetic batch** — `imputed_features [B,N,T,3]`, `target_impute [B,N,T,3]`,
-   ZINB params `mu/theta/pi [B,N]`, `target_forecast [B,N]`, `kriging_pred [B,K,T,3]`,
-   `spatial_holdout_mask [N]`, scalar `traffic_mean`/`traffic_std` buffers. `requires_grad` set where
-   gradient flow must be asserted.
-2. **Test A — all three terms finite & arithmetic correct:** call `compute_loss(..., w_kriging=0.5)`;
-   assert the returned 4-tuple are finite scalars, and re-derive
-   `total ≈ w_impute*impute + w_forecast*forecast + w_kriging*kriging` by hand → assert close.
-3. **Test B — gradient backprop to all heads:** `total.backward()`; assert non-None, non-zero grads reach
-   the imputation tensor, the ZINB params, **and** the kriging prediction tensor.
-4. **Test C — zero-weight bypass:** call with `w_kriging=0.0`, `kriging_pred=None`,
-   `spatial_holdout_mask=None`; assert `loss_kriging == 0.0` exactly, `total` finite; and (re-run with a
-   grad-tracked kriging tensor at `w_kriging=0`) assert **no gradient** reaches the kriging head.
-5. **Test D — channel separation sanity:** perfect-reconstruction batch → `loss_impute ≈ 0` and
-   `loss_kriging ≈ 0`; a traffic-only error moves traffic MSLE while weather MSE stays ≈ 0.
-6. **Test E — NaN tripwire fires:** inject a NaN into `imputed_features`, assert `compute_loss` raises the
-   `CRITICAL:` AssertionError (offensive-programming guarantee, architect §5.2).
-
-Run: `docker compose exec agent-workspace python scripts/desk_check_unified_loss.py` → expect all pass.
-
-### 2.4 `EXPERIMENTS.md` (UPDATE — new ledger row)
-Prepend a new dated row (2026-06-30, branch `main`) for **Phase 4: Unified Architecture — Final
-Integration & Documentation**, in the established dense house style (matching the Phase 1/2/3 rows).
-Contents:
-- States Phase 4 added no model logic; it is the integration/verification/documentation seal over the
-  three merged layers (true dual-head MSLE, spatial kriging, edge_dim=10 GATv2).
-- Records `desk_check_unified_loss.py` results (5 tests) **with actual printed numbers** captured at run.
-- Records `pytest tests/` result (actual pass count).
-- Records the DB verification run output (val loss / kriging metrics / NaN-free).
-- Records GPU verification outcome (see §3).
-- Lists all Phase 4 files changed; notes the 0.15-vs-0.2 holdout deviation.
-
-### 2.5 `NSTAR_BACKEND_ARCHITECTURE.md` (UPDATE — §3 Joint Training & Loss Logic + §1 components)
-§3 currently states only `Total Loss = w_forecast·L_ZINB + w_impute·L_impute_MSE`. Update to the unified
-objective actually implemented:
-- New total: `L = w_impute·L_impute + w_forecast·L_ZINB + w_kriging·L_kriging`.
-- `L_impute` = TRUE MSLE on **raw** traffic counts (channel 0, inverse-transformed via registered
-  `traffic_mean`/`traffic_std` buffers) **+** MSE on scaled weather channels (1–2).
-- `L_kriging` = same channel-split treatment over spatially held-out nodes (IGNNK-style mask).
-- Note elimination of pseudo-MSLE and the offensive NaN tripwires on every loss term.
-- Add a one-line pointer to the new ADR and to `docs/model/spatial_estimation_architecture.md`.
-- Extend §1 component list to mention the GATv2 `edge_dim=10` enrichment and the kriging head, so the doc
-  matches the shipped model.
-
-### 2.6 `docs/model/spatial_estimation_architecture.md` (UPDATE — true-MSLE resolution)
-- **§5.5 (Interaction with StandardScaler):** add a "Resolution (shipped)" subsection documenting that the
-  implementation inverse-transforms the traffic channel back to raw counts using registered scaler buffers
-  before MSLE — the mathematically-clean path, not pseudo-MSLE.
-- **§8 Open Question #4** (pseudo-MSLE vs inverse-transform): mark **RESOLVED** — chose inverse-transform;
-  cross-link the ADR.
-- Fix file-table self-links only if they still point at old absolute `/Users/...` paths and sit in a
-  touched section (cosmetic, low priority).
-
-### 2.7 `docs/adr/0001-eliminate-pseudo-msle.md` (NEW — Architecture Decision Record)
-Create `docs/adr/` and a standard ADR (Status / Context / Decision / Consequences / Alternatives):
-- **Context:** StandardScaler maps non-negative counts to signed floats; naive MSLE on scaled features
-  requires clamping negatives → discards ~40–50% of distribution variance (pseudo-MSLE debt).
-- **Decision:** inverse-transform the traffic channel to raw counts via registered `traffic_mean`/
-  `traffic_std` buffers, then apply TRUE MSLE; weather stays MSE-on-scaled.
-- **Consequences:** scale-invariant, device-safe (buffers move with model), zero approximation; both
-  imputation and kriging heads share the path; verified by `desk_check_scale_invariant.py` +
-  `desk_check_unified_loss.py`.
-- **Alternatives considered:** pseudo-MSLE on scaled (rejected); per-batch rescaling (rejected).
-- Add a `docs/adr/README.md` index stub.
-
-### 2.8 `README.md` (UPDATE — new config parameters)
-Add a short "Unified Architecture configuration" subsection documenting the new knobs:
-- `data.spatial_holdout_prob` (kriging holdout fraction; 0.0 disables).
-- `loss.w_kriging` (kriging loss weight; 0.0 disables the head).
-- `model.edge_features_cache_path` (path to `edge_features_cache.json`; empty/None → learned-only `edge_dim=1`).
-- Brief note that traffic loss is TRUE MSLE on raw counts; cross-link the ADR.
+#### [MODIFY] `configs/train/train_lstm.yaml`
+- `spatial_holdout_prob: 0.0` and `w_kriging: 0.0` (currently 0.2 / 0.5 — this would blank 20% of the LSTM's *inputs* per batch and corrupt the baseline). Transductive kriging pressure is a GNN-training concern; inductive evaluation is governed by `eval_mode` (§2), not this knob.
 
 ---
 
-## 3. Verification sequence (run after docs drafted; numbers fold back into EXPERIMENTS.md)
+## 2. Inductive Spatial Holdout (Task 3)
 
-1. **Desk checks (all four):**
-   `docker compose exec agent-workspace python scripts/desk_check_unified_loss.py`
-   (plus re-run the three existing ones to confirm no regression).
-2. **Full test suite:** `docker compose exec agent-workspace python -m pytest tests/ -q`
-   → expect the current green baseline (Phase 3 reported **58 passed**); zero regressions is the bar.
-3. **DB integration / training test (primary functional verification):**
-   `docker compose exec agent-workspace python src/train.py --use-database --config configs/train/train_test.yaml`
-   → expect 1 epoch, kriging active, edge cache loaded, **no NaN**, finite val loss + kriging metrics.
-4. **GPU verification:** check availability first
-   (`docker compose exec agent-workspace python -c "import torch; print(torch.cuda.is_available())"`).
-   - If **True**: run `train_test.yaml` training on GPU; confirm device placement + NaN-free epoch.
-   - If **False** (CPU-only env): per decision #2, record GPU unavailable; rely on
-     `desk_check_scale_invariant.py`'s CUDA-guarded device-consistency test as device-safety evidence, and
-     document the real GPU run as deferred to the GPU server.
+IGNNK-style fixed holdout; the disjoint `allowed_locations` approach stays abandoned (it crashes `encoder.py:87` and breaks scaler propagation).
 
-**Acceptance bar (architect §10):** buffers device-safe; kriging `[B,K,T,D]` with K=mask.sum();
-edge_attr `[E,10]`; all desk checks pass; full pytest green; training run completes without NaN.
+#### [MODIFY] `src/train.py` + [NEW] `src/harness/holdout.py`
+- `eval_mode: temporal | inductive` config flag (explicit, not "a mechanism").
+- **`temporal`** (default): current behavior, unchanged.
+- **`inductive`**:
+  - All nodes stay in every batch (`num_nodes`, scaler stats, and edge caches all remain valid).
+  - A **fixed, seeded** holdout mask (~20% of nodes) is generated once per run and applied via `apply_spatial_holdout` to **train and val** inputs.
+  - **No target leakage — the zero-shot guarantee.** In inductive mode, *every* training loss term (forecast, impute, kriging) is masked to exclude holdout nodes; their ground truth is used at **evaluation time only**. Without this, `compute_loss` fits the model against holdout targets each step and Task 3's claim is void. Implemented as a `loss_node_mask` the adapters must respect (`compute_loss` gains an optional node-mask argument; the baseline losses apply it directly).
+  - The GNN's kriging **training** signal comes from per-batch re-rolled holdouts drawn *only from the visible ~80%* (the existing `train.py:412-422` re-roll, restricted). The fixed 20% is scored but never trained on. In `temporal` mode the re-roll behavior is unchanged.
+  - **Holdout manifest**: the resolved held-out `location_ids` (not just the seed — node ordering could drift) are written to `<checkpoint_dir>/holdout_manifest.json` alongside the existing co-located `config.yaml`. This file is the bridge to inference (§3) and to cross-model comparability: comparing two models requires *identical* manifests, which the harness asserts when loading.
 
 ---
 
-## 4. Out of scope (explicitly not doing)
-- No changes to model architecture, loss math, dataset, or training loop (all merged in Phases 1–3).
-- No 100-epoch production run (architect §8.5 lists it; impractical here — the `train_test.yaml` 1-epoch
-  DB run + GPU smoke is the verification). Will flag if you want the full run.
-- No PR/squash/tag (§8.7) unless you ask — Phases 1–3 went straight to `main`.
+## 3. Frontend Pathway — Holdout Nodes in the Payload
+
+#### [MODIFY] `src/export_ui_payload.py`, `src/export_paginated_payload.py`
+- Load `holdout_manifest.json` from the checkpoint directory of the model being served. At inference, holdout nodes' dynamic features are blanked exactly as in training, so their displayed predictions are genuine zero-shot reconstructions.
+- Replace `is_simulated: bool` in node metadata with `node_role: "observed" | "holdout" | "simulated"` (keep `is_simulated` temporarily for backward compatibility, derived from `node_role`).
+  - `observed`: prediction + ground truth, normal display.
+  - `holdout`: prediction + ground truth — the frontend can show predicted-vs-actual on nodes the model provably never trained on.
+  - `simulated`: prediction, `ground_truth_series: null` (unchanged).
+- Holdout nodes keep their graph edges (they are real sensors with real static features) — only `simulated` nodes get the outgoing-edge drop via `simulated_nodes_mask`. This mirrors training exactly.
+- Payload fields backed by capabilities become **nullable**: `uncertainty`, `theta_data`, `pi_data`, and the whole graph/attention section are `null` for baseline-generated payloads. The per-timestep tripwire assertions are replaced by the capability-gated checks in `evaluate()`.
+- **[COORDINATE] `frontend/`**: render `node_role: holdout` distinctly; handle `null` uncertainty/graph sections. This is a cross-repo change and should be sequenced after the payload schema is frozen.
 
 ---
 
-## 5. Deliverables checklist
-- [ ] `git commit -m "Auto-commit before Phase 4"`
-- [ ] `scripts/desk_check_unified_loss.py` (new) — written & passing
-- [ ] `configs/train/train.yaml` — self-documenting header (verify settings)
-- [ ] `EXPERIMENTS.md` — Phase 4 row with real verification numbers
-- [ ] `NSTAR_BACKEND_ARCHITECTURE.md` — §3 unified loss + §1 components
-- [ ] `docs/model/spatial_estimation_architecture.md` — §5.5 + §8 Q4 resolved
-- [ ] `docs/adr/0001-eliminate-pseudo-msle.md` (+ `docs/adr/README.md`) — new ADR
-- [ ] `README.md` — unified config parameters
-- [ ] `pytest tests/` green (≥58 passed)
-- [ ] DB training test NaN-free
-- [ ] GPU verification (run or documented-as-deferred)
+## 4. Reproducibility — the Results Manifest
+
+#### [NEW] emitted by the harness at the end of every val epoch and every export run
+`<checkpoint_dir>/results.json`:
+```json
+{
+  "model_type": "lstm",
+  "eval_mode": "inductive",
+  "seed": 42,
+  "holdout_manifest_sha": "…",
+  "config_sha": "…",
+  "metrics": { "rmse": 12.3, "mae": 8.1, "zero_acc": null, "impute_mse": 0.041,
+               "kriging_msle": 2.9, "kriging_rmse": 44.0, "kriging_mae": 31.2 }
+}
+```
+- `null` means "model cannot produce this," never 0. Cross-model tables are a join over these files keyed on `holdout_manifest_sha` — identical hash ⇒ identical evaluation conditions ⇒ comparable rows. W&B logging mirrors this payload.
 
 ---
 
-**Awaiting your approval before writing any functional code (the desk-check script) or docs.**
+## Verification Plan
 
-Two decisions I'd like your call on:
-1. **Holdout prob:** keep verified `0.15`, or switch to architect's `0.2`?
-2. **GPU run:** if this environment is CPU-only, is "documented-as-deferred to GPU server" acceptable, or
-   do you want me to block on a real GPU?
+### Automated Tests
+- `RIoTAdapter` and `RecurrentBaselineAdapter` both return `Predictions`/`Losses` with harness-consumable shapes and device tensors (no floats) — the contract test, shared via a fixture, not duplicated per model.
+- `evaluate()` returns `null` (not 0.0) for capability-gated metrics on a baseline adapter, and full metrics for the RIoT adapter.
+- Inductive loss masking: with `eval_mode: inductive`, assert zero gradient flows from holdout-node targets (finite-difference or `grad` inspection on a tiny mock batch) — this is the test that protects the zero-shot claim.
+- Holdout manifest round-trip: train writes it, exporter loads it, node roles in the payload match.
+- Capability-gated tripwires: baseline predictions with `pi=None` pass through `evaluate()` without assertion errors.
+
+### Manual Verification
+1. **Baseline transductive**: run `train_lstm.yaml` end-to-end; `results.json` shows real `rmse`/`mae`/`impute_mse`, `zero_acc: null`; no `.item()` or tripwire crashes.
+2. **Inductive comparability**: run GNN and LSTM with `eval_mode: inductive`, same seed; assert identical `holdout_manifest_sha`; confirm LSTM `kriging_rmse` ≫ GNN `kriging_rmse` (the honest ablation number).
+3. **GNN inductive**: trains without triggering the `encoder.py:87` num_nodes assertion; W&B shows kriging metrics on the fixed holdout only.
+4. **Payload**: export from a GNN checkpoint with a holdout manifest; verify nodes carry all three `node_role` values, holdout nodes have both prediction and ground truth, and a baseline-generated payload has `null` uncertainty/graph sections without crashing the exporter.
