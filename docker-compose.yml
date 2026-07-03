@@ -126,4 +126,4 @@ volumes:
 
 networks:
   ml-network:
-    driver: bridge
+    name: ml-agent-workspace_ml-network

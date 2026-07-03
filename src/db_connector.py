@@ -241,7 +241,7 @@ class ParquetConnector(DataConnector):
         # Parquet contains missing intervals as NaNs, but ingest_parquet.py drops them
         # before inserting into DB. We must match the DB behaviour exactly.
         df = df.dropna(subset=['value'])
-        
+
         # Sort to match SQL 'ORDER BY dt, sensor_id'
         df = df.sort_values(['dt', 'location']).reset_index(drop=True)
 

@@ -1,9 +1,21 @@
 import argparse
+import os
+
+# Perform early GPU selection before ANY PyTorch or W&B bindings are loaded
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--use_mock_data", action="store_true")
+    early_args, _ = parser.parse_known_args()
+    
+    if not early_args.use_mock_data:
+        from gpu_selector import select_gpus
+        selected_gpus = select_gpus()
+        if selected_gpus:
+            os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
+
 import copy
 import logging
-import os
 from datetime import datetime
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -702,13 +714,9 @@ def main():
     args = parse_args()
     config = load_config(args.config)
 
+    # CUDA_VISIBLE_DEVICES is already set by the early setup block
     if not args.use_mock_data:
-        from gpu_selector import select_gpus
-        selected_gpus = select_gpus()
-        if selected_gpus:
-            import os
-            os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
-            logger.info(f"Isolated training execution to GPU(s): {selected_gpus}")
+        logger.info(f"Isolated training execution to GPU(s): {os.environ.get('CUDA_VISIBLE_DEVICES', 'None')}")
 
     run_training(config, init_wandb=True, use_mock_data=args.use_mock_data)
 
