@@ -101,8 +101,11 @@ CONFIG_BASE=$(basename "$SWEEP_CONFIG" | sed 's/\.yaml//' | sed 's/\.yml//' | tr
 # Clean container name to only have safe alphanumeric/hyphen characters
 CONTAINER_NAME="sweep-${CONFIG_BASE}-${N_TRIALS}t-$(date +%Y%m%d-%H%M%S)"
 
+# Construct default study name matching the stable naming convention (e.g. sweep_01_arch)
+STUDY_NAME="sweep_${CONFIG_BASE//-/_}"
+
 # Construct the inner command to run inside the container
-INNER_CMD="python src/tune.py --config $CONFIG_FILE --sweep-config $SWEEP_CONFIG --n-trials $N_TRIALS --storage $STORAGE"
+INNER_CMD="python src/tune.py --config $CONFIG_FILE --sweep-config $SWEEP_CONFIG --n-trials $N_TRIALS --storage $STORAGE --study-name $STUDY_NAME"
 
 DOCKER_ENV_OPTS=()
 if [ -n "$GPUS" ]; then

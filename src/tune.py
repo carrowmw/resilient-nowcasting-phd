@@ -306,9 +306,22 @@ if __name__ == "__main__":
 
         # Resolve interactive inputs first
         if storage is None or study_name is None or config_path is None or sweep_config_path is None:
-            storage, study_name, config_path, sweep_config_path = interactive_setup(
-                storage, study_name, config_path, sweep_config_path
-            )
+            import sys
+            if sys.stdin.isatty():
+                storage, study_name, config_path, sweep_config_path = interactive_setup(
+                    storage, study_name, config_path, sweep_config_path
+                )
+            else:
+                if storage is None:
+                    storage = "sqlite:///optuna.db"
+                if config_path is None:
+                    config_path = "configs/train/train.yaml"
+                if sweep_config_path is None:
+                    sweep_config_path = "configs/sweeps/sweep.yaml"
+                if study_name is None:
+                    import os
+                    config_name = os.path.basename(sweep_config_path).replace("_sweep.yaml", "").replace(".yaml", "").replace(".yml", "")
+                    study_name = f"sweep_{config_name}"
 
         # Load configurations early to check for overrides
         base_cfg = {}
@@ -396,9 +409,22 @@ if __name__ == "__main__":
 
     # Trigger interactive setup for any values not explicitly provided via CLI flags
     if storage is None or study_name is None or config_path is None or sweep_config_path is None:
-        storage, study_name, config_path, sweep_config_path = interactive_setup(
-            storage, study_name, config_path, sweep_config_path
-        )
+        import sys
+        if sys.stdin.isatty():
+            storage, study_name, config_path, sweep_config_path = interactive_setup(
+                storage, study_name, config_path, sweep_config_path
+            )
+        else:
+            if storage is None:
+                storage = "sqlite:///optuna.db"
+            if config_path is None:
+                config_path = "configs/train/train.yaml"
+            if sweep_config_path is None:
+                sweep_config_path = "configs/sweeps/sweep.yaml"
+            if study_name is None:
+                import os
+                config_name = os.path.basename(sweep_config_path).replace("_sweep.yaml", "").replace(".yaml", "").replace(".yml", "")
+                study_name = f"sweep_{config_name}"
 
     # Dynamically load the chosen configuration files
     base_config = load_config(config_path)
