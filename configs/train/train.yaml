@@ -86,4 +86,4 @@ loss:
 # The underlying model architecture to instantiate: 'gnn' (RIoT), 'lstm', or 'gru'.
 model_type: gnn
 # Evaluation paradigm: 'temporal' (all nodes seen) or 'inductive' (strict fixed spatial holdout).
-eval_mode: temporal
+eval_mode: inductive

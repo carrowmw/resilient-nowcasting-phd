@@ -126,4 +126,5 @@ volumes:
 
 networks:
   ml-network:
+    external: true
     name: ml-agent-workspace_ml-network
