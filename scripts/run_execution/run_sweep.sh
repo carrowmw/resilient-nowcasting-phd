@@ -104,8 +104,9 @@ CONTAINER_NAME="sweep-${CONFIG_BASE}-${N_TRIALS}t-$(date +%Y%m%d-%H%M%S)"
 # Construct the inner command to run inside the container
 INNER_CMD="python src/tune.py --config $CONFIG_FILE --sweep-config $SWEEP_CONFIG --n-trials $N_TRIALS --storage $STORAGE"
 
+DOCKER_ENV_OPTS=()
 if [ -n "$GPUS" ]; then
-    INNER_CMD="$INNER_CMD --gpus $GPUS"
+    DOCKER_ENV_OPTS+=("-e" "CUDA_VISIBLE_DEVICES=$GPUS")
     echo "Target GPU(s): $GPUS"
 fi
 
@@ -114,7 +115,7 @@ if [ "$DETACH" = true ]; then
     echo "Container name: $CONTAINER_NAME"
     
     # Run container in background (-d) and auto-remove (--rm) on stop/completion
-    docker compose run -d --rm --name "$CONTAINER_NAME" gpu-runner $INNER_CMD
+    docker compose run "${DOCKER_ENV_OPTS[@]}" -d --rm --name "$CONTAINER_NAME" gpu-runner $INNER_CMD
     
     echo ""
     echo "Container started successfully in the background."
@@ -128,5 +129,5 @@ if [ "$DETACH" = true ]; then
     docker logs -f "$CONTAINER_NAME"
 else
     echo "Running sweep inside GPU runner container in foreground..."
-    docker compose run --rm --name "$CONTAINER_NAME" gpu-runner $INNER_CMD
+    docker compose run "${DOCKER_ENV_OPTS[@]}" --rm --name "$CONTAINER_NAME" gpu-runner $INNER_CMD
 fi

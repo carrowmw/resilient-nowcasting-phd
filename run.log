@@ -1,0 +1,273 @@
+nohup: ignoring input
+2026-07-03 19:56:37,156 - root - INFO - Logger initialized. Writing to /workspace/logs/train_pipeline_20260703_195637.log
+2026-07-03 19:56:37,264 - gpu_selector - INFO - Non-interactive session. Automatically selected GPU: 1
+2026-07-03 19:56:37,265 - root - INFO - Isolated training execution to GPU(s): 1
+2026-07-03 19:56:37,265 - __main__ - INFO - Using device: cuda
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: rappel-velvet9310 (rappel-velvet9310-newcastle-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.28.0
+wandb: Run data is saved locally in /workspace/wandb/run-20260703_195637-doa2wqze
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run earthy-oath-31
+wandb: ⭐️ View project at https://wandb.ai/rappel-velvet9310-newcastle-university/resilient-iot-v2
+wandb: 🚀 View run at https://wandb.ai/rappel-velvet9310-newcastle-university/resilient-iot-v2/runs/doa2wqze
+2026-07-03 19:56:38,823 - __main__ - INFO - Checkpointing enabled: models/resilient-iot-v2/earthy-oath-31/best_model.pt
+2026-07-03 19:56:38,828 - __main__ - INFO - Co-located training configuration saved to: models/resilient-iot-v2/earthy-oath-31/config.yaml
+2026-07-03 19:56:38,828 - __main__ - INFO - Loading RealIoTDataset from 2023-04-02 to 2026-04-02
+2026-07-03 19:56:38,856 - db_connector - INFO - TimescaleConnector: connection pool established (min=1, max=4)
+2026-07-03 19:56:38,857 - dataset - INFO - Loading data via connector TimescaleConnector between 2023-04-02 and 2026-04-02
+/workspace/src/db_connector.py:127: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  df = pd.read_sql_query(sql, conn, params=params, parse_dates=['dt'])
+2026-07-03 19:57:21,201 - db_connector - INFO - load_traffic: 9,710,449 rows, 81 sensors
+/workspace/src/db_connector.py:153: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  df = pd.read_sql_query(
+2026-07-03 19:57:40,634 - db_connector - INFO - load_weather: 5,350,754 rows
+/workspace/src/db_connector.py:180: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  df = pd.read_sql_query(sql, conn, params=[list(sensor_ids)])
+2026-07-03 19:57:41,592 - db_connector - INFO - load_static_features: 81 rows
+2026-07-03 19:57:58,567 - dataset - INFO - Loaded 96576 timesteps across 81 locations for class=person, dir=all.
+2026-07-03 19:58:00,885 - dataset - INFO - Traffic scaler: mean=12.42, std=45.26
+2026-07-03 19:58:00,886 - dataset - INFO - Dynamic features scaled separately: traffic (ch0) + weather (ch1-2) over 7822656 samples.
+2026-07-03 19:58:01,428 - dataset - INFO - Static features scaled: mean≈0, std≈1 over 81 nodes.
+2026-07-03 19:58:01,429 - dataset - INFO - Feature dimensions established. Static: 15, Dynamic: 3
+2026-07-03 19:58:02,839 - __main__ - INFO - HARNESS: model_type=lstm, eval_mode=inductive, capabilities=Capabilities(uncertainty=False, zero_inflation=False, imputation=True, kriging=True, graph=False)
+2026-07-03 19:58:02,841 - __main__ - INFO - Model initialised — num_nodes=81, static_feat_dim=15, time_series_dim=3, embedding_dim=16, hidden_dim=32, num_layers=2, num_heads=4
+2026-07-03 19:58:02,871 - __main__ - INFO - HARNESS inductive holdout: 24/81 nodes held out (seed=42), manifest=models/resilient-iot-v2/earthy-oath-31/holdout_manifest.json, sha=669860aa8b4cdd15
+2026-07-03 19:58:02,871 - __main__ - INFO - Starting training loop...
+2026-07-03 19:58:56,342 - __main__ - INFO - Epoch 1/100 - Train Loss: 1607.3221 | Val Loss: 1471.7851 (RMSE: 41.73, MAE: 11.29, ZeroAcc: N/A, ImputeMSE: 0.2977), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.18, MSLE=0.1225)
+2026-07-03 19:58:56,346 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 1471.7851
+2026-07-03 19:59:53,122 - __main__ - INFO - Epoch 2/100 - Train Loss: 1385.5039 | Val Loss: 1314.7985 (RMSE: 40.40, MAE: 10.45, ZeroAcc: N/A, ImputeMSE: 0.2890), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1203)
+2026-07-03 19:59:53,127 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 1314.7985
+2026-07-03 20:00:43,947 - __main__ - INFO - Epoch 3/100 - Train Loss: 1263.6161 | Val Loss: 1213.6804 (RMSE: 39.53, MAE: 9.91, ZeroAcc: N/A, ImputeMSE: 0.2906), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1207)
+2026-07-03 20:00:43,955 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 1213.6804
+2026-07-03 20:01:35,083 - __main__ - INFO - Epoch 4/100 - Train Loss: 1171.7957 | Val Loss: 1134.0648 (RMSE: 38.84, MAE: 9.95, ZeroAcc: N/A, ImputeMSE: 0.2858), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1186)
+2026-07-03 20:01:35,086 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 1134.0648
+2026-07-03 20:02:28,315 - __main__ - INFO - Epoch 5/100 - Train Loss: 1097.3569 | Val Loss: 1062.7274 (RMSE: 38.23, MAE: 9.68, ZeroAcc: N/A, ImputeMSE: 0.2843), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1187)
+2026-07-03 20:02:28,318 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 1062.7274
+2026-07-03 20:03:21,151 - __main__ - INFO - Epoch 6/100 - Train Loss: 1030.0342 | Val Loss: 998.1642 (RMSE: 37.67, MAE: 9.42, ZeroAcc: N/A, ImputeMSE: 0.2839), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.15, MSLE=0.1246)
+2026-07-03 20:03:21,153 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 998.1642
+2026-07-03 20:04:09,930 - __main__ - INFO - Epoch 7/100 - Train Loss: 969.4751 | Val Loss: 940.5988 (RMSE: 37.16, MAE: 9.58, ZeroAcc: N/A, ImputeMSE: 0.2753), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.15, MSLE=0.1294)
+2026-07-03 20:04:09,933 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 940.5988
+2026-07-03 20:05:02,178 - __main__ - INFO - Epoch 8/100 - Train Loss: 914.3628 | Val Loss: 887.6856 (RMSE: 36.69, MAE: 9.47, ZeroAcc: N/A, ImputeMSE: 0.2680), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.14, MSLE=0.1267)
+2026-07-03 20:05:02,184 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 887.6856
+2026-07-03 20:05:55,433 - __main__ - INFO - Epoch 9/100 - Train Loss: 863.4249 | Val Loss: 839.3030 (RMSE: 36.28, MAE: 9.11, ZeroAcc: N/A, ImputeMSE: 0.2652), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.13, MSLE=0.1221)
+2026-07-03 20:05:55,436 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 839.3030
+2026-07-03 20:06:47,856 - __main__ - INFO - Epoch 10/100 - Train Loss: 816.1582 | Val Loss: 793.6524 (RMSE: 35.87, MAE: 9.10, ZeroAcc: N/A, ImputeMSE: 0.2533), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.13, MSLE=0.1217)
+2026-07-03 20:06:47,858 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 793.6524
+2026-07-03 20:07:41,473 - __main__ - INFO - Epoch 11/100 - Train Loss: 772.3905 | Val Loss: 751.7887 (RMSE: 35.48, MAE: 9.25, ZeroAcc: N/A, ImputeMSE: 0.2560), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.13, MSLE=0.1217)
+2026-07-03 20:07:41,476 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 751.7887
+2026-07-03 20:08:33,134 - __main__ - INFO - Epoch 12/100 - Train Loss: 732.4208 | Val Loss: 712.3791 (RMSE: 35.12, MAE: 9.25, ZeroAcc: N/A, ImputeMSE: 0.2485), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.14, MSLE=0.1203)
+2026-07-03 20:08:33,136 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 712.3791
+2026-07-03 20:09:26,887 - __main__ - INFO - Epoch 13/100 - Train Loss: 694.0969 | Val Loss: 676.4783 (RMSE: 34.79, MAE: 9.10, ZeroAcc: N/A, ImputeMSE: 0.2414), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.15, MSLE=0.1208)
+2026-07-03 20:09:26,890 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 676.4783
+2026-07-03 20:10:20,485 - __main__ - INFO - Epoch 14/100 - Train Loss: 658.8327 | Val Loss: 642.5059 (RMSE: 34.49, MAE: 9.03, ZeroAcc: N/A, ImputeMSE: 0.2369), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.15, MSLE=0.1224)
+2026-07-03 20:10:20,488 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 642.5059
+2026-07-03 20:11:13,435 - __main__ - INFO - Epoch 15/100 - Train Loss: 624.8314 | Val Loss: 610.2026 (RMSE: 34.18, MAE: 9.13, ZeroAcc: N/A, ImputeMSE: 0.2304), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.15, MSLE=0.1202)
+2026-07-03 20:11:13,438 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 610.2026
+2026-07-03 20:12:02,037 - __main__ - INFO - Epoch 16/100 - Train Loss: 594.5282 | Val Loss: 580.1837 (RMSE: 33.92, MAE: 8.92, ZeroAcc: N/A, ImputeMSE: 0.2279), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1248)
+2026-07-03 20:12:02,040 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 580.1837
+2026-07-03 20:12:54,812 - __main__ - INFO - Epoch 17/100 - Train Loss: 565.3452 | Val Loss: 553.5153 (RMSE: 33.66, MAE: 9.07, ZeroAcc: N/A, ImputeMSE: 0.2264), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1191)
+2026-07-03 20:12:54,814 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 553.5153
+2026-07-03 20:13:48,613 - __main__ - INFO - Epoch 18/100 - Train Loss: 537.2543 | Val Loss: 525.7485 (RMSE: 33.42, MAE: 8.79, ZeroAcc: N/A, ImputeMSE: 0.2220), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1192)
+2026-07-03 20:13:48,616 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 525.7485
+2026-07-03 20:14:41,640 - __main__ - INFO - Epoch 19/100 - Train Loss: 512.3793 | Val Loss: 501.8887 (RMSE: 33.18, MAE: 8.88, ZeroAcc: N/A, ImputeMSE: 0.2231), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1195)
+2026-07-03 20:14:41,642 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 501.8887
+2026-07-03 20:15:30,022 - __main__ - INFO - Epoch 20/100 - Train Loss: 489.4266 | Val Loss: 479.4983 (RMSE: 32.96, MAE: 9.07, ZeroAcc: N/A, ImputeMSE: 0.2192), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1227)
+2026-07-03 20:15:30,025 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 479.4983
+2026-07-03 20:16:22,383 - __main__ - INFO - Epoch 21/100 - Train Loss: 466.1274 | Val Loss: 458.9885 (RMSE: 32.77, MAE: 8.85, ZeroAcc: N/A, ImputeMSE: 0.2154), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1221)
+2026-07-03 20:16:22,386 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 458.9885
+2026-07-03 20:17:15,715 - __main__ - INFO - Epoch 22/100 - Train Loss: 446.0839 | Val Loss: 438.4639 (RMSE: 32.57, MAE: 8.96, ZeroAcc: N/A, ImputeMSE: 0.2164), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1199)
+2026-07-03 20:17:15,717 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 438.4639
+2026-07-03 20:18:08,546 - __main__ - INFO - Epoch 23/100 - Train Loss: 427.2019 | Val Loss: 421.6528 (RMSE: 32.41, MAE: 8.99, ZeroAcc: N/A, ImputeMSE: 0.2134), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1197)
+2026-07-03 20:18:08,548 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 421.6528
+2026-07-03 20:18:58,452 - __main__ - INFO - Epoch 24/100 - Train Loss: 410.2558 | Val Loss: 404.0913 (RMSE: 32.24, MAE: 9.06, ZeroAcc: N/A, ImputeMSE: 0.2120), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1189)
+2026-07-03 20:18:58,455 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 404.0913
+2026-07-03 20:19:52,372 - __main__ - INFO - Epoch 25/100 - Train Loss: 392.5674 | Val Loss: 389.3300 (RMSE: 32.10, MAE: 8.88, ZeroAcc: N/A, ImputeMSE: 0.2134), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1187)
+2026-07-03 20:19:52,374 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 389.3300
+2026-07-03 20:20:46,716 - __main__ - INFO - Epoch 26/100 - Train Loss: 378.1063 | Val Loss: 375.4856 (RMSE: 31.99, MAE: 8.57, ZeroAcc: N/A, ImputeMSE: 0.2120), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1197)
+2026-07-03 20:20:46,720 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 375.4856
+2026-07-03 20:21:40,003 - __main__ - INFO - Epoch 27/100 - Train Loss: 363.0487 | Val Loss: 361.0644 (RMSE: 31.84, MAE: 8.86, ZeroAcc: N/A, ImputeMSE: 0.2089), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1184)
+2026-07-03 20:21:40,006 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 361.0644
+2026-07-03 20:22:28,842 - __main__ - INFO - Epoch 28/100 - Train Loss: 350.1647 | Val Loss: 349.5953 (RMSE: 31.72, MAE: 8.86, ZeroAcc: N/A, ImputeMSE: 0.2142), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1207)
+2026-07-03 20:22:28,846 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 349.5953
+2026-07-03 20:23:21,055 - __main__ - INFO - Epoch 29/100 - Train Loss: 338.7487 | Val Loss: 337.1475 (RMSE: 31.60, MAE: 8.89, ZeroAcc: N/A, ImputeMSE: 0.2056), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1198)
+2026-07-03 20:23:21,058 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 337.1475
+2026-07-03 20:24:14,608 - __main__ - INFO - Epoch 30/100 - Train Loss: 328.0351 | Val Loss: 329.1354 (RMSE: 31.53, MAE: 9.16, ZeroAcc: N/A, ImputeMSE: 0.2096), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1184)
+2026-07-03 20:24:14,611 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 329.1354
+2026-07-03 20:25:08,637 - __main__ - INFO - Epoch 31/100 - Train Loss: 317.8568 | Val Loss: 317.7736 (RMSE: 31.41, MAE: 8.93, ZeroAcc: N/A, ImputeMSE: 0.2053), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1167)
+2026-07-03 20:25:08,639 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 317.7736
+2026-07-03 20:25:55,452 - __main__ - INFO - Epoch 32/100 - Train Loss: 307.2534 | Val Loss: 308.7834 (RMSE: 31.33, MAE: 9.09, ZeroAcc: N/A, ImputeMSE: 0.2058), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1185)
+2026-07-03 20:25:55,456 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 308.7834
+2026-07-03 20:26:49,714 - __main__ - INFO - Epoch 33/100 - Train Loss: 299.9623 | Val Loss: 299.8468 (RMSE: 31.24, MAE: 9.04, ZeroAcc: N/A, ImputeMSE: 0.2010), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1160)
+2026-07-03 20:26:49,716 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 299.8468
+2026-07-03 20:27:44,538 - __main__ - INFO - Epoch 34/100 - Train Loss: 291.6939 | Val Loss: 293.4067 (RMSE: 31.18, MAE: 8.87, ZeroAcc: N/A, ImputeMSE: 0.2030), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.16, MSLE=0.1179)
+2026-07-03 20:27:44,542 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 293.4067
+2026-07-03 20:28:37,984 - __main__ - INFO - Epoch 35/100 - Train Loss: 283.1469 | Val Loss: 285.7759 (RMSE: 31.11, MAE: 9.02, ZeroAcc: N/A, ImputeMSE: 0.2058), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1179)
+2026-07-03 20:28:37,986 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 285.7759
+2026-07-03 20:29:25,496 - __main__ - INFO - Epoch 36/100 - Train Loss: 276.0436 | Val Loss: 280.0579 (RMSE: 31.05, MAE: 8.93, ZeroAcc: N/A, ImputeMSE: 0.2039), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1176)
+2026-07-03 20:29:25,500 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 280.0579
+2026-07-03 20:30:17,084 - __main__ - INFO - Epoch 37/100 - Train Loss: 270.3563 | Val Loss: 274.4508 (RMSE: 31.01, MAE: 8.50, ZeroAcc: N/A, ImputeMSE: 0.2017), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1176)
+2026-07-03 20:30:17,086 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 274.4508
+2026-07-03 20:31:09,334 - __main__ - INFO - Epoch 38/100 - Train Loss: 264.5367 | Val Loss: 269.6296 (RMSE: 30.97, MAE: 8.43, ZeroAcc: N/A, ImputeMSE: 0.2038), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1163)
+2026-07-03 20:31:09,337 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 269.6296
+2026-07-03 20:32:00,825 - __main__ - INFO - Epoch 39/100 - Train Loss: 259.5087 | Val Loss: 267.0494 (RMSE: 30.93, MAE: 8.82, ZeroAcc: N/A, ImputeMSE: 0.2044), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1162)
+2026-07-03 20:32:00,828 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 267.0494
+2026-07-03 20:32:52,486 - __main__ - INFO - Epoch 40/100 - Train Loss: 254.9787 | Val Loss: 259.4647 (RMSE: 30.85, MAE: 8.84, ZeroAcc: N/A, ImputeMSE: 0.2089), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1175)
+2026-07-03 20:32:52,488 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 259.4647
+2026-07-03 20:33:44,021 - __main__ - INFO - Epoch 41/100 - Train Loss: 251.2491 | Val Loss: 255.4030 (RMSE: 30.83, MAE: 8.50, ZeroAcc: N/A, ImputeMSE: 0.2036), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1176)
+2026-07-03 20:33:44,024 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 255.4030
+2026-07-03 20:34:37,833 - __main__ - INFO - Epoch 42/100 - Train Loss: 246.3684 | Val Loss: 252.1376 (RMSE: 30.80, MAE: 8.63, ZeroAcc: N/A, ImputeMSE: 0.2009), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1157)
+2026-07-03 20:34:37,837 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 252.1376
+2026-07-03 20:35:31,753 - __main__ - INFO - Epoch 43/100 - Train Loss: 242.8247 | Val Loss: 248.9316 (RMSE: 30.77, MAE: 8.47, ZeroAcc: N/A, ImputeMSE: 0.2073), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1173)
+2026-07-03 20:35:31,756 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 248.9316
+2026-07-03 20:36:25,465 - __main__ - INFO - Epoch 44/100 - Train Loss: 239.2773 | Val Loss: 245.4595 (RMSE: 30.75, MAE: 8.41, ZeroAcc: N/A, ImputeMSE: 0.2063), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1204)
+2026-07-03 20:36:25,468 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 245.4595
+2026-07-03 20:37:15,102 - __main__ - INFO - Epoch 45/100 - Train Loss: 235.5940 | Val Loss: 241.9028 (RMSE: 30.71, MAE: 8.41, ZeroAcc: N/A, ImputeMSE: 0.2014), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1191)
+2026-07-03 20:37:15,106 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 241.9028
+2026-07-03 20:38:07,173 - __main__ - INFO - Epoch 46/100 - Train Loss: 232.0518 | Val Loss: 239.4522 (RMSE: 30.67, MAE: 8.72, ZeroAcc: N/A, ImputeMSE: 0.2041), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1177)
+2026-07-03 20:38:07,175 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 239.4522
+2026-07-03 20:39:00,739 - __main__ - INFO - Epoch 47/100 - Train Loss: 229.7291 | Val Loss: 237.0196 (RMSE: 30.65, MAE: 8.92, ZeroAcc: N/A, ImputeMSE: 0.2077), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1187)
+2026-07-03 20:39:00,742 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 237.0196
+2026-07-03 20:39:52,355 - __main__ - INFO - Epoch 48/100 - Train Loss: 227.9988 | Val Loss: 233.8551 (RMSE: 30.63, MAE: 8.44, ZeroAcc: N/A, ImputeMSE: 0.2037), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1187)
+2026-07-03 20:39:52,358 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 233.8551
+2026-07-03 20:40:39,528 - __main__ - INFO - Epoch 49/100 - Train Loss: 224.2010 | Val Loss: 232.9097 (RMSE: 30.61, MAE: 8.76, ZeroAcc: N/A, ImputeMSE: 0.2076), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1171)
+2026-07-03 20:40:39,530 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 232.9097
+2026-07-03 20:41:34,783 - __main__ - INFO - Epoch 50/100 - Train Loss: 222.9353 | Val Loss: 231.6858 (RMSE: 30.59, MAE: 8.58, ZeroAcc: N/A, ImputeMSE: 0.2037), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1167)
+2026-07-03 20:41:34,787 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 231.6858
+2026-07-03 20:42:27,690 - __main__ - INFO - Epoch 51/100 - Train Loss: 220.1513 | Val Loss: 233.0462 (RMSE: 30.64, MAE: 8.35, ZeroAcc: N/A, ImputeMSE: 0.2067), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1186)
+2026-07-03 20:42:27,692 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 20:43:20,969 - __main__ - INFO - Epoch 52/100 - Train Loss: 217.3773 | Val Loss: 227.0173 (RMSE: 30.55, MAE: 8.99, ZeroAcc: N/A, ImputeMSE: 0.2052), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1174)
+2026-07-03 20:43:20,973 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 227.0173
+2026-07-03 20:44:10,300 - __main__ - INFO - Epoch 53/100 - Train Loss: 215.8084 | Val Loss: 225.3238 (RMSE: 30.54, MAE: 8.52, ZeroAcc: N/A, ImputeMSE: 0.2076), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1166)
+2026-07-03 20:44:10,303 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 225.3238
+2026-07-03 20:45:01,339 - __main__ - INFO - Epoch 54/100 - Train Loss: 215.0689 | Val Loss: 224.0327 (RMSE: 30.52, MAE: 8.66, ZeroAcc: N/A, ImputeMSE: 0.2061), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1167)
+2026-07-03 20:45:01,343 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 224.0327
+2026-07-03 20:45:55,137 - __main__ - INFO - Epoch 55/100 - Train Loss: 213.9155 | Val Loss: 222.4036 (RMSE: 30.51, MAE: 8.44, ZeroAcc: N/A, ImputeMSE: 0.2067), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1184)
+2026-07-03 20:45:55,140 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 222.4036
+2026-07-03 20:46:47,479 - __main__ - INFO - Epoch 56/100 - Train Loss: 211.8524 | Val Loss: 220.2946 (RMSE: 30.49, MAE: 8.51, ZeroAcc: N/A, ImputeMSE: 0.2094), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1182)
+2026-07-03 20:46:47,482 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 220.2946
+2026-07-03 20:47:35,348 - __main__ - INFO - Epoch 57/100 - Train Loss: 209.7856 | Val Loss: 217.2983 (RMSE: 30.46, MAE: 8.80, ZeroAcc: N/A, ImputeMSE: 0.2051), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1194)
+2026-07-03 20:47:35,351 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 217.2983
+2026-07-03 20:48:27,167 - __main__ - INFO - Epoch 58/100 - Train Loss: 209.3972 | Val Loss: 218.4998 (RMSE: 30.47, MAE: 8.53, ZeroAcc: N/A, ImputeMSE: 0.2055), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1187)
+2026-07-03 20:48:27,168 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 20:49:20,862 - __main__ - INFO - Epoch 59/100 - Train Loss: 207.5614 | Val Loss: 215.8715 (RMSE: 30.44, MAE: 8.91, ZeroAcc: N/A, ImputeMSE: 0.2015), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1169)
+2026-07-03 20:49:20,865 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 215.8715
+2026-07-03 20:50:15,295 - __main__ - INFO - Epoch 60/100 - Train Loss: 207.0529 | Val Loss: 214.5889 (RMSE: 30.45, MAE: 8.34, ZeroAcc: N/A, ImputeMSE: 0.2035), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1172)
+2026-07-03 20:50:15,298 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 214.5889
+2026-07-03 20:51:01,876 - __main__ - INFO - Epoch 61/100 - Train Loss: 204.9524 | Val Loss: 213.6073 (RMSE: 30.43, MAE: 8.58, ZeroAcc: N/A, ImputeMSE: 0.2047), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1190)
+2026-07-03 20:51:01,879 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 213.6073
+2026-07-03 20:51:53,323 - __main__ - INFO - Epoch 62/100 - Train Loss: 203.3494 | Val Loss: 212.7928 (RMSE: 30.41, MAE: 8.52, ZeroAcc: N/A, ImputeMSE: 0.2019), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1176)
+2026-07-03 20:51:53,325 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 212.7928
+2026-07-03 20:52:45,219 - __main__ - INFO - Epoch 63/100 - Train Loss: 203.4304 | Val Loss: 211.8989 (RMSE: 30.41, MAE: 8.64, ZeroAcc: N/A, ImputeMSE: 0.2067), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1194)
+2026-07-03 20:52:45,222 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 211.8989
+2026-07-03 20:53:37,762 - __main__ - INFO - Epoch 64/100 - Train Loss: 202.8979 | Val Loss: 212.3111 (RMSE: 30.41, MAE: 8.68, ZeroAcc: N/A, ImputeMSE: 0.2012), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1199)
+2026-07-03 20:53:37,764 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 20:54:29,828 - __main__ - INFO - Epoch 65/100 - Train Loss: 200.6753 | Val Loss: 213.0974 (RMSE: 30.42, MAE: 8.80, ZeroAcc: N/A, ImputeMSE: 0.2021), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1195)
+2026-07-03 20:54:29,829 - __main__ - INFO - Early stopping counter: 2 out of 10
+2026-07-03 20:55:22,643 - __main__ - INFO - Epoch 66/100 - Train Loss: 201.1438 | Val Loss: 211.3007 (RMSE: 30.39, MAE: 8.64, ZeroAcc: N/A, ImputeMSE: 0.2056), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1188)
+2026-07-03 20:55:22,646 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 211.3007
+2026-07-03 20:56:16,901 - __main__ - INFO - Epoch 67/100 - Train Loss: 198.8887 | Val Loss: 210.0426 (RMSE: 30.40, MAE: 8.52, ZeroAcc: N/A, ImputeMSE: 0.2078), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1193)
+2026-07-03 20:56:16,905 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 210.0426
+2026-07-03 20:57:13,298 - __main__ - INFO - Epoch 68/100 - Train Loss: 198.9803 | Val Loss: 206.5571 (RMSE: 30.36, MAE: 8.46, ZeroAcc: N/A, ImputeMSE: 0.2032), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1195)
+2026-07-03 20:57:13,301 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 206.5571
+2026-07-03 20:58:04,646 - __main__ - INFO - Epoch 69/100 - Train Loss: 198.8600 | Val Loss: 207.4575 (RMSE: 30.36, MAE: 8.65, ZeroAcc: N/A, ImputeMSE: 0.2035), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1198)
+2026-07-03 20:58:04,647 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 20:58:54,571 - __main__ - INFO - Epoch 70/100 - Train Loss: 196.7939 | Val Loss: 208.6217 (RMSE: 30.37, MAE: 8.63, ZeroAcc: N/A, ImputeMSE: 0.2054), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1192)
+2026-07-03 20:58:54,572 - __main__ - INFO - Early stopping counter: 2 out of 10
+2026-07-03 20:59:47,481 - __main__ - INFO - Epoch 71/100 - Train Loss: 196.9728 | Val Loss: 207.2481 (RMSE: 30.36, MAE: 8.66, ZeroAcc: N/A, ImputeMSE: 0.2028), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1171)
+2026-07-03 20:59:47,482 - __main__ - INFO - Early stopping counter: 3 out of 10
+2026-07-03 21:00:40,567 - __main__ - INFO - Epoch 72/100 - Train Loss: 195.1288 | Val Loss: 205.2062 (RMSE: 30.35, MAE: 8.50, ZeroAcc: N/A, ImputeMSE: 0.2063), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1198)
+2026-07-03 21:00:40,570 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 205.2062
+2026-07-03 21:01:32,247 - __main__ - INFO - Epoch 73/100 - Train Loss: 194.8124 | Val Loss: 204.4700 (RMSE: 30.35, MAE: 8.46, ZeroAcc: N/A, ImputeMSE: 0.2019), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1194)
+2026-07-03 21:01:32,250 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 204.4700
+2026-07-03 21:02:20,174 - __main__ - INFO - Epoch 74/100 - Train Loss: 194.0612 | Val Loss: 204.5606 (RMSE: 30.34, MAE: 8.65, ZeroAcc: N/A, ImputeMSE: 0.2044), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1182)
+2026-07-03 21:02:20,176 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 21:03:13,630 - __main__ - INFO - Epoch 75/100 - Train Loss: 194.7006 | Val Loss: 205.0028 (RMSE: 30.34, MAE: 8.76, ZeroAcc: N/A, ImputeMSE: 0.2052), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1202)
+2026-07-03 21:03:13,631 - __main__ - INFO - Early stopping counter: 2 out of 10
+2026-07-03 21:04:04,254 - __main__ - INFO - Epoch 76/100 - Train Loss: 193.0339 | Val Loss: 204.7622 (RMSE: 30.34, MAE: 8.65, ZeroAcc: N/A, ImputeMSE: 0.2051), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1204)
+2026-07-03 21:04:04,254 - __main__ - INFO - Early stopping counter: 3 out of 10
+2026-07-03 21:04:54,586 - __main__ - INFO - Epoch 77/100 - Train Loss: 192.6768 | Val Loss: 202.5584 (RMSE: 30.32, MAE: 8.65, ZeroAcc: N/A, ImputeMSE: 0.2033), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1196)
+2026-07-03 21:04:54,592 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 202.5584
+2026-07-03 21:05:38,759 - __main__ - INFO - Epoch 78/100 - Train Loss: 191.8722 | Val Loss: 203.0557 (RMSE: 30.33, MAE: 8.43, ZeroAcc: N/A, ImputeMSE: 0.1995), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1188)
+2026-07-03 21:05:38,761 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 21:06:29,696 - __main__ - INFO - Epoch 79/100 - Train Loss: 191.2135 | Val Loss: 200.5873 (RMSE: 30.30, MAE: 8.64, ZeroAcc: N/A, ImputeMSE: 0.2064), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1199)
+2026-07-03 21:06:29,701 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 200.5873
+2026-07-03 21:07:22,520 - __main__ - INFO - Epoch 80/100 - Train Loss: 191.4330 | Val Loss: 200.6439 (RMSE: 30.30, MAE: 8.80, ZeroAcc: N/A, ImputeMSE: 0.2063), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1203)
+2026-07-03 21:07:22,521 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 21:08:14,256 - __main__ - INFO - Epoch 81/100 - Train Loss: 190.7389 | Val Loss: 200.6665 (RMSE: 30.29, MAE: 8.72, ZeroAcc: N/A, ImputeMSE: 0.2056), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1194)
+2026-07-03 21:08:14,258 - __main__ - INFO - Early stopping counter: 2 out of 10
+2026-07-03 21:09:03,178 - __main__ - INFO - Epoch 82/100 - Train Loss: 190.5722 | Val Loss: 203.7490 (RMSE: 30.32, MAE: 8.78, ZeroAcc: N/A, ImputeMSE: 0.2093), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.15, MSLE=0.1200)
+2026-07-03 21:09:03,179 - __main__ - INFO - Early stopping counter: 3 out of 10
+2026-07-03 21:09:54,518 - __main__ - INFO - Epoch 83/100 - Train Loss: 189.4429 | Val Loss: 200.6178 (RMSE: 30.30, MAE: 8.49, ZeroAcc: N/A, ImputeMSE: 0.1999), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1202)
+2026-07-03 21:09:54,519 - __main__ - INFO - Early stopping counter: 4 out of 10
+2026-07-03 21:10:47,805 - __main__ - INFO - Epoch 84/100 - Train Loss: 190.4350 | Val Loss: 201.5530 (RMSE: 30.31, MAE: 8.55, ZeroAcc: N/A, ImputeMSE: 0.2024), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1194)
+2026-07-03 21:10:47,806 - __main__ - INFO - Early stopping counter: 5 out of 10
+2026-07-03 21:11:42,160 - __main__ - INFO - Epoch 85/100 - Train Loss: 189.5674 | Val Loss: 199.2752 (RMSE: 30.28, MAE: 8.80, ZeroAcc: N/A, ImputeMSE: 0.2048), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1195)
+2026-07-03 21:11:42,162 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 199.2752
+2026-07-03 21:12:28,618 - __main__ - INFO - Epoch 86/100 - Train Loss: 189.2524 | Val Loss: 201.3368 (RMSE: 30.33, MAE: 8.25, ZeroAcc: N/A, ImputeMSE: 0.2098), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1201)
+2026-07-03 21:12:28,619 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 21:13:18,714 - __main__ - INFO - Epoch 87/100 - Train Loss: 187.5595 | Val Loss: 200.1779 (RMSE: 30.31, MAE: 8.46, ZeroAcc: N/A, ImputeMSE: 0.2095), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1199)
+2026-07-03 21:13:18,715 - __main__ - INFO - Early stopping counter: 2 out of 10
+2026-07-03 21:14:08,305 - __main__ - INFO - Epoch 88/100 - Train Loss: 188.1427 | Val Loss: 201.2895 (RMSE: 30.30, MAE: 8.78, ZeroAcc: N/A, ImputeMSE: 0.2053), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1196)
+2026-07-03 21:14:08,306 - __main__ - INFO - Early stopping counter: 3 out of 10
+2026-07-03 21:14:58,624 - __main__ - INFO - Epoch 89/100 - Train Loss: 187.0650 | Val Loss: 197.2482 (RMSE: 30.27, MAE: 8.66, ZeroAcc: N/A, ImputeMSE: 0.2018), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1196)
+2026-07-03 21:14:58,626 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 197.2482
+2026-07-03 21:15:51,109 - __main__ - INFO - Epoch 90/100 - Train Loss: 187.3577 | Val Loss: 197.4304 (RMSE: 30.28, MAE: 8.37, ZeroAcc: N/A, ImputeMSE: 0.2098), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1204)
+2026-07-03 21:15:51,110 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 21:16:39,575 - __main__ - INFO - Epoch 91/100 - Train Loss: 186.7682 | Val Loss: 197.1676 (RMSE: 30.27, MAE: 8.56, ZeroAcc: N/A, ImputeMSE: 0.2017), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1210)
+2026-07-03 21:16:39,577 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 197.1676
+2026-07-03 21:17:32,055 - __main__ - INFO - Epoch 92/100 - Train Loss: 186.8105 | Val Loss: 195.9060 (RMSE: 30.25, MAE: 8.77, ZeroAcc: N/A, ImputeMSE: 0.2016), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1196)
+2026-07-03 21:17:32,058 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 195.9060
+2026-07-03 21:18:23,238 - __main__ - INFO - Epoch 93/100 - Train Loss: 186.8654 | Val Loss: 198.2342 (RMSE: 30.27, MAE: 8.63, ZeroAcc: N/A, ImputeMSE: 0.2014), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1201)
+2026-07-03 21:18:23,239 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 21:19:16,129 - __main__ - INFO - Epoch 94/100 - Train Loss: 185.9468 | Val Loss: 196.7350 (RMSE: 30.28, MAE: 8.42, ZeroAcc: N/A, ImputeMSE: 0.2029), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1201)
+2026-07-03 21:19:16,130 - __main__ - INFO - Early stopping counter: 2 out of 10
+2026-07-03 21:20:04,890 - __main__ - INFO - Epoch 95/100 - Train Loss: 186.5182 | Val Loss: 196.1885 (RMSE: 30.26, MAE: 8.44, ZeroAcc: N/A, ImputeMSE: 0.2043), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1202)
+2026-07-03 21:20:04,891 - __main__ - INFO - Early stopping counter: 3 out of 10
+2026-07-03 21:20:56,699 - __main__ - INFO - Epoch 96/100 - Train Loss: 184.6996 | Val Loss: 195.4094 (RMSE: 30.25, MAE: 8.49, ZeroAcc: N/A, ImputeMSE: 0.2008), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1197)
+2026-07-03 21:20:56,705 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 195.4094
+2026-07-03 21:21:49,433 - __main__ - INFO - Epoch 97/100 - Train Loss: 185.0069 | Val Loss: 195.2805 (RMSE: 30.24, MAE: 8.78, ZeroAcc: N/A, ImputeMSE: 0.2119), Kriging(train=0.0000, val=0.0000, RMSE=0.68, MAE=0.14, MSLE=0.1205)
+2026-07-03 21:21:49,435 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 195.2805
+2026-07-03 21:22:40,183 - __main__ - INFO - Epoch 98/100 - Train Loss: 186.5250 | Val Loss: 196.1214 (RMSE: 30.26, MAE: 8.68, ZeroAcc: N/A, ImputeMSE: 0.2032), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1194)
+2026-07-03 21:22:40,184 - __main__ - INFO - Early stopping counter: 1 out of 10
+2026-07-03 21:23:28,721 - __main__ - INFO - Epoch 99/100 - Train Loss: 184.5424 | Val Loss: 196.6255 (RMSE: 30.26, MAE: 8.71, ZeroAcc: N/A, ImputeMSE: 0.2095), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1199)
+2026-07-03 21:23:28,722 - __main__ - INFO - Early stopping counter: 2 out of 10
+2026-07-03 21:24:22,220 - __main__ - INFO - Epoch 100/100 - Train Loss: 184.4727 | Val Loss: 194.7186 (RMSE: 30.24, MAE: 8.76, ZeroAcc: N/A, ImputeMSE: 0.2042), Kriging(train=0.0000, val=0.0000, RMSE=0.67, MAE=0.14, MSLE=0.1196)
+2026-07-03 21:24:22,223 - __main__ - INFO - New best model saved to models/resilient-iot-v2/earthy-oath-31/best_model.pt with val_loss: 194.7186
+2026-07-03 21:24:22,225 - __main__ - INFO - Training complete.
+2026-07-03 21:24:22,225 - __main__ - INFO - Uploading model artifact to W&B from models/resilient-iot-v2/earthy-oath-31/best_model.pt
+2026-07-03 21:24:23,786 - __main__ - INFO - Model artifact successfully logged to W&B.
+wandb: uploading artifact lstm-baseline-inductive; updating run metadata
+wandb: uploading artifact lstm-baseline-inductive
+wandb: uploading data
+wandb: 
+wandb: Run history:
+wandb:               epoch ▁▁▁▁▂▂▂▃▃▃▄▄▄▄▄▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▇▇▇▇▇█████
+wandb: train_loss_forecast █▆▅▄▄▃▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:   train_loss_impute █▆▅▄▄▃▂▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:  train_loss_kriging ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:    train_loss_total █▇▆▅▅▄▄▃▃▃▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:      val_impute_mse █▇▇▇▇▆▄▃▂▂▂▂▂▁▂▁▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁▂▂▁▁▁▁
+wandb:     val_kriging_mae ▅▅▁▂▄▅▇▇▆▇██▇▆▇▅▅▅▄▅▄▄▃▃▄▃▄▄▄▄▄▆▃▃▄▃▄▃▄▃
+wandb:    val_kriging_msle ▄▂▂▅█▄▃▄▆▃▃▂▃▃▂▂▁▁▂▂▃▃▂▁▂▁▃▃▃▂▃▂▃▃▃▃▃▃▃▃
+wandb:   val_kriging_nodes ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:    val_kriging_rmse ▄▄▁▃▅█▇▅▃▃▁▁▂▂▂▂▁▂▂▂▂▂▂▂▂▂▂▂▃▂▃▃▂▃▄▃▂▂▂▂
+wandb:                  +4 ...
+wandb: 
+wandb: Run summary:
+wandb:               epoch 100
+wandb: train_loss_forecast 184.41821
+wandb:   train_loss_impute 0.05444
+wandb:  train_loss_kriging 0
+wandb:    train_loss_total 184.47265
+wandb:      val_impute_mse 0.20422
+wandb:     val_kriging_mae 0.13991
+wandb:    val_kriging_msle 0.11958
+wandb:   val_kriging_nodes 24
+wandb:    val_kriging_rmse 0.66995
+wandb:                  +4 ...
+wandb: 
+wandb: 🚀 View run earthy-oath-31 at: https://wandb.ai/rappel-velvet9310-newcastle-university/resilient-iot-v2/runs/doa2wqze
+wandb: ⭐️ View project at: https://wandb.ai/rappel-velvet9310-newcastle-university/resilient-iot-v2
+wandb: Synced 5 W&B file(s), 0 media file(s), 3 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260703_195637-doa2wqze/logs
