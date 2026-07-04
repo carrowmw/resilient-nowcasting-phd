@@ -39,14 +39,18 @@ else
   TOKEN_TO_USE="${GITHUB_TOKEN}"
 fi
 
-echo "Configuring GitHub Actions Runner for url=${RUNNER_URL}..."
-./config.sh --url "${RUNNER_URL}" \
-            --token "${TOKEN_TO_USE}" \
-            --name "${RUNNER_NAME}" \
-            --labels "${RUNNER_LABELS}" \
-            --work _work \
-            --unattended \
-            --replace
+if [ -f .runner ]; then
+  echo "Runner is already configured locally. Skipping configuration."
+else
+  echo "Configuring GitHub Actions Runner for url=${RUNNER_URL}..."
+  ./config.sh --url "${RUNNER_URL}" \
+              --token "${TOKEN_TO_USE}" \
+              --name "${RUNNER_NAME}" \
+              --labels "${RUNNER_LABELS}" \
+              --work _work \
+              --unattended \
+              --replace
+fi
 
 # Clean up configuration on shutdown
 cleanup() {
