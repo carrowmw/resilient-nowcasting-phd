@@ -232,6 +232,12 @@ def run_training(
         train_dataset.static_feat_dim = full_dataset.static_feat_dim
         train_dataset.time_series_dim = full_dataset.time_series_dim
 
+        # Propagate scaler statistics for scale-invariant loss
+        train_dataset.traffic_mean = full_dataset.traffic_mean
+        train_dataset.traffic_std = full_dataset.traffic_std
+        val_dataset.traffic_mean = full_dataset.traffic_mean
+        val_dataset.traffic_std = full_dataset.traffic_std
+
         train_loader = DataLoader(
             train_dataset,
             batch_size=train_cfg["batch_size"],
