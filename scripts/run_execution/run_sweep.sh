@@ -29,23 +29,26 @@ GPUS=""
 N_TRIALS=20
 DETACH=false
 STORAGE="sqlite:///optuna.db"
+STUDY_NAME=""
 
 # Parse command line arguments
-while getopts "s:g:n:c:dh" opt; do
+while getopts "s:g:n:c:t:dh" opt; do
   case ${opt} in
     s ) SWEEP_INPUT=$OPTARG ;;
     g ) GPUS=$OPTARG ;;
     n ) N_TRIALS=$OPTARG ;;
     c ) CONFIG_FILE=$OPTARG ;;
+    t ) STUDY_NAME=$OPTARG ;;
     d ) DETACH=true ;;
-    h ) echo "Usage: $0 -s <sweep_config> [-g gpus] [-n n_trials] [-c base_config] [-d]"
+    h ) echo "Usage: $0 -s <sweep_config> [-g gpus] [-n n_trials] [-c base_config] [-t study_name] [-d]"
         echo "  -s  Sweep config name/shortcut or path (required)"
         echo "  -g  Comma-separated GPU indices (e.g. 0,1)"
         echo "  -n  Number of trials to run (default: 20)"
         echo "  -c  Base config file path (default: configs/train/train.yaml)"
+        echo "  -t  Optuna study name (optional, defaults to sweep_<config_name>)"
         echo "  -d  Run in detached mode (background)"
         exit 0 ;;
-    \? ) echo "Usage: $0 -s <sweep_config> [-g gpus] [-n n_trials] [-c base_config] [-d]"
+    \? ) echo "Usage: $0 -s <sweep_config> [-g gpus] [-n n_trials] [-c base_config] [-t study_name] [-d]"
          exit 1 ;;
   esac
 done
@@ -101,8 +104,10 @@ CONFIG_BASE=$(basename "$SWEEP_CONFIG" | sed 's/\.yaml//' | sed 's/\.yml//' | tr
 # Clean container name to only have safe alphanumeric/hyphen characters
 CONTAINER_NAME="sweep-${CONFIG_BASE}-${N_TRIALS}t-$(date +%Y%m%d-%H%M%S)"
 
-# Construct default study name matching the stable naming convention (e.g. sweep_01_arch)
-STUDY_NAME="sweep_${CONFIG_BASE//-/_}"
+# Construct default study name matching the stable naming convention (e.g. sweep_01_arch) if not provided
+if [ -z "$STUDY_NAME" ]; then
+    STUDY_NAME="sweep_${CONFIG_BASE//-/_}"
+fi
 
 # Construct the inner command to run inside the container
 INNER_CMD="python src/tune.py --config $CONFIG_FILE --sweep-config $SWEEP_CONFIG --n-trials $N_TRIALS --storage $STORAGE --study-name $STUDY_NAME"
