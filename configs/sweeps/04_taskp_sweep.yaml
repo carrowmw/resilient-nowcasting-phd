@@ -1,3 +1,8 @@
+wandb:
+  project: "resilient-iot-v2"
+  sweep_project: "resilient-iot-sweeps-v2"
+  collection: "resilient-iot-model-04_taskp"
+
 parameters:
   w_forecast:
     values: [0.1, 0.5, 1.0, 2.0, 5.0]
