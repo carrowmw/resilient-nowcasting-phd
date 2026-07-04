@@ -96,28 +96,37 @@ echo "Resolved sweep configuration: $SWEEP_CONFIG"
 echo "Base config: $CONFIG_FILE"
 echo "Target trials: $N_TRIALS"
 
-# Construct the run command
-CMD="python src/tune.py --config $CONFIG_FILE --sweep-config $SWEEP_CONFIG --n-trials $N_TRIALS --storage $STORAGE"
+# Resolve configuration base name for logging and container naming
+CONFIG_BASE=$(basename "$SWEEP_CONFIG" | sed 's/\.yaml//' | sed 's/\.yml//' | tr '_' '-')
+# Clean container name to only have safe alphanumeric/hyphen characters
+CONTAINER_NAME="sweep-${CONFIG_BASE}-${N_TRIALS}t-$(date +%Y%m%d-%H%M%S)"
+
+# Construct the inner command to run inside the container
+INNER_CMD="python src/tune.py --config $CONFIG_FILE --sweep-config $SWEEP_CONFIG --n-trials $N_TRIALS --storage $STORAGE"
 
 if [ -n "$GPUS" ]; then
-    CMD="$CMD --gpus $GPUS"
+    INNER_CMD="$INNER_CMD --gpus $GPUS"
     echo "Target GPU(s): $GPUS"
 fi
 
-# Create a logs directory if it doesn't exist
-mkdir -p logs
-
 if [ "$DETACH" = true ]; then
-    # Create a unique log file name based on sweep config name
-    CONFIG_BASE=$(basename "$SWEEP_CONFIG" | sed 's/\.yaml//' | sed 's/\.yml//')
-    LOG_FILE="logs/sweep_${CONFIG_BASE}_$(date +%Y%m%d_%H%M%S).log"
-    echo "Running in detached mode. Logs will be saved to $LOG_FILE"
+    echo "Starting sweep inside GPU runner container in detached mode..."
+    echo "Container name: $CONTAINER_NAME"
     
-    # Execute the command in the background
-    nohup $CMD > "$LOG_FILE" 2>&1 &
+    # Run container in background (-d) and auto-remove (--rm) on stop/completion
+    docker compose run -d --rm --name "$CONTAINER_NAME" gpu-runner $INNER_CMD
     
-    echo "Sweep process started with PID: $!"
+    echo ""
+    echo "Container started successfully in the background."
+    echo "Opening logs (Press Ctrl+C to disconnect from logs; the sweep container will continue running)..."
+    echo "=============================================================================="
+    
+    # Sleep briefly to let the container initialize
+    sleep 1
+    
+    # Stream logs to the terminal
+    docker logs -f "$CONTAINER_NAME"
 else
-    echo "Running in foreground..."
-    $CMD
+    echo "Running sweep inside GPU runner container in foreground..."
+    docker compose run --rm --name "$CONTAINER_NAME" gpu-runner $INNER_CMD
 fi
