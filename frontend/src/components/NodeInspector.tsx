@@ -190,8 +190,9 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
   const series = node.zinb_series;
   const T = series.length;
 
-  // Guard: old payloads without pi field degrade gracefully
-  if (T === 0 || series[0].pi === undefined) return null;
+  // Guard: models without a zero-inflation head (pi null) or old payloads
+  // without the pi field degrade gracefully — no chart.
+  if (T === 0 || series[0].pi == null) return null;
 
   const xOf = (t: number) => PAD.left + (T <= 1 ? 0 : (t / (T - 1)) * INNER_W);
   // pi is always in (0,1) — fixed Y axis
@@ -213,7 +214,9 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series]);
 
-  const piPoints = series.map(({ t, pi }) => `${xOf(t)},${yOf(pi)}`).join(" ");
+  const piPoints = series
+    .map(({ t, pi }) => `${xOf(t)},${yOf(pi ?? 0)}`)
+    .join(" ");
   const cursorX = xOf(currentTimestep);
   const currentPi = series[currentTimestep]?.pi;
 
@@ -444,11 +447,16 @@ export default function NodeInspector() {
   const hasPi =
     Array.isArray(nodeDetail.zinb_series) &&
     nodeDetail.zinb_series.length > 0 &&
-    nodeDetail.zinb_series[0].pi !== undefined;
+    nodeDetail.zinb_series[0].pi != null;
 
   const hasEgoEdges =
     Array.isArray(nodeDetail.ego_graph_edges) &&
     nodeDetail.ego_graph_edges.length > 0;
+
+  // Display role, derived for pre-harness payloads that predate node_role.
+  const role =
+    nodeDetail.node_role ??
+    (nodeDetail.is_simulated ? "simulated" : "observed");
 
   const currentZINB = nodeDetail.zinb_series?.[currentTimestep];
   const currentMasked = nodeDetail.mask_series?.[currentTimestep] ?? false;
@@ -479,9 +487,17 @@ export default function NodeInspector() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {nodeDetail.is_simulated && (
+          {role === "simulated" && (
             <span className="rounded bg-amber-600/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
               SIMULATED
+            </span>
+          )}
+          {role === "holdout" && (
+            <span
+              className="rounded bg-violet-600/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-300"
+              title="Zero-shot: this real sensor was masked throughout training; its prediction is compared against held-out ground truth."
+            >
+              HOLDOUT
             </span>
           )}
           <button
@@ -535,11 +551,17 @@ export default function NodeInspector() {
               <>
                 <dt className="text-slate-400">µ (forecast)</dt>
                 <dd className="text-right">{currentZINB.mu.toFixed(2)}</dd>
+                {/* θ/σ/π are null for models without a ZINB head (baselines) —
+                    show N/A rather than a fabricated number. */}
                 <dt className="text-slate-400">θ (dispersion)</dt>
-                <dd className="text-right">{currentZINB.theta.toFixed(2)}</dd>
+                <dd className="text-right">
+                  {currentZINB.theta == null ? "N/A" : currentZINB.theta.toFixed(2)}
+                </dd>
                 <dt className="text-slate-400">σ (uncertainty)</dt>
-                <dd className="text-right">{currentZINB.std_dev.toFixed(2)}</dd>
-                {currentZINB.pi !== undefined && (
+                <dd className="text-right">
+                  {currentZINB.std_dev == null ? "N/A" : currentZINB.std_dev.toFixed(2)}
+                </dd>
+                {currentZINB.pi != null && (
                   <>
                     <dt className="text-slate-400">π (zero-inflation)</dt>
                     <dd className="text-right text-violet-300">

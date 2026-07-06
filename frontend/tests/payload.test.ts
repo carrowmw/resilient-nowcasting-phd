@@ -9,21 +9,33 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { UIPayload, NodeEntry, EdgeEntry } from '@/types/payload';
+import type { UIPayload, NodeEntry, EdgeEntry, NodeRole } from '@/types/payload';
 
 // ── Mock payload factory ──────────────────────────────────────────────────────
 
-function makeNode(id: number, isSimulated: boolean, timesteps: number): NodeEntry {
+interface MakeNodeOpts {
+  role?: NodeRole;   // explicit node_role; defaults from isSimulated
+  baseline?: boolean; // baseline model → uncertainty is null (no ZINB head)
+}
+
+function makeNode(
+  id: number,
+  isSimulated: boolean,
+  timesteps: number,
+  opts: MakeNodeOpts = {},
+): NodeEntry {
+  const role: NodeRole = opts.role ?? (isSimulated ? 'simulated' : 'observed');
   return {
     id,
     location_name: `Sensor ${id}`,
     lat: 54.97 + id * 0.001,
     lon: -1.61 + id * 0.001,
+    node_role: role,
     is_simulated: isSimulated,
     timeseries: Array.from({ length: timesteps }, (_, t) => ({
       t,
       prediction: Math.random() * 500,
-      uncertainty: Math.random() * 0.5,
+      uncertainty: opts.baseline ? null : Math.random() * 0.5,
     })),
     // Phase 1 Analytics Upgrade: imputation series live alongside the forecast.
     // Simulated nodes have no physical sensor → ground_truth is null and the
@@ -110,7 +122,8 @@ describe('UIPayload schema', () => {
         expect(entry).toHaveProperty('prediction');
         expect(entry).toHaveProperty('uncertainty');
         expect(typeof entry.prediction).toBe('number');
-        expect(typeof entry.uncertainty).toBe('number');
+        // uncertainty is number for ZINB models, null for baselines.
+        expect(entry.uncertainty === null || typeof entry.uncertainty === 'number').toBe(true);
       }
     }
   });
@@ -138,6 +151,32 @@ describe('UIPayload schema', () => {
     const real = p.nodes.filter((n) => !n.is_simulated);
     expect(simulated.length).toBe(p.metadata.num_simulated_nodes);
     expect(real.length).toBe(p.metadata.num_real_nodes);
+  });
+
+  it('every node carries a node_role consistent with is_simulated', () => {
+    const p = makeMockPayload(4, 2, 8);
+    for (const node of p.nodes) {
+      expect(['observed', 'holdout', 'simulated']).toContain(node.node_role);
+      if (node.is_simulated) expect(node.node_role).toBe('simulated');
+      else expect(node.node_role).not.toBe('simulated');
+    }
+  });
+
+  it('holdout nodes are real sensors with genuine ground truth', () => {
+    // Zero-shot holdout: real sensor (not simulated) masked during training but
+    // scored against held-out ground truth for display.
+    const holdout = makeNode(99, false, 12, { role: 'holdout' });
+    expect(holdout.node_role).toBe('holdout');
+    expect(holdout.is_simulated).toBe(false);
+    expect(holdout.ground_truth_series.every((v) => typeof v === 'number')).toBe(true);
+  });
+
+  it('baseline nodes carry null uncertainty without breaking the schema', () => {
+    // A recurrent baseline has no ZINB head → uncertainty is null (N/A), never
+    // a fabricated band. The frontend must tolerate this.
+    const baseline = makeNode(7, false, 10, { baseline: true });
+    expect(baseline.timeseries.every((e) => e.uncertainty === null)).toBe(true);
+    expect(baseline.timeseries.every((e) => typeof e.prediction === 'number')).toBe(true);
   });
 
   it('all node ids are unique', () => {

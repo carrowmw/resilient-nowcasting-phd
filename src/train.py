@@ -681,23 +681,24 @@ def run_training(
     # ------------------------------------------------------------------ #
     # W&B Artifact Upload (Phase 1)                                      #
     # ------------------------------------------------------------------ #
-    if (init_wandb or (wandb.run is not None)) and os.path.exists(checkpoint_path):
-        logger.info(f"Uploading model artifact to W&B from {checkpoint_path}")
-        try:
-            artifact = wandb.Artifact(
-                name=wandb_collection,
-                type="model",
-                description=f"Best model from run {wandb.run.name if wandb.run else 'unknown'}",
-                metadata=config
-            )
-            artifact.add_file(checkpoint_path, name="best_model.pt")
-            if os.path.exists(config_save_path):
-                artifact.add_file(config_save_path, name="config.yaml")
+    logger.info(f"Uploading model artifact to W&B from {checkpoint_path}")
+    
+    assert wandb.run is not None, "FATAL: Attempted to upload a model artifact without an active W&B run. Manually uploaded artifacts are strictly forbidden."
+    assert os.path.exists(checkpoint_path), f"FATAL: Checkpoint path does not exist: {checkpoint_path}"
+    
+    artifact = wandb.Artifact(
+        name=wandb_collection,
+        type="model",
+        description=f"Best model from run {wandb.run.name}",
+        metadata=config
+    )
+    artifact.add_file(checkpoint_path, name="best_model.pt")
+    
+    if os.path.exists(config_save_path):
+        artifact.add_file(config_save_path, name="config.yaml")
 
-            wandb.log_artifact(artifact)
-            logger.info("Model artifact successfully logged to W&B.")
-        except Exception as e:
-            logger.error(f"Failed to upload W&B artifact: {e}")
+    wandb.log_artifact(artifact)
+    logger.info(f"Model artifact successfully logged to W&B run: {wandb.run.name}")
 
     if init_wandb:
         wandb.finish()

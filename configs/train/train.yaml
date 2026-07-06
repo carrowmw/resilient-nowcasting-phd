@@ -39,13 +39,13 @@ model:
   # Number of time-varying features per timestep.
   time_series_dim: 3
   # Dimensionality of the learned node embeddings.
-  embedding_dim: 16
+  embedding_dim: 32
   # Internal hidden state size for the neural network layers (GNN, LSTM, etc.).
-  hidden_dim: 32
+  hidden_dim: 64
   # Graph edge pruning threshold; removes edges with attention weights below this value.
   sparsity_threshold: 0.5
   # Number of Graph Attention (GAT) or LSTM layers.
-  num_layers: 2
+  num_layers: 3
   # Number of attention heads for the GATv2 layers.
   num_heads: 4
   # Dropout probability for regularization during training.
@@ -63,7 +63,7 @@ training:
   # Total number of training epochs.
   epochs: 100
   # Number of graph snapshots per batch.
-  batch_size: 32
+  batch_size: 128
   # Learning rate for the Adam optimizer.
   lr: 0.0003
   # Maximum norm for gradient clipping to prevent exploding gradients.

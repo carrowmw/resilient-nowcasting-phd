@@ -47,10 +47,18 @@ if os.path.exists(env_path):
                 key, val = line.split('=', 1)
                 os.environ.setdefault(key.strip(), val.strip().strip('"\''))
 
+from baselines import GRUForecaster, LSTMForecaster
 from dataset import RealIoTDataset, apply_spatial_holdout
 from db_connector import create_connector
 from features import StaticFeatureLoader, REQUIRED_KEYS
-from harness import load_holdout_manifest, mask_from_manifest, manifest_sha
+from harness import (
+    ModelAdapter,
+    build_adapter,
+    load_holdout_manifest,
+    manifest_sha,
+    mask_from_manifest,
+    validate_predictions,
+)
 from pipeline import ResilientIoTPipeline
 
 # ---------------------------------------------------------------------------
@@ -124,6 +132,9 @@ def parse_args() -> argparse.Namespace:
                         help="W&B artifact collection name to query.")
     parser.add_argument("--config", type=str, default="configs/analysis/analysis.yaml",
                         help="Analysis config YAML (drives data_source and connector creation).")
+    parser.add_argument("--output_dir", type=str, default="frontend/public/data",
+                        help="Directory for master_index.json + nodes/. Defaults to the "
+                             "served frontend location; point elsewhere for scratch exports.")
     return parser.parse_args()
 
 
@@ -211,9 +222,94 @@ def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
 
     # Get the run ID from the run that logged the artifact
     producer_run = artifact.logged_by()
-    wandb_run_id = producer_run.id if producer_run is not None else "unknown"
+    assert producer_run is not None, f"FATAL: Artifact {artifact_name} has no producer run. Manually uploaded artifacts are strictly forbidden."
+    wandb_run_id = producer_run.id
 
     return checkpoint_path, config_path, wandb_run_id
+
+
+# Backward-compat model hyperparameter defaults for checkpoints without a
+# co-located config.yaml (shape-mismatch risk; logged as a warning).
+DEFAULT_MODEL_CFG = {
+    "embedding_dim": 16,
+    "hidden_dim": 32,
+    "sparsity_threshold": 0.5,
+    "num_layers": 2,
+    "num_heads": 4,
+    "dropout": 0.1,
+    "dim_feedforward": None,
+    "zinb_eps": 1e-6,
+}
+
+
+def build_model_and_adapter(
+    model_type: str,
+    checkpoint_path: str,
+    model_cfg: Dict,
+    *,
+    num_nodes_total: int,
+    static_feat_dim: int,
+    time_series_dim: int,
+    seq_len: int,
+    device: torch.device,
+) -> ModelAdapter:
+    """Instantiate the served model by family and wrap it in a ModelAdapter so
+    the exporters depend only on the Predictions contract, never on a model's
+    internals. model_type ('gnn' | 'lstm' | 'gru') is read from the co-located
+    config.yaml; checkpoints predating the harness default to 'gnn'.
+
+    Baselines (lstm/gru) are node-agnostic recurrent encoders — they carry no
+    graph, uncertainty, or zero-inflation heads, so the adapter's capabilities
+    tell the exporter to emit null (not fabricated) uncertainty/graph sections."""
+    if model_type == "gnn":
+        # The graph learner rejects a simulated-edge cache without a physical
+        # edge cache, so only supply the simulated fallback when the physical
+        # cache is present (learned-only GNNs set neither).
+        edge_cache = model_cfg.get("edge_features_cache_path")
+        sim_edge_cache = (
+            (model_cfg.get("simulated_edge_features_cache_path")
+             or "data/external/simulated_edge_features_cache.json")
+            if edge_cache else None
+        )
+        model = ResilientIoTPipeline(
+            num_nodes=num_nodes_total,
+            static_feat_dim=static_feat_dim,
+            time_series_dim=time_series_dim,
+            seq_len=seq_len,
+            embedding_dim=model_cfg["embedding_dim"],
+            hidden_dim=model_cfg["hidden_dim"],
+            sparsity_threshold=model_cfg["sparsity_threshold"],
+            num_layers=model_cfg["num_layers"],
+            num_heads=model_cfg["num_heads"],
+            dropout=model_cfg["dropout"],
+            dim_feedforward=model_cfg["dim_feedforward"],
+            zinb_eps=model_cfg["zinb_eps"],
+            edge_features_cache_path=edge_cache,
+            simulated_edge_features_cache_path=sim_edge_cache,
+        ).to(device)
+    elif model_type in ("lstm", "gru"):
+        baseline_cls = LSTMForecaster if model_type == "lstm" else GRUForecaster
+        model = baseline_cls(
+            time_series_dim=time_series_dim,
+            hidden_dim=model_cfg["hidden_dim"],
+            num_layers=model_cfg.get("num_layers", 1),
+            dropout=model_cfg.get("dropout", 0.1),
+        ).to(device)
+    else:
+        raise ValueError(f"Unknown model_type: {model_type!r} (expected gnn | lstm | gru)")
+
+    logger.info(f"Loading checkpoint from {checkpoint_path} (model_type={model_type})")
+    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    incompatible = model.load_state_dict(state_dict, strict=False)
+    if incompatible.missing_keys:
+        logger.warning(f"Missing keys in state_dict: {incompatible.missing_keys}")
+    if incompatible.unexpected_keys:
+        logger.info(f"Ignored unexpected keys in state_dict: {incompatible.unexpected_keys}")
+    model.eval()
+
+    adapter = build_adapter(model_type, model)
+    logger.info(f"Model loaded (eval mode). Capabilities: {adapter.capabilities}")
+    return adapter
 
 
 def build_simulated_static(
@@ -865,21 +961,14 @@ def main() -> None:
         ])
 
     # Defaults in case no config.yaml is found (backward-compatibility fallback)
-    model_cfg = {
-        "embedding_dim": 16,
-        "hidden_dim": 32,
-        "sparsity_threshold": 0.5,
-        "num_layers": 2,
-        "num_heads": 4,
-        "dropout": 0.1,
-        "dim_feedforward": None,
-        "zinb_eps": 1e-6
-    }
+    model_cfg = dict(DEFAULT_MODEL_CFG)
+    model_type = "gnn"  # checkpoints predating the harness are GNN-only
 
     if os.path.exists(config_path):
         logger.info(f"ARCHITECT TWINNING: Resolving adjacent configuration from: {config_path}")
         with open(config_path, "r") as f:
             loaded_config_data = yaml.safe_load(f)
+        model_type = loaded_config_data.get("model_type", "gnn")
         if "model" in loaded_config_data:
             model_cfg.update(loaded_config_data["model"])
             logger.info(f"Loaded model hyperparameters: {model_cfg}")
@@ -905,32 +994,16 @@ def main() -> None:
     except Exception:
         pass
 
-    logger.info(f"Initialising ResilientIoTPipeline ...")
-    model = ResilientIoTPipeline(
-        num_nodes=num_nodes_total,
-        static_feat_dim=static_feat_dim,
-        time_series_dim=time_series_dim,
-        seq_len=args.seq_len,
-        embedding_dim=model_cfg["embedding_dim"],
-        hidden_dim=model_cfg["hidden_dim"],
-        sparsity_threshold=model_cfg["sparsity_threshold"],
-        num_layers=model_cfg["num_layers"],
-        num_heads=model_cfg["num_heads"],
-        dropout=model_cfg["dropout"],
-        dim_feedforward=model_cfg["dim_feedforward"],
-        zinb_eps=model_cfg["zinb_eps"],
-        edge_features_cache_path=model_cfg.get("edge_features_cache_path"),
-        simulated_edge_features_cache_path=model_cfg.get("simulated_edge_features_cache_path") or "data/external/simulated_edge_features_cache.json",
-    ).to(device)
-
-    logger.info(f"Loading checkpoint from {checkpoint_path}")
-    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    incompatible_keys = model.load_state_dict(state_dict, strict=False)
-    if incompatible_keys.missing_keys:
-        logger.warning(f"Missing keys in state_dict: {incompatible_keys.missing_keys}")
-    if incompatible_keys.unexpected_keys:
-        logger.info(f"Ignored unexpected keys in state_dict: {incompatible_keys.unexpected_keys}")
-    model.eval()
+    # HARNESS: build the served model by family and wrap in a ModelAdapter. The
+    # exporter below reads adapter.capabilities to decide which payload sections
+    # are genuinely available (baselines emit null uncertainty/graph, never
+    # fabricated numbers).
+    adapter = build_model_and_adapter(
+        model_type, checkpoint_path, model_cfg,
+        num_nodes_total=num_nodes_total, static_feat_dim=static_feat_dim,
+        time_series_dim=time_series_dim, seq_len=args.seq_len, device=device,
+    )
+    caps = adapter.capabilities
     logger.info("Model loaded and set to eval mode.")
 
     # ------------------------------------------------------------------
@@ -1014,54 +1087,51 @@ def main() -> None:
                 "location_ids": location_ids,
             }
 
-            # Forward pass (analysis mode: returns graph + ZINB params + imputation, no loss)
-            result = model(batch, return_analysis=True)
+            # HARNESS: adapter.predict returns the Predictions contract. Absent
+            # capabilities are None (theta/pi/attention for a baseline) — the
+            # capability-gated tripwires below fire only for claimed quantities.
+            preds = adapter.predict(batch)
+            validate_predictions(caps, preds)
 
-            # Record tripwire logs
-            for tw in result.get("tripwire_logs", []):
+            # Record tripwire logs (baselines emit none — the tuple is empty)
+            for tw in preds.tripwires:
                 tw_copy = dict(tw)
                 tw_copy["timestep"] = t
                 tripwire_audit_trail.append(tw_copy)
 
-            # -------- ZINB parameters --------
-            # mu, theta: [1, num_nodes_total]  (batch_size=1)
-            mu: torch.Tensor = result["mu"][0]       # [num_nodes_total]
-            theta: torch.Tensor = result["theta"][0]  # [num_nodes_total]
-            std_dev: torch.Tensor = compute_std_dev(
-                result["mu"], result["theta"]
-            )[0]  # [num_nodes_total]
-
-            # ZINB non-negative tripwires (Offensive Programming)
-            assert (mu > 0).all(), \
-                f"t={t}: ZINB tripwire — mu has non-positive values: {mu.min()}"
-            assert (theta > 0).all(), \
-                f"t={t}: ZINB tripwire — theta has non-positive values: {theta.min()}"
-
-            # NaN tripwire on outputs
+            # -------- Point forecast (every model) --------
+            mu: torch.Tensor = preds.mu[0]  # [num_nodes_total]
             assert not torch.isnan(mu).any(), f"t={t}: NaN in mu"
-            assert not torch.isnan(std_dev).any(), f"t={t}: NaN in std_dev"
 
-            # pi — zero-inflation probability from sigmoid: (0, 1) strictly
-            pi_raw: torch.Tensor = result["pi"][0]  # [num_nodes_total]
-            assert (pi_raw > 0).all(), \
-                f"t={t}: TRIPWIRE — pi has zero/negative values: {pi_raw.min()}"
-            assert (pi_raw < 1).all(), \
-                f"t={t}: TRIPWIRE — pi has saturated-to-1 values: {pi_raw.max()}"
-            assert not torch.isnan(pi_raw).any(), f"t={t}: NaN in pi"
+            # -------- Uncertainty (ZINB dispersion) — gated on the capability --------
+            if caps.uncertainty:
+                theta = preds.theta[0]                                 # [num_nodes_total]
+                std_dev = compute_std_dev(preds.mu, preds.theta)[0]    # [num_nodes_total]
+                assert not torch.isnan(std_dev).any(), f"t={t}: NaN in std_dev"
+            else:
+                theta = None
+                std_dev = None
 
-            # Store per-node prediction, uncertainty, theta, and pi
+            # -------- Zero-inflation probability — gated on the capability --------
+            pi_raw = preds.pi[0] if caps.zero_inflation else None
+
+            # Store per-node prediction (+ uncertainty/theta/pi when available).
+            # A baseline reports uncertainty=None rather than a fabricated band.
             for node_id in range(num_nodes_total):
                 timeseries_data[node_id].append({
                     "t": t,
                     "prediction": round(float(mu[node_id]), 4),
-                    "uncertainty": round(float(std_dev[node_id]), 4),
+                    "uncertainty": (None if std_dev is None
+                                    else round(float(std_dev[node_id]), 4)),
                 })
-                theta_data[node_id].append(round(float(theta[node_id]), 4))
-                pi_data[node_id].append(round(float(pi_raw[node_id]), 6))
+                if caps.uncertainty:
+                    theta_data[node_id].append(round(float(theta[node_id]), 4))
+                if caps.zero_inflation:
+                    pi_data[node_id].append(round(float(pi_raw[node_id]), 6))
 
             # -------- Imputation analytics (length-96 arrays per node) --------
-            # imputed_features: [1, num_nodes_total, seq_len, time_series_dim]
-            imputed_features: torch.Tensor = result["imputed_features"]
+            # imputed: [1, num_nodes_total, seq_len, time_series_dim] (both families)
+            imputed_features: torch.Tensor = preds.imputed
             assert imputed_features.shape == (
                 1, num_nodes_total, args.seq_len, time_series_dim
             ), (
@@ -1119,32 +1189,36 @@ def main() -> None:
                 ground_truth_series[node_id].append(None)
                 mask_series[node_id].append(True)
 
-            # -------- Attention weights --------
-            alpha: torch.Tensor = result["attention_weights"]  # [batch*seq_len*E, heads]
-            edge_index: torch.Tensor = result["edge_index"]    # [2, E]
-            num_edges = edge_index.shape[1]
+            # -------- Attention weights — gated on the graph capability --------
+            # Baselines have no graph: edge_index/attention are None, so the
+            # edge topology and attention payload sections stay empty (rendered
+            # as an absent graph on the frontend, not a fabricated one).
+            if caps.graph:
+                alpha: torch.Tensor = preds.attention      # [batch*seq_len*E, heads]
+                edge_index: torch.Tensor = preds.edge_index  # [2, E]
+                num_edges = edge_index.shape[1]
 
-            # Cache edge_index from first timestep (topology is static — derived
-            # from fixed static_features, deterministic across all timesteps)
-            if edge_index_cached is None:
-                edge_index_cached = edge_index.cpu()
-                # Pre-initialise attention accumulator for every edge
+                # Cache edge_index from first timestep (topology is static —
+                # derived from fixed static_features, identical across timesteps)
+                if edge_index_cached is None:
+                    edge_index_cached = edge_index.cpu()
+                    for e in range(num_edges):
+                        src = int(edge_index_cached[0, e])
+                        tgt = int(edge_index_cached[1, e])
+                        edge_attention_data[(src, tgt)] = []
+
+                per_edge_attn = extract_timestep_attention(alpha, num_edges, args.seq_len)  # [E]
+                assert not torch.isnan(per_edge_attn).any(), f"t={t}: NaN in attention weights"
+
+                entropy = -float(torch.sum(per_edge_attn * torch.log(per_edge_attn + 1e-6)).item())
+                attention_entropy_series.append(round(entropy, 4))
+
                 for e in range(num_edges):
                     src = int(edge_index_cached[0, e])
                     tgt = int(edge_index_cached[1, e])
-                    edge_attention_data[(src, tgt)] = []
-
-            # Average attention across heads for the last step in the sequence
-            per_edge_attn = extract_timestep_attention(alpha, num_edges, args.seq_len)  # [E]
-            assert not torch.isnan(per_edge_attn).any(), f"t={t}: NaN in attention weights"
-
-            entropy = -float(torch.sum(per_edge_attn * torch.log(per_edge_attn + 1e-6)).item())
-            attention_entropy_series.append(round(entropy, 4))
-
-            for e in range(num_edges):
-                src = int(edge_index_cached[0, e])
-                tgt = int(edge_index_cached[1, e])
-                edge_attention_data[(src, tgt)].append(round(float(per_edge_attn[e]), 6))
+                    edge_attention_data[(src, tgt)].append(round(float(per_edge_attn[e]), 6))
+            else:
+                num_edges = 0
 
             if (t + 1) % 10 == 0 or t == num_timesteps - 1:
                 logger.info(f"  Timestep {t + 1}/{num_timesteps} complete | edges={num_edges}")
@@ -1153,24 +1227,36 @@ def main() -> None:
 
     # ------------------------------------------------------------------
     # 7b. Compute calibration metrics (global + per-node)
+    #
+    # PIT and zero-inflation reliability are distributional diagnostics of the
+    # ZINB head; a baseline without theta/pi reports them as null (N/A), never
+    # as an empty-but-present diagram.
     # ------------------------------------------------------------------
-    logger.info("Computing PIT histogram …")
-    pit_histogram = compute_pit_histogram(
-        ground_truth_series=ground_truth_series,
-        mu_series=[[ts["prediction"] for ts in timeseries_data[n]] for n in range(num_nodes_total)],
-        theta_series=theta_data,
-        pi_series=pi_data,
-        num_real_nodes=num_nodes_real,
-    )
-    logger.info(f"  PIT histogram computed ({sum(b['density'] for b in pit_histogram):.4f} total density)")
+    if caps.uncertainty and caps.zero_inflation:
+        logger.info("Computing PIT histogram …")
+        pit_histogram = compute_pit_histogram(
+            ground_truth_series=ground_truth_series,
+            mu_series=[[ts["prediction"] for ts in timeseries_data[n]] for n in range(num_nodes_total)],
+            theta_series=theta_data,
+            pi_series=pi_data,
+            num_real_nodes=num_nodes_real,
+        )
+        logger.info(f"  PIT histogram computed ({sum(b['density'] for b in pit_histogram):.4f} total density)")
+    else:
+        pit_histogram = None
+        logger.info("  PIT histogram: null (model has no ZINB uncertainty head)")
 
-    logger.info("Computing zero-inflation reliability …")
-    zero_inflation_reliability = compute_zero_inflation_reliability(
-        ground_truth_series=ground_truth_series,
-        pi_series=pi_data,
-        num_real_nodes=num_nodes_real,
-    )
-    logger.info(f"  Reliability diagram: {len(zero_inflation_reliability)} non-empty bins")
+    if caps.zero_inflation:
+        logger.info("Computing zero-inflation reliability …")
+        zero_inflation_reliability = compute_zero_inflation_reliability(
+            ground_truth_series=ground_truth_series,
+            pi_series=pi_data,
+            num_real_nodes=num_nodes_real,
+        )
+        logger.info(f"  Reliability diagram: {len(zero_inflation_reliability)} non-empty bins")
+    else:
+        zero_inflation_reliability = None
+        logger.info("  Reliability diagram: null (model has no zero-inflation head)")
 
     logger.info("Computing per-node Two-Extremes missingness bracket …")
     two_extremes_per_node: List[Dict] = []
@@ -1192,44 +1278,49 @@ def main() -> None:
     logger.info(f"  {tagged_count}/{len(real_location_names)} sensors have semantic tags")
 
     # ------------------------------------------------------------------
-    # 9. Build 1-hop edge lookup per node
+    # 9. Build 1-hop edge lookup per node — gated on the graph capability
+    #
+    # Baselines produce no graph, so every node carries an empty edge list and
+    # the leaderboard is null (there is no attention to rank), rather than a
+    # fabricated all-zero graph.
     # ------------------------------------------------------------------
-    logger.info("Building 1-hop edge lookup …")
-    assert edge_index_cached is not None, "TRIPWIRE: No edges accumulated — is the graph empty?"
-    num_edges: int = edge_index_cached.shape[1]
     node_edges: Dict[int, List[Dict]] = {i: [] for i in range(num_nodes_total)}
-    for e in range(num_edges):
-        src = int(edge_index_cached[0, e])
-        tgt = int(edge_index_cached[1, e])
-        attn_seq = edge_attention_data.get((src, tgt), [])
-        node_edges[src].append({
-            "neighbor_id": tgt,
-            "direction": "outgoing",
-            "attention_sequence": attn_seq,
-        })
-        node_edges[tgt].append({
-            "neighbor_id": src,
-            "direction": "incoming",
-            "attention_sequence": attn_seq,
-        })
+    if caps.graph:
+        logger.info("Building 1-hop edge lookup …")
+        assert edge_index_cached is not None, "TRIPWIRE: No edges accumulated — is the graph empty?"
+        num_edges: int = edge_index_cached.shape[1]
+        for e in range(num_edges):
+            src = int(edge_index_cached[0, e])
+            tgt = int(edge_index_cached[1, e])
+            attn_seq = edge_attention_data.get((src, tgt), [])
+            node_edges[src].append({
+                "neighbor_id": tgt,
+                "direction": "outgoing",
+                "attention_sequence": attn_seq,
+            })
+            node_edges[tgt].append({
+                "neighbor_id": src,
+                "direction": "incoming",
+                "attention_sequence": attn_seq,
+            })
 
-    # ------------------------------------------------------------------
-    # 9b. Compute Alpha-Node Leaderboard
-    # ------------------------------------------------------------------
-    logger.info("Computing Alpha-Node Leaderboard …")
-    node_out_influence = {i: 0.0 for i in range(num_nodes_total)}
-    for (src, tgt), attn_seq in edge_attention_data.items():
-        node_out_influence[src] += sum(attn_seq)
-
-    alpha_node_leaderboard = [
-        {
-            "node_id": node_id,
-            "total_outgoing_attention": round(total_attn, 4),
-            "location_name": nodes_meta[node_id]["location_name"] if node_id < len(nodes_meta) else f"Node {node_id}"
-        }
-        for node_id, total_attn in node_out_influence.items()
-    ]
-    alpha_node_leaderboard.sort(key=lambda x: x["total_outgoing_attention"], reverse=True)
+        # 9b. Alpha-Node Leaderboard (outgoing-attention ranking).
+        logger.info("Computing Alpha-Node Leaderboard …")
+        node_out_influence = {i: 0.0 for i in range(num_nodes_total)}
+        for (src, tgt), attn_seq in edge_attention_data.items():
+            node_out_influence[src] += sum(attn_seq)
+        alpha_node_leaderboard: Optional[List[Dict]] = [
+            {
+                "node_id": node_id,
+                "total_outgoing_attention": round(total_attn, 4),
+                "location_name": nodes_meta[node_id]["location_name"] if node_id < len(nodes_meta) else f"Node {node_id}"
+            }
+            for node_id, total_attn in node_out_influence.items()
+        ]
+        alpha_node_leaderboard.sort(key=lambda x: x["total_outgoing_attention"], reverse=True)
+    else:
+        logger.info("Graph sections: null/empty (model has no graph capability)")
+        alpha_node_leaderboard = None
 
     # ------------------------------------------------------------------
     # 10. Build and write master_index.json
@@ -1290,10 +1381,14 @@ def main() -> None:
     sim_nodes_found = [n for n in master_index["nodes"] if n["is_simulated"]]
     assert len(sim_nodes_found) == num_simulated, \
         f"Expected {num_simulated} simulated nodes, found {len(sim_nodes_found)}"
-    assert len(master_index["pit_histogram"]) == 10, \
-        f"PIT histogram must have 10 bins, got {len(master_index['pit_histogram'])}"
-    assert len(master_index["zero_inflation_reliability"]) <= 10, \
-        "Reliability diagram must have at most 10 bins"
+    # PIT / reliability are null for models without a ZINB head; when present
+    # they must satisfy the fixed-bin schema.
+    if master_index["pit_histogram"] is not None:
+        assert len(master_index["pit_histogram"]) == 10, \
+            f"PIT histogram must have 10 bins, got {len(master_index['pit_histogram'])}"
+    if master_index["zero_inflation_reliability"] is not None:
+        assert len(master_index["zero_inflation_reliability"]) <= 10, \
+            "Reliability diagram must have at most 10 bins"
     for node in master_index["nodes"]:
         assert len(node["timeseries"]) == num_timesteps, \
             f"master_index node {node['id']} timeseries length mismatch"
@@ -1307,12 +1402,17 @@ def main() -> None:
         assert len(edge["attention_sequence"]) == num_timesteps, \
             f"Edge ({edge['source']},{edge['target']}) attention_sequence length mismatch"
 
-    os.makedirs(os.path.dirname(MASTER_INDEX_PATH), exist_ok=True)
-    with open(MASTER_INDEX_PATH, "w") as fh:
+    # Output location: served frontend dir by default; --output_dir for scratch
+    # exports that must not clobber the committed payload.
+    master_index_path = os.path.join(args.output_dir, "master_index.json")
+    nodes_dir = os.path.join(args.output_dir, "nodes")
+
+    os.makedirs(os.path.dirname(master_index_path) or ".", exist_ok=True)
+    with open(master_index_path, "w") as fh:
         json.dump(master_index, fh, indent=2)
     logger.info(
         f"master_index.json written  "
-        f"({os.path.getsize(MASTER_INDEX_PATH) / 1024:.1f} KB) | "
+        f"({os.path.getsize(master_index_path) / 1024:.1f} KB) | "
         f"nodes={num_nodes_total} | edges={len(edges_payload)}"
     )
 
@@ -1320,8 +1420,8 @@ def main() -> None:
     # 11. Build and write per-node node_{id}.json
     #     (deep data: zinb_series + imputation arrays + 1-hop edges)
     # ------------------------------------------------------------------
-    logger.info(f"Writing {num_nodes_total} per-node files to {NODES_DIR}/ …")
-    os.makedirs(NODES_DIR, exist_ok=True)
+    logger.info(f"Writing {num_nodes_total} per-node files to {nodes_dir}/ …")
+    os.makedirs(nodes_dir, exist_ok=True)
 
     # Coordinate lookup for ego-graph edge embedding (built once, reused per node)
     node_coord_map: Dict[int, Tuple[float, float]] = {
@@ -1331,33 +1431,44 @@ def main() -> None:
     for meta in nodes_meta:
         node_id = meta["id"]
 
-        # Temporal alignment tripwire: mask_series, pi_data, and zinb entries
-        # must all be exactly num_timesteps long before we interleave them.
-        assert len(mask_series[node_id]) == len(pi_data[node_id]) == num_timesteps, (
+        # Temporal alignment tripwire: mask_series and zinb entries must all be
+        # exactly num_timesteps long. theta/pi are only accumulated for models
+        # with the corresponding capability, so gate their length checks.
+        assert len(mask_series[node_id]) == num_timesteps, (
             f"TRIPWIRE: temporal misalignment for node {node_id}: "
-            f"mask_series={len(mask_series[node_id])}, "
-            f"pi_data={len(pi_data[node_id])}, expected={num_timesteps}"
+            f"mask_series={len(mask_series[node_id])}, expected={num_timesteps}"
         )
+        if caps.uncertainty:
+            assert len(theta_data[node_id]) == num_timesteps, \
+                f"TRIPWIRE: theta misalignment for node {node_id}"
+        if caps.zero_inflation:
+            assert len(pi_data[node_id]) == num_timesteps, \
+                f"TRIPWIRE: pi misalignment for node {node_id}"
 
-        # Build zinb_series with per-timestep NaN tripwires (now includes pi + is_missing)
+        # Build zinb_series. theta/std_dev/pi are null for models without the
+        # matching capability (a baseline reports N/A, never a fabricated ZINB
+        # parameter); NaN tripwires apply only to genuinely-present values.
         zinb_series: List[Dict] = []
         for t_idx in range(num_timesteps):
             entry: Dict = {
                 "t": t_idx,
                 "mu": timeseries_data[node_id][t_idx]["prediction"],
-                "theta": theta_data[node_id][t_idx],
+                "theta": theta_data[node_id][t_idx] if caps.uncertainty else None,
                 "std_dev": timeseries_data[node_id][t_idx]["uncertainty"],
-                "pi": pi_data[node_id][t_idx],
+                "pi": pi_data[node_id][t_idx] if caps.zero_inflation else None,
                 "is_missing": mask_series[node_id][t_idx],
             }
             assert not math.isnan(entry["mu"]), \
                 f"NaN in node {node_id} zinb mu at t={t_idx}"
-            assert not math.isnan(entry["theta"]), \
-                f"NaN in node {node_id} zinb theta at t={t_idx}"
-            assert not math.isnan(entry["std_dev"]), \
-                f"NaN in node {node_id} zinb std_dev at t={t_idx}"
-            assert not math.isnan(entry["pi"]), \
-                f"NaN in node {node_id} zinb pi at t={t_idx}"
+            if entry["theta"] is not None:
+                assert not math.isnan(entry["theta"]), \
+                    f"NaN in node {node_id} zinb theta at t={t_idx}"
+            if entry["std_dev"] is not None:
+                assert not math.isnan(entry["std_dev"]), \
+                    f"NaN in node {node_id} zinb std_dev at t={t_idx}"
+            if entry["pi"] is not None:
+                assert not math.isnan(entry["pi"]), \
+                    f"NaN in node {node_id} zinb pi at t={t_idx}"
             assert isinstance(entry["is_missing"], bool), \
                 f"is_missing must be bool for node {node_id} at t={t_idx}"
             zinb_series.append(entry)
@@ -1365,24 +1476,23 @@ def main() -> None:
         for v in imputed_series[node_id]:
             assert not math.isnan(v), f"NaN in node {node_id} imputed_series"
 
-        # Post-build schema check: every entry must carry pi and is_missing
-        for entry in zinb_series:
-            assert "pi" in entry and "is_missing" in entry, \
-                f"Node {node_id}: zinb_series entry missing pi or is_missing"
-
-        # Localized ego-graph: top-K incoming + outgoing edges with full weight_sequence
-        ego_edges = build_ego_graph_edges(
-            node_id, edge_attention_data, node_coord_map, num_timesteps
-        )
-        assert isinstance(ego_edges, list)
-        for e in ego_edges:
-            assert len(e["weight_sequence"]) == num_timesteps, (
-                f"ego_graph node {node_id}: weight_sequence length mismatch"
+        # Localized ego-graph: top-K incoming + outgoing attention edges. Absent
+        # for graph-less baselines (empty list — the frontend renders no ego graph).
+        if caps.graph:
+            ego_edges = build_ego_graph_edges(
+                node_id, edge_attention_data, node_coord_map, num_timesteps
             )
-            assert all(w >= 0.0 for w in e["weight_sequence"]), \
-                f"Negative weight in node {node_id} ego_graph: {e}"
-            assert e["direction"] in ("incoming", "outgoing"), \
-                f"Invalid direction in node {node_id} ego_graph: {e['direction']}"
+            assert isinstance(ego_edges, list)
+            for e in ego_edges:
+                assert len(e["weight_sequence"]) == num_timesteps, (
+                    f"ego_graph node {node_id}: weight_sequence length mismatch"
+                )
+                assert all(w >= 0.0 for w in e["weight_sequence"]), \
+                    f"Negative weight in node {node_id} ego_graph: {e}"
+                assert e["direction"] in ("incoming", "outgoing"), \
+                    f"Invalid direction in node {node_id} ego_graph: {e['direction']}"
+        else:
+            ego_edges = []
 
         node_data: Dict = {
             "id": node_id,
@@ -1400,7 +1510,7 @@ def main() -> None:
             "ego_graph_edges": ego_edges,
         }
 
-        node_path = os.path.join(NODES_DIR, f"node_{node_id}.json")
+        node_path = os.path.join(nodes_dir, f"node_{node_id}.json")
         with open(node_path, "w") as fh:
             json.dump(node_data, fh, indent=2)
 

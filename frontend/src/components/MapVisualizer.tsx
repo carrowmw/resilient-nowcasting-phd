@@ -10,6 +10,7 @@ import useTimeStore from "@/store/useTimeStore";
 import type {
   UIPayload,
   NodeEntry,
+  NodeRole,
   EdgeEntry,
   AttentionEdge,
 } from "@/types/payload";
@@ -33,6 +34,7 @@ function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
     location_name: n.location_name,
     lat: n.lat,
     lon: n.lon,
+    node_role: n.node_role,
     is_simulated: n.is_simulated,
     timeseries: page.node_timeseries[String(n.id)] ?? [],
     semantic_tags: n.semantic_tags,
@@ -42,6 +44,8 @@ function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
       num_nodes: m.num_nodes,
       num_real_nodes: m.num_real_nodes,
       num_simulated_nodes: m.num_simulated_nodes,
+      num_holdout_nodes: m.num_holdout_nodes,
+      holdout_manifest_sha: m.holdout_manifest_sha,
       timesteps: page.timesteps,
       seq_len: page.seq_len,
       veh_class: m.veh_class,
@@ -92,12 +96,26 @@ function heatColor(t: number): [number, number, number, number] {
   return [255, Math.round(200 * (1 - s)), 0, 220];
 }
 
+/** Resolve a node's display role, deriving it from is_simulated for pre-harness
+ * payloads that predate the node_role field. */
+function roleOf(n: { node_role?: NodeRole; is_simulated: boolean }): NodeRole {
+  return n.node_role ?? (n.is_simulated ? "simulated" : "observed");
+}
+
+// Neutral slate for nodes whose model produces no uncertainty (baselines): we
+// have nothing to heat-map, so we must not paint a fabricated colour.
+const NO_UNCERTAINTY_COLOR: [number, number, number, number] = [100, 116, 139, 200];
+// Violet accent marks zero-shot holdout sensors distinctly from observed ones.
+const HOLDOUT_ACCENT: [number, number, number, number] = [167, 139, 250, 255];
+
 function nodeFillColor(
   d: NodeEntry,
   timestep: number,
 ): [number, number, number, number] {
   const entry = d.timeseries[timestep];
   if (!entry) return [128, 128, 128, 180];
+  // A baseline has no σ — colour it neutrally rather than inventing a heat value.
+  if (entry.uncertainty == null) return NO_UNCERTAINTY_COLOR;
   // Stabilised Coefficient of Variation: σ/(μ+1)
   // Prevents high-volume nodes from always appearing red due to high absolute
   // variance. A CV > 1.0 (uncertainty exceeds predicted volume) is capped at red.
@@ -108,7 +126,7 @@ function nodeFillColor(
 
 function nodeRadius(d: NodeEntry, timestep: number): number {
   const entry = d.timeseries[timestep];
-  const base = d.is_simulated ? 4 : 2;
+  const base = roleOf(d) === "observed" ? 2 : 4;
   if (!entry) return base;
   return base + entry.prediction;
 }
@@ -124,10 +142,11 @@ interface FilterState {
  * Build all Deck.gl layers for the current frame.
  *
  * Layers (bottom to top):
- *   1. nodes-real       — solid ScatterplotLayer for physical sensors
- *   2. nodes-simulated  — hollow ring ScatterplotLayer for synthetic nodes
- *   3. topology-layer   — global or ego-graph ArcLayer (master_index edges)
- *   4. ego-graph-layer  — localized top-K ArcLayer from node_{id}.json
+ *   1. nodes-real       — solid ScatterplotLayer for observed physical sensors
+ *   2. nodes-holdout    — heat-filled + violet-ringed layer for zero-shot sensors
+ *   3. nodes-simulated  — hollow ring ScatterplotLayer for synthetic nodes
+ *   4. topology-layer   — global or ego-graph ArcLayer (master_index edges)
+ *   5. ego-graph-layer  — localized top-K ArcLayer from node_{id}.json
  */
 function buildLayers(
   payload: UIPayload,
@@ -140,8 +159,8 @@ function buildLayers(
   const { selectedNodeId, attentionThreshold, hoveredNodeId, egoGraphEdges } =
     filters;
 
-  // ── Real-node layer ────────────────────────────────────────────────────────
-  const realNodes = payload.nodes.filter((n) => !n.is_simulated);
+  // ── Observed-node layer ────────────────────────────────────────────────────
+  const realNodes = payload.nodes.filter((n) => roleOf(n) === "observed");
   const realLayer = new ScatterplotLayer<NodeEntry>({
     id: "nodes-real",
     data: realNodes,
@@ -170,12 +189,47 @@ function buildLayers(
     },
   });
 
+  // ── Holdout-node layer (zero-shot sensors) ─────────────────────────────────
+  // Real sensors masked throughout training: heat-mapped fill (they DO have a
+  // prediction + ground truth) plus a violet ring so the map marks them as the
+  // provably-never-trained-on nodes, distinct from ordinary observed sensors.
+  const holdoutNodes = payload.nodes.filter((n) => roleOf(n) === "holdout");
+  const holdoutLayer = new ScatterplotLayer<NodeEntry>({
+    id: "nodes-holdout",
+    data: holdoutNodes,
+    getPosition: (d) => [d.lon, d.lat],
+    getFillColor: (d) => nodeFillColor(d, timestep),
+    getLineColor: HOLDOUT_ACCENT,
+    getRadius: (d) =>
+      nodeRadius(d, timestep) * (d.id === hoveredNodeId ? 1.6 : 1.0),
+    radiusUnits: "meters",
+    stroked: true,
+    filled: true,
+    lineWidthMinPixels: 2,
+    pickable: true,
+    autoHighlight: true,
+    highlightColor: [255, 255, 255, 55],
+    onClick: ({ object }) => {
+      if (!object) return false;
+      onSelectNode(object.id);
+      return true;
+    },
+    onHover: ({ object }) => {
+      onHoverNode(object ? object.id : null);
+      return true;
+    },
+    updateTriggers: {
+      getFillColor: [timestep],
+      getRadius: [timestep, hoveredNodeId],
+    },
+  });
+
   // ── Simulated-node layer (hollow ring with transparent fill) ──────────────
   // filled: true + getFillColor: [0,0,0,0] creates an invisible solid disk that
   // covers the hollow centre, giving the full circle — not just the stroke — a
   // pickable hit-area. Without this the centre gap of the ring passes all
   // pointer events through to the map, making synthetic nodes unclickable.
-  const simNodes = payload.nodes.filter((n) => n.is_simulated);
+  const simNodes = payload.nodes.filter((n) => roleOf(n) === "simulated");
   const simLayer = new ScatterplotLayer<NodeEntry>({
     id: "nodes-simulated",
     data: simNodes,
@@ -292,7 +346,7 @@ function buildLayers(
     },
   });
 
-  return [realLayer, simLayer, arcLayer, egoArcLayer];
+  return [realLayer, holdoutLayer, simLayer, arcLayer, egoArcLayer];
 }
 
 export default function MapVisualizer() {

@@ -10,6 +10,7 @@ import type {
   EdgeEntry,
   PITBin,
   ZeroInflationBin,
+  NodeRole,
 } from "@/types/payload";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ export interface SpatialNode {
   location_name: string;
   lat: number;
   lon: number;
+  node_role?: NodeRole;   // absent in pre-harness payloads → derive from is_simulated
   is_simulated: boolean;
   semantic_tags: string[];
 }
@@ -70,6 +72,8 @@ export interface SpatialMetadata {
   num_nodes: number;
   num_real_nodes: number;
   num_simulated_nodes: number;
+  num_holdout_nodes?: number;
+  holdout_manifest_sha?: string | null;
   available_dates: string[];
   veh_class: string;
   dir: string;
@@ -93,13 +97,13 @@ export interface TemporalPage {
   seq_len: number;
   // Per-node timeseries keyed by stringified node id.
   node_timeseries: Record<string, TimestepEntry[]>;
-  // Per-edge attention (same shape as the legacy EdgeEntry).
+  // Per-edge attention (same shape as the legacy EdgeEntry). Empty for baselines.
   edge_attention: EdgeEntry[];
-  pit_histogram?: PITBin[];
-  zero_inflation_reliability?: ZeroInflationBin[];
+  pit_histogram?: PITBin[] | null;                        // null for models with no ZINB head
+  zero_inflation_reliability?: ZeroInflationBin[] | null; // null for models with no zero-inflation head
   global_imputation_burden?: number[];
   global_healing_quality?: number[];
-  attention_entropy_series?: number[];
+  attention_entropy_series?: number[];                    // empty for graph-less baselines
   tripwire_audit_trail?: Record<string, unknown>[];
-  alpha_node_leaderboard?: Record<string, unknown>[];
+  alpha_node_leaderboard?: Record<string, unknown>[] | null; // null for graph-less baselines
 }

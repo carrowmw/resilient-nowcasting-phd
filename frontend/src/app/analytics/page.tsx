@@ -31,6 +31,7 @@ import {
 import type {
   MasterIndex,
   NodeEntry,
+  NodeRole,
   PITBin,
   UIPayload,
 } from "@/types/payload";
@@ -45,10 +46,11 @@ import { registryUrl, spatialUrl, pageUrl } from "@/lib/payloadSource";
 interface NodeRow {
   id: number;
   location_name: string;
+  node_role: NodeRole;
   is_simulated: boolean;
   avg_mu: number;
   max_mu: number;
-  avg_sigma: number;
+  avg_sigma: number | null; // null for models without a ZINB uncertainty head
   semantic_tags: string;
   mae_drop_nan: number | null;
   rmse_drop_nan: number | null;
@@ -85,6 +87,7 @@ function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
     location_name: n.location_name,
     lat: n.lat,
     lon: n.lon,
+    node_role: n.node_role,
     is_simulated: n.is_simulated,
     timeseries: page.node_timeseries[String(n.id)] ?? [],
     semantic_tags: n.semantic_tags,
@@ -94,6 +97,8 @@ function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
       num_nodes: m.num_nodes,
       num_real_nodes: m.num_real_nodes,
       num_simulated_nodes: m.num_simulated_nodes,
+      num_holdout_nodes: m.num_holdout_nodes,
+      holdout_manifest_sha: m.holdout_manifest_sha,
       timesteps: page.timesteps,
       seq_len: page.seq_len,
       veh_class: m.veh_class,
@@ -202,15 +207,22 @@ export default function AnalyticsPage() {
     if (!masterIndex) return [];
     return masterIndex.nodes.map((node: NodeEntry) => {
       const preds = node.timeseries.map((e) => e.prediction);
-      const sigmas = node.timeseries.map((e) => e.uncertainty);
+      // A baseline reports uncertainty=null; keep avg_sigma null rather than
+      // averaging in fabricated zeros.
+      const sigmas = node.timeseries
+        .map((e) => e.uncertainty)
+        .filter((v): v is number => v != null);
       const n = preds.length || 1;
       const avg_mu = preds.reduce((a, b) => a + b, 0) / n;
       const max_mu = preds.length ? Math.max(...preds) : 0;
-      const avg_sigma = sigmas.reduce((a, b) => a + b, 0) / n;
+      const avg_sigma =
+        sigmas.length > 0 ? sigmas.reduce((a, b) => a + b, 0) / sigmas.length : null;
       const te = node.two_extremes;
       return {
         id: node.id,
         location_name: node.location_name,
+        node_role:
+          node.node_role ?? (node.is_simulated ? "simulated" : "observed"),
         is_simulated: node.is_simulated,
         avg_mu,
         max_mu,
@@ -250,7 +262,9 @@ export default function AnalyticsPage() {
         if (!node) continue;
         const ts = node.timeseries[t];
         if (!ts) continue;
-        const halfCI = 1.96 * ts.uncertainty;
+        // No CI band for models without uncertainty (baselines): collapse to the
+        // point forecast rather than drawing a fabricated interval.
+        const halfCI = ts.uncertainty != null ? 1.96 * ts.uncertainty : 0;
         point[`mu_${id}`] = ts.prediction;
         point[`ci_lower_${id}`] = Math.max(0, ts.prediction - halfCI);
         point[`ci_upper_${id}`] = ts.prediction + halfCI;
@@ -278,7 +292,7 @@ export default function AnalyticsPage() {
   const columns: GridColDef<NodeRow>[] = [
     { field: "id", headerName: "ID", width: 64, type: "number" },
     { field: "location_name", headerName: "Location", flex: 1, minWidth: 150 },
-    { field: "is_simulated", headerName: "Sim", width: 56, type: "boolean" },
+    { field: "node_role", headerName: "Role", width: 90, type: "string" },
     {
       field: "avg_mu",
       headerName: "Avg μ",
@@ -298,7 +312,9 @@ export default function AnalyticsPage() {
       headerName: "Avg σ",
       width: 95,
       type: "number",
-      valueFormatter: (value: number) => value.toFixed(3),
+      // null for baselines (no uncertainty head) — show N/A, not a fake 0.
+      valueFormatter: (value: number | null) =>
+        value == null ? "N/A" : value.toFixed(3),
     },
     {
       field: "mae_drop_nan",
