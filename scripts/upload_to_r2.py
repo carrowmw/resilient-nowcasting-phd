@@ -101,7 +101,8 @@ def upload_tree(client, bucket: str, runs_dir: str, prefix: str,
         raw = path.read_bytes()
         n_bytes_in += len(raw)
 
-        extra = {"ContentType": content_type_for(path), "CacheControl": CACHE_CONTROL}
+        cache_ctrl = "public, max-age=120" if path.name == "run_registry.json" else CACHE_CONTROL
+        extra = {"ContentType": content_type_for(path), "CacheControl": cache_ctrl}
         body = raw
         if gzip_enabled:
             body = gzip.compress(raw)
