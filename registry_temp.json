@@ -1,0 +1,73 @@
+{
+  "default_run_id": "sleek-snowball-50",
+  "runs": [
+    {
+      "run_id": "sleek-snowball-50",
+      "wandb_run_id": "5oh9fhoc",
+      "wandb_run_name": "sleek-snowball-50",
+      "git_commit": "a7139d7e02aeb4e4b6c864e89852ff003867eae6",
+      "generated_at": "2026-07-01T16:26:10.472847+00:00",
+      "analysis_period": {
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-08"
+      },
+      "train_config": {
+        "data": {
+          "end_date": "2026-04-02",
+          "mask_prob": 0.15,
+          "seq_len": 12,
+          "spatial_holdout_prob": 0.2,
+          "start_date": "2023-04-02",
+          "target_dir": "all",
+          "target_veh_class": "person"
+        },
+        "loss": {
+          "w_forecast": 1.0,
+          "w_impute": 1.0,
+          "w_kriging": 0.5
+        },
+        "model": {
+          "dim_feedforward": null,
+          "dropout": 0.1,
+          "edge_features_cache_path": "data/external/edge_features_cache.json",
+          "embedding_dim": 16,
+          "hidden_dim": 32,
+          "num_heads": 4,
+          "num_layers": 2,
+          "num_nodes": 81,
+          "sparsity_threshold": 0.5,
+          "static_feat_dim": 15,
+          "time_series_dim": 3,
+          "zinb_eps": 1e-06
+        },
+        "training": {
+          "batch_size": 32,
+          "early_stop_min_delta": 0.001,
+          "early_stop_patience": 10,
+          "epochs": 100,
+          "grad_clip_max_norm": 1.0,
+          "lr": 0.0003,
+          "random_seed": 42
+        },
+        "use_database": true
+      },
+      "metrics_summary": {
+        "val_rmse": 23.721616,
+        "val_mae": 6.526031,
+        "val_zero_acc": 0.695138
+      },
+      "available_dates": [
+        "2026-06-01",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-04",
+        "2026-06-05",
+        "2026-06-06",
+        "2026-06-07",
+        "2026-06-08"
+      ],
+      "num_nodes": 59,
+      "num_simulated_nodes": 5
+    }
+  ]
+}

@@ -1,0 +1,390 @@
+{
+  "default_run_id": "glorious-breeze-12",
+  "runs": [
+    {
+      "run_id": "glorious-breeze-12",
+      "wandb_run_id": "o7fgrmh9",
+      "wandb_run_name": "glorious-breeze-12",
+      "git_commit": "3bff5b643106e8749686ce3e0219872053e36ce2",
+      "generated_at": "2026-07-04T21:59:44.690060+00:00",
+      "analysis_period": {
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-31"
+      },
+      "train_config": {
+        "data": {
+          "end_date": "2025-04-02",
+          "mask_prob": 0.15,
+          "seq_len": 12,
+          "spatial_holdout_prob": 0.2,
+          "start_date": "2024-04-02",
+          "target_dir": "all",
+          "target_veh_class": "person"
+        },
+        "data_source": "database",
+        "loss": {
+          "w_forecast": 1.0,
+          "w_impute": 0,
+          "w_kriging": 0.5
+        },
+        "model": {
+          "dim_feedforward": null,
+          "dropout": 0.1,
+          "edge_features_cache_path": "data/external/edge_features_cache.json",
+          "embedding_dim": 16,
+          "hidden_dim": 32,
+          "num_heads": 4,
+          "num_layers": 2,
+          "num_nodes": 81,
+          "simulated_edge_features_cache_path": "data/external/simulated_edge_features_cache.json",
+          "sparsity_threshold": 0.5,
+          "static_feat_dim": 15,
+          "time_series_dim": 3,
+          "zinb_eps": 1e-06
+        },
+        "training": {
+          "batch_size": 32,
+          "early_stop_min_delta": 0.001,
+          "early_stop_patience": 10,
+          "epochs": 100,
+          "grad_clip_max_norm": 1.0,
+          "lr": 0.0003,
+          "random_seed": 42
+        },
+        "wandb": {
+          "collection": "resilient-iot-model-v2",
+          "project": "resilient-iot-v2",
+          "sweep_project": "resilient-iot-sweeps-v2"
+        }
+      },
+      "metrics_summary": {
+        "val_rmse": 14.577289,
+        "val_mae": 6.372903,
+        "val_zero_acc": 0.809085
+      },
+      "available_dates": [
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+        "2026-05-08",
+        "2026-05-09",
+        "2026-05-10",
+        "2026-05-11",
+        "2026-05-12",
+        "2026-05-13",
+        "2026-05-14",
+        "2026-05-15",
+        "2026-05-16",
+        "2026-05-17",
+        "2026-05-18",
+        "2026-05-19",
+        "2026-05-20",
+        "2026-05-21",
+        "2026-05-22",
+        "2026-05-23",
+        "2026-05-24",
+        "2026-05-25",
+        "2026-05-26",
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31"
+      ],
+      "num_nodes": 61,
+      "num_simulated_nodes": 5
+    },
+    {
+      "run_id": "rural-dragon-14",
+      "wandb_run_id": "wwp7x2as",
+      "wandb_run_name": "rural-dragon-14",
+      "git_commit": "3bff5b643106e8749686ce3e0219872053e36ce2",
+      "generated_at": "2026-07-04T21:56:20.565025+00:00",
+      "analysis_period": {
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-31"
+      },
+      "train_config": {
+        "data": {
+          "end_date": "2025-04-02",
+          "mask_prob": 0.15,
+          "seq_len": 12,
+          "spatial_holdout_prob": 0.2,
+          "start_date": "2024-04-02",
+          "target_dir": "all",
+          "target_veh_class": "person"
+        },
+        "data_source": "database",
+        "loss": {
+          "w_forecast": 1.0,
+          "w_impute": 1.0,
+          "w_kriging": 0
+        },
+        "model": {
+          "dim_feedforward": null,
+          "dropout": 0.1,
+          "edge_features_cache_path": "data/external/edge_features_cache.json",
+          "embedding_dim": 16,
+          "hidden_dim": 32,
+          "num_heads": 4,
+          "num_layers": 2,
+          "num_nodes": 81,
+          "simulated_edge_features_cache_path": "data/external/simulated_edge_features_cache.json",
+          "sparsity_threshold": 0.5,
+          "static_feat_dim": 15,
+          "time_series_dim": 3,
+          "zinb_eps": 1e-06
+        },
+        "training": {
+          "batch_size": 32,
+          "early_stop_min_delta": 0.001,
+          "early_stop_patience": 10,
+          "epochs": 100,
+          "grad_clip_max_norm": 1.0,
+          "lr": 0.0003,
+          "random_seed": 42
+        },
+        "wandb": {
+          "collection": "resilient-iot-model-v2",
+          "project": "resilient-iot-v2",
+          "sweep_project": "resilient-iot-sweeps-v2"
+        }
+      },
+      "metrics_summary": {
+        "val_rmse": 10.661569,
+        "val_mae": 3.637112,
+        "val_zero_acc": 0.087123
+      },
+      "available_dates": [
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+        "2026-05-08",
+        "2026-05-09",
+        "2026-05-10",
+        "2026-05-11",
+        "2026-05-12",
+        "2026-05-13",
+        "2026-05-14",
+        "2026-05-15",
+        "2026-05-16",
+        "2026-05-17",
+        "2026-05-18",
+        "2026-05-19",
+        "2026-05-20",
+        "2026-05-21",
+        "2026-05-22",
+        "2026-05-23",
+        "2026-05-24",
+        "2026-05-25",
+        "2026-05-26",
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31"
+      ],
+      "num_nodes": 61,
+      "num_simulated_nodes": 5
+    },
+    {
+      "run_id": "summer-deluge-15",
+      "wandb_run_id": "13exik59",
+      "wandb_run_name": "summer-deluge-15",
+      "git_commit": "3bff5b643106e8749686ce3e0219872053e36ce2",
+      "generated_at": "2026-07-04T21:48:44.299295+00:00",
+      "analysis_period": {
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-31"
+      },
+      "train_config": {
+        "data": {
+          "end_date": "2025-04-02",
+          "mask_prob": 0.15,
+          "seq_len": 12,
+          "spatial_holdout_prob": 0.2,
+          "start_date": "2024-04-02",
+          "target_dir": "all",
+          "target_veh_class": "person"
+        },
+        "data_source": "database",
+        "loss": {
+          "w_forecast": 1.0,
+          "w_impute": 1.0,
+          "w_kriging": 1.0
+        },
+        "model": {
+          "dim_feedforward": null,
+          "dropout": 0.1,
+          "edge_features_cache_path": "data/external/edge_features_cache.json",
+          "embedding_dim": 16,
+          "hidden_dim": 32,
+          "num_heads": 4,
+          "num_layers": 2,
+          "num_nodes": 81,
+          "simulated_edge_features_cache_path": "data/external/simulated_edge_features_cache.json",
+          "sparsity_threshold": 0.5,
+          "static_feat_dim": 15,
+          "time_series_dim": 3,
+          "zinb_eps": 1e-06
+        },
+        "training": {
+          "batch_size": 32,
+          "early_stop_min_delta": 0.001,
+          "early_stop_patience": 10,
+          "epochs": 100,
+          "grad_clip_max_norm": 1.0,
+          "lr": 0.0003,
+          "random_seed": 42
+        },
+        "wandb": {
+          "collection": "resilient-iot-model-v2",
+          "project": "resilient-iot-v2",
+          "sweep_project": "resilient-iot-sweeps-v2"
+        }
+      },
+      "metrics_summary": {
+        "val_rmse": 13.975326,
+        "val_mae": 5.519334,
+        "val_zero_acc": 0.759019
+      },
+      "available_dates": [
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+        "2026-05-08",
+        "2026-05-09",
+        "2026-05-10",
+        "2026-05-11",
+        "2026-05-12",
+        "2026-05-13",
+        "2026-05-14",
+        "2026-05-15",
+        "2026-05-16",
+        "2026-05-17",
+        "2026-05-18",
+        "2026-05-19",
+        "2026-05-20",
+        "2026-05-21",
+        "2026-05-22",
+        "2026-05-23",
+        "2026-05-24",
+        "2026-05-25",
+        "2026-05-26",
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31"
+      ],
+      "num_nodes": 61,
+      "num_simulated_nodes": 5
+    },
+    {
+      "run_id": "unknown",
+      "wandb_run_id": "unknown",
+      "wandb_run_name": "unknown",
+      "git_commit": "3bff5b643106e8749686ce3e0219872053e36ce2",
+      "generated_at": "2026-07-04T21:51:24.675345+00:00",
+      "analysis_period": {
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-31"
+      },
+      "train_config": {
+        "data": {
+          "end_date": "2025-04-02",
+          "mask_prob": 0.15,
+          "seq_len": 12,
+          "spatial_holdout_prob": 0.2,
+          "start_date": "2024-04-02",
+          "target_dir": "all",
+          "target_veh_class": "person"
+        },
+        "data_source": "database",
+        "loss": {
+          "w_forecast": 1.0,
+          "w_impute": 1.0,
+          "w_kriging": 0.5
+        },
+        "model": {
+          "dim_feedforward": null,
+          "dropout": 0.1,
+          "edge_features_cache_path": "data/external/edge_features_cache.json",
+          "embedding_dim": 16,
+          "hidden_dim": 32,
+          "num_heads": 4,
+          "num_layers": 2,
+          "num_nodes": 81,
+          "simulated_edge_features_cache_path": "data/external/simulated_edge_features_cache.json",
+          "sparsity_threshold": 0.5,
+          "static_feat_dim": 15,
+          "time_series_dim": 3,
+          "zinb_eps": 1e-06
+        },
+        "model_type": "lstm",
+        "training": {
+          "batch_size": 32,
+          "early_stop_min_delta": 0.001,
+          "early_stop_patience": 10,
+          "epochs": 1,
+          "grad_clip_max_norm": 1.0,
+          "lr": 0.0003,
+          "random_seed": 42
+        },
+        "wandb": {
+          "collection": "resilient-iot-model-v2",
+          "project": "resilient-iot-v2",
+          "sweep_project": "resilient-iot-sweeps-v2"
+        }
+      },
+      "metrics_summary": {},
+      "available_dates": [
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+        "2026-05-08",
+        "2026-05-09",
+        "2026-05-10",
+        "2026-05-11",
+        "2026-05-12",
+        "2026-05-13",
+        "2026-05-14",
+        "2026-05-15",
+        "2026-05-16",
+        "2026-05-17",
+        "2026-05-18",
+        "2026-05-19",
+        "2026-05-20",
+        "2026-05-21",
+        "2026-05-22",
+        "2026-05-23",
+        "2026-05-24",
+        "2026-05-25",
+        "2026-05-26",
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31"
+      ],
+      "num_nodes": 61,
+      "num_simulated_nodes": 5
+    }
+  ]
+}

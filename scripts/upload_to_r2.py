@@ -38,7 +38,7 @@ logger = logging.getLogger("upload_to_r2")
 
 DEFAULT_RUNS_DIR = "frontend/public/data/runs"
 DEFAULT_PREFIX = "runs"
-CACHE_CONTROL = "public, max-age=120"
+CACHE_CONTROL = "public, max-age=3600"
 
 
 def load_env() -> None:
