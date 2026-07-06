@@ -117,7 +117,7 @@ class StaticFeatureLoader:
             try:
                 with open(self.cache_path, 'r') as f:
                     return json.load(f)
-            except Exception as e:
+            except (json.JSONDecodeError, OSError) as e:
                 logger.error(f"Error loading cache: {e}. Starting fresh.")
                 return {}
         return {}
@@ -150,8 +150,10 @@ class StaticFeatureLoader:
                 f"CRITICAL: Google Places API Quota/Auth Error: {response.status_code} - {response.text}"
             )
         if response.status_code != 200:
-            logger.warning(f"Nearby Search API Error: {response.status_code} - {response.text}")
-            return 0
+            raise RuntimeError(
+                f"CRITICAL: Nearby Search API returned {response.status_code}: {response.text}. "
+                "An API outage must not be cached as zero POIs."
+            )
         return len(response.json().get('places', []))
 
     def _text_search_paginated(self, lat: float, lon: float, text_query: str,
@@ -201,8 +203,10 @@ class StaticFeatureLoader:
                     f"{response.status_code} - {response.text}"
                 )
             if response.status_code != 200:
-                logger.warning(f"Text Search API Error (page {page_num}): {response.status_code} - {response.text}")
-                break
+                raise RuntimeError(
+                    f"CRITICAL: Text Search API (page {page_num}) returned {response.status_code}: "
+                    f"{response.text}. An API outage must not be cached as zero POIs."
+                )
 
             data = response.json()
             page_results = len(data.get('places', []))
@@ -231,7 +235,7 @@ class StaticFeatureLoader:
             try:
                 with open(osm_cache_path, 'r') as f:
                     existing = json.load(f)
-            except Exception:
+            except (json.JSONDecodeError, OSError):
                 existing = {}
 
         sensor_names = [s['location'] for s in sensors_data]
@@ -374,8 +378,10 @@ class StaticFeatureLoader:
 
             if needs_fetch:
                 if loc not in location_map:
-                    logger.warning(f"Location '{loc}' not found in sensor metadata. Skipping.")
-                    continue
+                    raise KeyError(
+                        f"CRITICAL: Location '{loc}' not found in sensor metadata — "
+                        "cannot fetch Google Places data without coordinates."
+                    )
                 lat, lon = location_map[loc]
                 logger.info(f"Fetching Google Places data for '{loc}'...")
                 features = self._fetch_location_data(lat, lon)
@@ -529,7 +535,7 @@ if __name__ == "__main__":
             sensors = json.load(f)
         test_sensors = [s for s in sensors if not s['location'].startswith('Simulated')][:3]
         test_locations = [s['location'] for s in test_sensors]
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, KeyError) as e:
         logger.error(f"Test setup failed: {e}")
         sys.exit(1)
 
@@ -548,6 +554,6 @@ if __name__ == "__main__":
 
         assert df1[REQUIRED_KEYS].equals(df2[REQUIRED_KEYS]), "Regression: Cache differs from API."
         logger.info("Standalone test PASSED.")
-    except Exception as e:
+    except (RuntimeError, KeyError, AssertionError) as e:
         logger.error(f"Test FAILED: {e}")
         raise

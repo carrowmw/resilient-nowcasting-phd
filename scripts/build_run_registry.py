@@ -7,7 +7,7 @@ run_registry.json (the index the frontend loads first to populate the model sele
 Usage:
     python scripts/build_run_registry.py [runs_dir]
 
-Defaults to frontend/public/data/runs.
+Defaults to artifacts/payload_staging/runs.
 """
 
 import json
@@ -19,7 +19,7 @@ from typing import Dict
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("build_run_registry")
 
-DEFAULT_RUNS_DIR = "frontend/public/data/runs"
+DEFAULT_RUNS_DIR = "artifacts/payload_staging/runs"
 
 
 def build_registry(runs_dir: str) -> Dict:
@@ -45,11 +45,15 @@ def build_registry(runs_dir: str) -> Dict:
                 if d.is_dir() and (d / "page.json").exists()
             )
 
+        if "wandb_run_id" not in meta:
+            raise KeyError(f"CRITICAL: {spatial_path} missing 'wandb_run_id' in metadata")
+        if "git_commit_hash" not in meta:
+            raise KeyError(f"CRITICAL: {spatial_path} missing 'git_commit_hash' in metadata")
         registry["runs"].append({
             "run_id": run_dir.name,
-            "wandb_run_id": meta.get("wandb_run_id", "unknown"),
+            "wandb_run_id": meta["wandb_run_id"],
             "wandb_run_name": run_dir.name,
-            "git_commit": meta.get("git_commit_hash", "unknown"),
+            "git_commit": meta["git_commit_hash"],
             "generated_at": meta.get("generated_at", "unknown"),
             "analysis_period": {
                 "start_date": dates[0] if dates else None,

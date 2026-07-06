@@ -30,6 +30,15 @@ venv/
 
 # Generated paginated UI payloads — served from Cloudflare R2 (Phase 3), not git
 /frontend/public/data/runs/
+/frontend/public/data/master_index.json
 
 # W&B artifact downloads (model checkpoints fetched at export time)
 /artifacts/
+
+# Scratch / debris files (do not commit)
+r2_temp.json
+registry_temp.json
+dummy.txt
+run.log
+frontend/frontend/
+frontend/frontend_runtime_errors.log

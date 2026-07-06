@@ -238,9 +238,11 @@ class ParquetConnector(DataConnector):
         if direction != 'all':
             df = df[df['dir'] == direction]
 
-        # Parquet contains missing intervals as NaNs, but ingest_parquet.py drops them
-        # before inserting into DB. We must match the DB behaviour exactly.
-        df = df.dropna(subset=['value'])
+        nan_count = df['value'].isna().sum()
+        assert nan_count == 0, (
+            f"CRITICAL: ParquetConnector.load_traffic found {nan_count} NaN values in 'value'. "
+            "The parquet file must be pre-cleaned before ingestion."
+        )
 
         # Sort to match SQL 'ORDER BY dt, sensor_id'
         df = df.sort_values(['dt', 'location']).reset_index(drop=True)
@@ -269,9 +271,10 @@ class ParquetConnector(DataConnector):
         df = df[df['location'].isin(sensor_ids)]
         df = df.drop_duplicates(subset=['dt', 'location'])
         df = df[['dt', 'location', 'Humidity', 'Solar Radiation']]
-        # Weather is placeholder (NaN) in the master parquet — fill with 0.0 for smoke tests.
-        df['Humidity'] = df['Humidity'].fillna(0.0)
-        df['Solar Radiation'] = df['Solar Radiation'].fillna(0.0)
+        assert not df['Humidity'].isna().any(), \
+            "CRITICAL: ParquetConnector.load_weather: NaN in Humidity — parquet must have real weather data"
+        assert not df['Solar Radiation'].isna().any(), \
+            "CRITICAL: ParquetConnector.load_weather: NaN in Solar Radiation — parquet must have real weather data"
 
         assert not df.empty, (
             f"CRITICAL: ParquetConnector.load_weather returned no rows for "
@@ -297,25 +300,29 @@ class ParquetConnector(DataConnector):
 
         rows = []
         for sensor_id in sensor_ids:
-            p = places.get(sensor_id, {})
-            o = osm.get(sensor_id, {})
+            if sensor_id not in places:
+                raise KeyError(f"CRITICAL: sensor '{sensor_id}' not found in places_cache.json")
+            if sensor_id not in osm:
+                raise KeyError(f"CRITICAL: sensor '{sensor_id}' not found in osm_features_cache.json")
+            p = places[sensor_id]
+            o = osm[sensor_id]
             rows.append({
                 'location': sensor_id,
-                'transit_count': float(p.get('transit_count', 0)),
-                'retail_count': float(p.get('retail_count', 0)),
-                'food_drink_count': float(p.get('food_drink_count', 0)),
-                'nightlife_count': float(p.get('nightlife_count', 0)),
-                'education_count': float(p.get('education_count', 0)),
-                'recreation_count': float(p.get('recreation_count', 0)),
-                'total_poi_count': float(p.get('total_poi_count', 0)),
-                'landuse_entropy': float(p.get('landuse_entropy', 0)),
-                'is_school_zone': float(1 if p.get('is_school_zone', False) else 0),
-                'betweenness_centrality': float(o.get('betweenness_centrality', 0)),
-                'closeness_centrality': float(o.get('closeness_centrality', 0)),
-                'dist_to_city_centre': float(p.get('dist_to_city_centre', 0)),
-                'degree_centrality': float(o.get('degree_centrality', 0)),
-                'nearby_bus_stops': float(p.get('nearby_bus_stops', 0)),
-                'nearby_parking': float(p.get('nearby_parking', 0)),
+                'transit_count': float(p['transit_count']),
+                'retail_count': float(p['retail_count']),
+                'food_drink_count': float(p['food_drink_count']),
+                'nightlife_count': float(p['nightlife_count']),
+                'education_count': float(p['education_count']),
+                'recreation_count': float(p['recreation_count']),
+                'total_poi_count': float(p['total_poi_count']),
+                'landuse_entropy': float(p['landuse_entropy']),
+                'is_school_zone': float(1 if p['is_school_zone'] else 0),
+                'betweenness_centrality': float(o['betweenness_centrality']),
+                'closeness_centrality': float(o['closeness_centrality']),
+                'dist_to_city_centre': float(p['dist_to_city_centre']),
+                'degree_centrality': float(o['degree_centrality']),
+                'nearby_bus_stops': float(p['nearby_bus_stops']),
+                'nearby_parking': float(p['nearby_parking']),
             })
 
         df = pd.DataFrame(rows)
@@ -366,8 +373,12 @@ def create_connector(config: dict) -> DataConnector:
         return TimescaleConnector(db_url)
 
     elif data_source == "parquet":
-        parquet_path = config.get("parquet_path", DEFAULT_PARQUET_PATH)
-        return ParquetConnector(parquet_path)
+        if "parquet_path" not in config:
+            raise KeyError(
+                "CRITICAL: data_source='parquet' requires 'parquet_path' in config. "
+                f"No default is applied — set parquet_path explicitly."
+            )
+        return ParquetConnector(config["parquet_path"])
 
     else:
         raise ValueError(

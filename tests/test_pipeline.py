@@ -55,6 +55,10 @@ def test_resilient_iot_pipeline():
 
     for batch in dataloader:
         optimizer.zero_grad()
+        # Inject loss weights that the adapter normally provides.
+        batch["w_impute"] = 1.0
+        batch["w_forecast"] = 1.0
+        batch["w_kriging"] = 0.0
         # PHASE 2: forward now returns a 10-tuple (adds loss_kriging + kriging_pred).
         loss, _, _, loss_kriging, _, _, _, _, tripwires, kriging_pred = model(batch)
         assert not torch.isnan(loss).any()
@@ -97,6 +101,8 @@ def test_pipeline_kriging_active():
         "target_forecast": torch.randint(0, 50, (batch_size, num_nodes)).float(),
         "node_mask": torch.zeros_like(dyn, dtype=torch.bool),
         "spatial_holdout_mask": holdout_mask,
+        "w_impute": 1.0,
+        "w_forecast": 1.0,
         "w_kriging": 0.5,
     }
 

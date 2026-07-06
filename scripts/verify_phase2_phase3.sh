@@ -14,6 +14,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+FAILED=0
+
 PHASE2_ONLY=false
 PHASE3_ONLY=false
 
@@ -35,6 +37,7 @@ check_pass() {
 
 check_fail() {
     echo -e "${RED}✗${NC} $1"
+    FAILED=1
 }
 
 check_warn() {
@@ -83,10 +86,10 @@ if [[ "$PHASE3_ONLY" == false ]]; then
 
     # 4. Check ingestion script
     echo "4. Checking ingestion script..."
-    if [[ -f "scripts/ingest_parquet.py" ]]; then
+    if [[ -f "scripts/ingestion/ingest_parquet.py" ]]; then
         check_pass "Ingestion script exists"
     else
-        check_fail "Ingestion script NOT found"
+        check_fail "Ingestion script NOT found at scripts/ingestion/ingest_parquet.py"
     fi
 
     # 5. Check dataset.py modifications
@@ -137,7 +140,7 @@ if [[ "$PHASE3_ONLY" == false ]]; then
         elif [[ "$ROW_COUNT" -gt 0 ]]; then
             check_warn "Partial data ingested ($ROW_COUNT rows)"
         else
-            check_warn "No data ingested (run: python scripts/ingest_parquet.py ...)"
+            check_warn "No data ingested (run: python scripts/ingestion/ingest_parquet.py ...)"
         fi
     else
         check_warn "TimescaleDB container NOT running (run: docker-compose up -d timescaledb)"
@@ -213,10 +216,11 @@ if [[ "$PHASE2_ONLY" == false ]]; then
         check_pass "Next.js dev server is running"
 
         # Test proxy rewrite (requires R2 bucket to be populated)
-        if curl -s -I http://localhost:3000/data/runs/run_registry.json 2>/dev/null | grep -q "200 OK"; then
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/data/runs/run_registry.json 2>/dev/null)
+        if [ "$HTTP_CODE" = "200" ]; then
             check_pass "Proxy rewrite working (registry accessible)"
         else
-            check_warn "Proxy rewrite may not be working (or R2 bucket empty)"
+            check_warn "Proxy rewrite may not be working (or R2 bucket empty, HTTP $HTTP_CODE)"
         fi
     else
         check_warn "Next.js dev server NOT running (run: cd frontend && npm run dev)"
@@ -240,7 +244,7 @@ if [[ "$PHASE3_ONLY" == false ]]; then
     echo "Phase 2:"
     echo "  1. Start TimescaleDB:    docker-compose up -d timescaledb"
     echo "  2. Apply migrations:     alembic upgrade head"
-    echo "  3. Ingest data (2-3h):   python scripts/ingest_parquet.py --parquet data/processed/master_dataset_15T.parquet --create-dataset-version"
+    echo "  3. Ingest data (2-3h):   python scripts/ingestion/ingest_parquet.py --parquet data/processed/master_dataset_15T.parquet --create-dataset-version"
     echo "  4. Test database mode:   python src/train.py --use-database --start-date 2026-06-01 --end-date 2026-06-02"
     echo ""
 fi
@@ -256,3 +260,5 @@ fi
 
 echo "Full verification checklist: .agents/IMPLEMENTATION_SUMMARY.md"
 echo ""
+
+exit "$FAILED"

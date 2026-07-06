@@ -25,20 +25,17 @@ def set_nested_value(d: dict, keys: list, value):
 
 def get_git_metadata():
     """Retrieves current Git commit hash and branch name."""
-    try:
-        # Check if repository is dirty
-        status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
-        if status and os.environ.get("SKIP_GIT_CHECK") != "true":
-            print("\n[!] ERROR: Repository is dirty (uncommitted changes).")
-            print("To ensure 'Artifact Twinning' traceability, you must commit your changes before running a sweep.")
-            print("Dirty files:\n" + status)
-            exit(1)
+    # Check if repository is dirty
+    status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+    if status and os.environ.get("SKIP_GIT_CHECK") != "true":
+        print("\n[!] ERROR: Repository is dirty (uncommitted changes).")
+        print("To ensure 'Artifact Twinning' traceability, you must commit your changes before running a sweep.")
+        print("Dirty files:\n" + status)
+        exit(1)
 
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
-        return commit, branch
-    except subprocess.CalledProcessError:
-        return "unknown", "unknown"
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+    return commit, branch
 
 def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool, full_dataset=None):
     """
@@ -115,25 +112,20 @@ def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool, f
         import gc
         try:
             val_loss = run_training(
-                config=config, 
-                init_wandb=False, 
-                use_mock_data=use_mock_data, 
+                config=config,
+                init_wandb=False,
+                use_mock_data=use_mock_data,
                 study_name=trial.study.study_name,
                 full_dataset=full_dataset,
                 trial_number=trial.number
             )
         except torch.cuda.OutOfMemoryError:
             logger.warning(f"Trial {trial.number} failed with CUDA OutOfMemoryError. Pruning trial.")
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             raise optuna.TrialPruned()
-        except Exception as e:
-            logger.error(f"Trial {trial.number} failed with error: {e}")
+        finally:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            raise
 
         logger.info(f"Trial {trial.number} finished with val_loss: {val_loss}")
         
@@ -313,11 +305,11 @@ if __name__ == "__main__":
                 )
             else:
                 if storage is None:
-                    storage = "sqlite:///optuna.db"
+                    raise ValueError("CRITICAL: --storage is required in non-interactive mode (e.g. sqlite:///optuna.db)")
                 if config_path is None:
-                    config_path = "configs/train/train.yaml"
+                    raise ValueError("CRITICAL: --config is required in non-interactive mode")
                 if sweep_config_path is None:
-                    sweep_config_path = "configs/sweeps/sweep.yaml"
+                    raise ValueError("CRITICAL: --sweep-config is required in non-interactive mode")
                 if study_name is None:
                     import os
                     config_name = os.path.basename(sweep_config_path).replace("_sweep.yaml", "").replace(".yaml", "").replace(".yml", "")
@@ -328,14 +320,14 @@ if __name__ == "__main__":
         if config_path:
             try:
                 base_cfg = load_config(config_path)
-            except Exception as e:
+            except (OSError, KeyError) as e:
                 logger.warning(f"Could not load config from {config_path}: {e}")
 
         sweep_cfg = {}
         if sweep_config_path:
             try:
                 sweep_cfg = load_config(sweep_config_path)
-            except Exception as e:
+            except (OSError, KeyError) as e:
                 logger.warning(f"Could not load sweep config from {sweep_config_path}: {e}")
 
         # Resolve W&B sweep project name checking sweep config override first
@@ -394,7 +386,7 @@ if __name__ == "__main__":
                 logger.info(f"Best validation loss: {study.best_value}")
             else:
                 logger.warning("No trials completed successfully.")
-        except Exception as e:
+        except (ValueError, optuna.exceptions.InvalidStateError) as e:
             logger.error(f"Error loading final study results: {e}")
 
         sys.exit(0)
@@ -492,7 +484,7 @@ if __name__ == "__main__":
             data_cfg["start_date"],
             data_cfg["end_date"],
             seq_len=data_cfg["seq_len"],
-            mask_prob=data_cfg.get("mask_prob", 0.15),
+            mask_prob=data_cfg["mask_prob"],
             target_veh_class=data_cfg["target_veh_class"],
             target_dir=data_cfg["target_dir"],
         )

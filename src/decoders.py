@@ -10,9 +10,6 @@ class DecoupledDecoders(nn.Module):
     def __init__(self, hidden_dim: int, time_series_dim: int, dropout: float = 0.1, zinb_eps: float = 1e-6):
         super(DecoupledDecoders, self).__init__()
 
-        # Reproducibility
-        torch.manual_seed(42)
-
         self.hidden_dim = hidden_dim
         self.time_series_dim = time_series_dim
         self.zinb_eps = zinb_eps
@@ -232,6 +229,9 @@ def compute_zinb_nll(y_true: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor
     If y=0: P(y) = pi + (1-pi) * (theta / (theta + mu))^theta
     If y>0: P(y) = (1-pi) * [Gamma(y+theta)/(y!Gamma(theta))] * (theta/(theta+mu))^theta * (mu/(theta+mu))^y
     """
+    assert (mu > 0).all(), "CRITICAL: mu must be strictly positive before safe_log"
+    assert (theta > 0).all(), "CRITICAL: theta must be strictly positive before safe_log"
+    assert (pi > 0).all() and (pi < 1).all(), "CRITICAL: pi must be in (0, 1)"
     eps = 1e-6
     y_true = y_true.float()
 
@@ -300,6 +300,18 @@ def compute_loss(imputed_features: torch.Tensor,
         (total_loss, loss_impute, loss_forecast, loss_kriging)
         loss_kriging is 0.0 when w_kriging == 0.0 (kriging path bypassed).
     """
+    assert imputed_features.dim() == 4, \
+        f"CRITICAL: imputed_features must be [B, N, T, D], got {tuple(imputed_features.shape)}"
+    assert target_impute.dim() == 4, \
+        f"CRITICAL: target_impute must be [B, N, T, D], got {tuple(target_impute.shape)}"
+    assert mu.dim() == 2, f"CRITICAL: mu must be [B, N], got {tuple(mu.shape)}"
+    assert theta.dim() == 2, f"CRITICAL: theta must be [B, N], got {tuple(theta.shape)}"
+    assert pi.dim() == 2, f"CRITICAL: pi must be [B, N], got {tuple(pi.shape)}"
+    assert target_forecast.dim() == 2, \
+        f"CRITICAL: target_forecast must be [B, N], got {tuple(target_forecast.shape)}"
+    assert imputed_features.shape[:2] == target_impute.shape[:2] == mu.shape == theta.shape == pi.shape == target_forecast.shape, \
+        "CRITICAL: compute_loss tensor shapes are inconsistent"
+
     target_impute_full = target_impute
     if loss_node_mask is not None:
         assert loss_node_mask.dtype == torch.bool and loss_node_mask.dim() == 1, \
@@ -325,7 +337,8 @@ def compute_loss(imputed_features: torch.Tensor,
     traffic_pred_raw = (traffic_pred_scaled * traffic_std) + traffic_mean
     traffic_target_raw = (traffic_target_scaled * traffic_std) + traffic_mean
 
-    # Clamp to non-negative (count domain)
+    # Clamp to non-negative (count domain). Non-negativity of the target is asserted
+    # at dataset construction time (dataset.py) where raw counts are loaded.
     traffic_pred_raw = torch.clamp(traffic_pred_raw, min=0.0)
     traffic_target_raw = torch.clamp(traffic_target_raw, min=0.0)
 

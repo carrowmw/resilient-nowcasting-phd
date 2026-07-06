@@ -51,7 +51,10 @@
       "Bash(grep -n \"return 0$\\\\|return 0 \\\\|except ValueError:\\\\|except subprocess\" src/features.py src/gpu_selector.py src/tune.py)",
       "Bash(grep -n \"edge_attention as EdgeEntry\\\\|payload.edges\\\\s*$\\\\|\\\\.filter\\(\\(n\\) => roleOf\\\\|payload.edges$\\\\|let weighted\\\\|GLOBAL_EDGE_CAP\\\\|MAP_STYLE\\\\|TICK_INTERVAL_MS\\\\|as unknown as\\\\|appendFileSync\\\\|writeFileSync\" src/components/MapVisualizer.tsx src/components/TimeSlider.tsx src/app/analytics/page.tsx src/app/api/log/route.ts src/components/MapVisualizer.tsx)",
       "Bash(git -C /workspace ls-files scripts)",
-      "Bash(git -C /workspace ls-files)"
+      "Bash(git -C /workspace ls-files)",
+      "Bash(git -C /workspace show HEAD:scripts/verify_phase2_phase3.sh)",
+      "Bash(git *)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

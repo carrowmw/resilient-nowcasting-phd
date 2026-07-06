@@ -12,7 +12,7 @@ Each object is gzip-compressed and uploaded with:
 so browser `fetch()` transparently decompresses the response — no frontend decode
 code required. The on-disk JSON keys map 1:1 to object keys, e.g.
 
-    frontend/public/data/runs/dark-brook-37/spatial.json
+    artifacts/payload_staging/runs/dark-brook-37/spatial.json
         → s3://{bucket}/runs/dark-brook-37/spatial.json
         → {R2_PUBLIC_URL}/runs/dark-brook-37/spatial.json
 
@@ -20,8 +20,8 @@ Credentials are read from the environment (.env is auto-loaded):
     R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL
 
 Usage:
-    python scripts/upload_to_r2.py [--runs-dir frontend/public/data/runs] [--prefix runs]
-                                   [--dry-run] [--no-gzip] [--delete-extra]
+    python scripts/upload_to_r2.py [--runs-dir artifacts/payload_staging/runs] [--prefix runs]
+                                   [--dry-run] [--no-gzip] [--delete-extra [--yes]]
 """
 
 import argparse
@@ -36,7 +36,7 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("upload_to_r2")
 
-DEFAULT_RUNS_DIR = "frontend/public/data/runs"
+DEFAULT_RUNS_DIR = "artifacts/payload_staging/runs"
 DEFAULT_PREFIX = "runs"
 CACHE_CONTROL = "public, max-age=60"
 
@@ -85,7 +85,7 @@ def content_type_for(path: Path) -> str:
 
 def upload_tree(client, bucket: str, runs_dir: str, prefix: str,
                 *, gzip_enabled: bool, dry_run: bool,
-                public_url: Optional[str]) -> int:
+                public_url: Optional[str]) -> tuple[int, set]:
     root = Path(runs_dir)
     if not root.is_dir():
         raise NotADirectoryError(f"runs-dir not found: {runs_dir}")
@@ -95,9 +95,11 @@ def upload_tree(client, bucket: str, runs_dir: str, prefix: str,
         raise SystemExit(f"No files under {runs_dir}")
 
     n_bytes_in = n_bytes_out = 0
+    expected_keys: set = set()
     for i, path in enumerate(files, 1):
         rel = path.relative_to(root).as_posix()
         key = f"{prefix}/{rel}" if prefix else rel
+        expected_keys.add(key)
         raw = path.read_bytes()
         n_bytes_in += len(raw)
 
@@ -124,7 +126,49 @@ def upload_tree(client, bucket: str, runs_dir: str, prefix: str,
     if public_url:
         sample = f"{prefix}/run_registry.json" if prefix else "run_registry.json"
         logger.info(f"Public URL base: {public_url.rstrip('/')}/{sample}")
-    return len(files)
+    return len(files), expected_keys
+
+
+def delete_extra(client, bucket: str, prefix: str, expected_keys: set,
+                 *, yes: bool, dry_run: bool) -> int:
+    """Delete bucket objects under prefix that are not present in the local tree."""
+    paginator = client.get_paginator("list_objects_v2")
+    orphans = []
+    list_prefix = f"{prefix}/" if prefix else ""
+    for page in paginator.paginate(Bucket=bucket, Prefix=list_prefix):
+        for obj in page.get("Contents", []):
+            if obj["Key"] not in expected_keys:
+                orphans.append(obj["Key"])
+
+    if not orphans:
+        logger.info("[delete-extra] No orphaned objects found.")
+        return 0
+
+    logger.info(f"[delete-extra] Found {len(orphans)} orphaned object(s):")
+    for key in orphans[:10]:
+        logger.info(f"  {key}")
+    if len(orphans) > 10:
+        logger.info(f"  … and {len(orphans) - 10} more")
+
+    if dry_run:
+        logger.info(f"[dry-run] Would delete {len(orphans)} orphaned object(s).")
+        return len(orphans)
+
+    if not yes:
+        raise SystemExit(
+            f"--delete-extra would permanently delete {len(orphans)} object(s) from R2. "
+            "Re-run with --yes to confirm the destructive deletion."
+        )
+
+    # S3 DeleteObjects accepts at most 1000 keys per call.
+    for i in range(0, len(orphans), 1000):
+        batch = orphans[i : i + 1000]
+        client.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": [{"Key": k} for k in batch], "Quiet": True},
+        )
+    logger.info(f"[delete-extra] Deleted {len(orphans)} orphaned object(s).")
+    return len(orphans)
 
 
 def main() -> None:
@@ -134,6 +178,10 @@ def main() -> None:
                    help="Key prefix in the bucket (default 'runs').")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-gzip", action="store_true", help="Upload raw (no gzip/ContentEncoding).")
+    p.add_argument("--delete-extra", action="store_true",
+                   help="Delete bucket objects under --prefix that are absent from the local tree.")
+    p.add_argument("--yes", action="store_true",
+                   help="Confirm destructive deletion when used with --delete-extra.")
     args = p.parse_args()
 
     load_env()
@@ -143,10 +191,19 @@ def main() -> None:
     client = None if args.dry_run else make_client(
         env["R2_ACCOUNT_ID"], env["R2_ACCESS_KEY_ID"], env["R2_SECRET_ACCESS_KEY"]
     )
-    upload_tree(
+    _, expected_keys = upload_tree(
         client, env["R2_BUCKET_NAME"], args.runs_dir, args.prefix,
         gzip_enabled=not args.no_gzip, dry_run=args.dry_run, public_url=public_url,
     )
+
+    if args.delete_extra:
+        if client is None:
+            # dry-run: still list the bucket to show what would be deleted
+            client = make_client(
+                env["R2_ACCOUNT_ID"], env["R2_ACCESS_KEY_ID"], env["R2_SECRET_ACCESS_KEY"]
+            )
+        delete_extra(client, env["R2_BUCKET_NAME"], args.prefix, expected_keys,
+                     yes=args.yes, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ if __name__ == "__main__":
 
 import copy
 import logging
+import math
 from datetime import datetime
 import numpy as np
 import torch
@@ -45,6 +46,11 @@ from harness import (
 from harness.adapters import build_adapter
 
 
+def _worker_init_fn(worker_id: int) -> None:
+    # PyTorch reseeds torch per worker but NOT numpy; identical numpy streams across workers would silently correlate augmentation.
+    np.random.seed(torch.initial_seed() % 2**32)
+
+
 class DivergenceError(Exception):
     """Custom exception raised when model loss diverges (NaNs)."""
     pass
@@ -68,7 +74,24 @@ def parse_args():
 
 def load_config(config_path: str) -> dict:
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+
+    # Merge configs/infra.yaml as defaults (one directory level above the training config dir).
+    # The training config always wins on any conflict, so per-run overrides are safe.
+    infra_path = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(config_path)), "..", "infra.yaml")
+    )
+    if os.path.exists(infra_path):
+        with open(infra_path, "r") as f:
+            infra = yaml.safe_load(f) or {}
+        for key, val in infra.items():
+            if key not in cfg:
+                cfg[key] = val
+            elif isinstance(val, dict) and isinstance(cfg.get(key), dict):
+                for k, v in val.items():
+                    cfg[key].setdefault(k, v)
+
+    return cfg
 
 
 def create_mock_dataloader(
@@ -138,20 +161,22 @@ def run_training(
     """
     logger = logging.getLogger(__name__)
 
-    # Reproducibility
-    torch.manual_seed(42)
-    np.random.seed(42)
+    # Reproducibility — seed from config, not hardcoded, so experiments are traceable.
+    _seed = config["training"]["random_seed"]
+    torch.manual_seed(_seed)
+    np.random.seed(_seed)
 
     # Device configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
+    torch.set_float32_matmul_precision("high")
 
     # Initialize W&B only if requested; pass the full nested config so all
     # hyperparameters (data / model / training / loss) are logged together.
-    wandb_cfg = config.get("wandb", {})
-    wandb_project = wandb_cfg.get("project", "resilient-iot-v2")
-    wandb_sweep_project = wandb_cfg.get("sweep_project", "resilient-iot-sweeps-v2")
-    wandb_collection = wandb_cfg.get("collection", "resilient-iot-model-v2")
+    wandb_cfg = config["wandb"]
+    wandb_project = wandb_cfg["project"]
+    wandb_sweep_project = wandb_cfg["sweep_project"]
+    wandb_collection = wandb_cfg["collection"]
 
     if init_wandb:
         wandb.init(project=wandb_project, config=config)
@@ -187,7 +212,7 @@ def run_training(
         with open(config_save_path, "w") as f:
             yaml.safe_dump(config, f, default_flow_style=False)
         logger.info(f"Co-located training configuration saved to: {config_save_path}")
-    except Exception as e:
+    except OSError as e:
         logger.error(f"Failed to save co-located configuration: {e}")
 
     # ------------------------------------------------------------------ #
@@ -196,11 +221,14 @@ def run_training(
     data_cfg = config["data"]
     model_cfg = config["model"]
     train_cfg = config["training"]
-    loss_cfg = config.get("loss", {})
+    loss_cfg = config["loss"]
+
+    num_workers = train_cfg["num_workers"]
+    assert num_workers >= 0, f"CRITICAL: num_workers must be non-negative, got {num_workers}"
 
     # HARNESS: model family and evaluation mode.
-    model_type = config.get("model_type", "gnn")
-    eval_mode = config.get("eval_mode", "temporal")
+    model_type = config["model_type"]
+    eval_mode = config["eval_mode"]
     assert eval_mode in ("temporal", "inductive"), \
         f"CRITICAL: eval_mode must be temporal | inductive, got {eval_mode!r}"
 
@@ -209,10 +237,10 @@ def run_training(
     # and W&B telemetry. It depends ONLY on spatial_holdout_prob so that the
     # data masking is identical across ablation runs (w_kriging = 0 vs > 0),
     # making task-specific metrics directly comparable.
-    spatial_holdout_prob = data_cfg.get("spatial_holdout_prob", 0.0)
-    w_kriging = loss_cfg.get("w_kriging", 0.0)
-    w_impute = loss_cfg.get("w_impute", 1.0)
-    w_forecast = loss_cfg.get("w_forecast", 1.0)
+    spatial_holdout_prob = data_cfg["spatial_holdout_prob"]
+    w_kriging = loss_cfg["w_kriging"]
+    w_impute = loss_cfg["w_impute"]
+    w_forecast = loss_cfg["w_forecast"]
     kriging_active = spatial_holdout_prob > 0.0
     loss_weights = {"w_impute": w_impute, "w_forecast": w_forecast, "w_kriging": w_kriging}
 
@@ -243,11 +271,22 @@ def run_training(
             batch_size=train_cfg["batch_size"],
             collate_fn=custom_collate_real,
             shuffle=True,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0,
+            prefetch_factor=4 if num_workers > 0 else None,
+            drop_last=True,
+            worker_init_fn=_worker_init_fn,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=train_cfg["batch_size"],
             collate_fn=custom_collate_real,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0,
+            prefetch_factor=4 if num_workers > 0 else None,
+            worker_init_fn=_worker_init_fn,
         )
     elif use_mock_data:
         logger.info("Using mock dataloader.")
@@ -258,7 +297,7 @@ def run_training(
             time_series_dim=model_cfg["time_series_dim"],
             static_feat_dim=model_cfg["static_feat_dim"],
             dataset_size=20,
-            mask_prob=data_cfg.get("mask_prob", 0.15),
+            mask_prob=data_cfg["mask_prob"],
         )
         val_loader, _ = create_mock_dataloader(
             batch_size=train_cfg["batch_size"],
@@ -267,7 +306,7 @@ def run_training(
             time_series_dim=model_cfg["time_series_dim"],
             static_feat_dim=model_cfg["static_feat_dim"],
             dataset_size=8,
-            mask_prob=data_cfg.get("mask_prob", 0.15),
+            mask_prob=data_cfg["mask_prob"],
         )
     else:
         logger.info(f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}")
@@ -278,50 +317,61 @@ def run_training(
                 data_cfg["start_date"],
                 data_cfg["end_date"],
                 seq_len=data_cfg["seq_len"],
-                mask_prob=data_cfg.get("mask_prob", 0.15),
+                mask_prob=data_cfg["mask_prob"],
                 target_veh_class=data_cfg["target_veh_class"],
                 target_dir=data_cfg["target_dir"],
             )
-
-            train_size = int(0.8 * len(full_dataset))
-            val_size = len(full_dataset) - train_size
-
-            if train_size == 0 or val_size == 0:
-                raise ValueError(
-                    "Not enough data to split into train and val. Try a wider date range."
-                )
-
-            train_dataset, val_dataset = torch.utils.data.random_split(
-                full_dataset, [train_size, val_size]
-            )
-
-            # Propagate dataset-level attributes to the Subset wrapper so the
-            # model initializer below can read them uniformly.
-            train_dataset.num_nodes = full_dataset.num_nodes
-            train_dataset.static_feat_dim = full_dataset.static_feat_dim
-            train_dataset.time_series_dim = full_dataset.time_series_dim
-
-            # PHASE 1: Propagate scaler statistics for scale-invariant loss
-            train_dataset.traffic_mean = full_dataset.traffic_mean
-            train_dataset.traffic_std = full_dataset.traffic_std
-            val_dataset.traffic_mean = full_dataset.traffic_mean
-            val_dataset.traffic_std = full_dataset.traffic_std
-
-            train_loader = DataLoader(
-                train_dataset,
-                batch_size=train_cfg["batch_size"],
-                collate_fn=custom_collate_real,
-                shuffle=True,
-            )
-            val_loader = DataLoader(
-                val_dataset,
-                batch_size=train_cfg["batch_size"],
-                collate_fn=custom_collate_real,
-            )
-        except Exception as e:
+        finally:
+            # RealIoTDataset.__init__ loads all data into memory; the connector is
+            # no longer needed after construction whether it succeeded or failed.
             connector.close()
-            logger.error(f"Failed to load RealIoTDataset: {e}")
-            raise
+
+        train_size = int(0.8 * len(full_dataset))
+        val_size = len(full_dataset) - train_size
+
+        if train_size == 0 or val_size == 0:
+            raise ValueError(
+                "Not enough data to split into train and val. Try a wider date range."
+            )
+
+        train_dataset, val_dataset = torch.utils.data.random_split(
+            full_dataset, [train_size, val_size]
+        )
+
+        # Propagate dataset-level attributes to the Subset wrapper so the
+        # model initializer below can read them uniformly.
+        train_dataset.num_nodes = full_dataset.num_nodes
+        train_dataset.static_feat_dim = full_dataset.static_feat_dim
+        train_dataset.time_series_dim = full_dataset.time_series_dim
+
+        # PHASE 1: Propagate scaler statistics for scale-invariant loss
+        train_dataset.traffic_mean = full_dataset.traffic_mean
+        train_dataset.traffic_std = full_dataset.traffic_std
+        val_dataset.traffic_mean = full_dataset.traffic_mean
+        val_dataset.traffic_std = full_dataset.traffic_std
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=train_cfg["batch_size"],
+            collate_fn=custom_collate_real,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0,
+            prefetch_factor=4 if num_workers > 0 else None,
+            drop_last=True,
+            worker_init_fn=_worker_init_fn,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=train_cfg["batch_size"],
+            collate_fn=custom_collate_real,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0,
+            prefetch_factor=4 if num_workers > 0 else None,
+            worker_init_fn=_worker_init_fn,
+        )
 
     # ------------------------------------------------------------------ #
     # Model                                                                #
@@ -338,11 +388,11 @@ def run_training(
             embedding_dim=model_cfg["embedding_dim"],
             hidden_dim=model_cfg["hidden_dim"],
             sparsity_threshold=model_cfg["sparsity_threshold"],
-            num_layers=model_cfg.get("num_layers", 2),
-            num_heads=model_cfg.get("num_heads", 4),
-            dropout=model_cfg.get("dropout", 0.1),
-            dim_feedforward=model_cfg.get("dim_feedforward", 256),
-            zinb_eps=model_cfg.get("zinb_eps", 1e-6),
+            num_layers=model_cfg["num_layers"],
+            num_heads=model_cfg["num_heads"],
+            dropout=model_cfg["dropout"],
+            dim_feedforward=model_cfg["dim_feedforward"],
+            zinb_eps=model_cfg["zinb_eps"],
             # PHASE 3: physical edge features cache (None for mock data / learned-only fallback).
             edge_features_cache_path=(
                 None if use_mock_data else model_cfg.get("edge_features_cache_path")
@@ -353,8 +403,8 @@ def run_training(
         model = baseline_cls(
             time_series_dim=train_dataset.time_series_dim,
             hidden_dim=model_cfg["hidden_dim"],
-            num_layers=model_cfg.get("num_layers", 1),
-            dropout=model_cfg.get("dropout", 0.1),
+            num_layers=model_cfg["num_layers"],
+            dropout=model_cfg["dropout"],
         ).to(device)
 
     adapter = build_adapter(model_type, model)
@@ -382,10 +432,11 @@ def run_training(
         relative_std_diff = val_std_diff / traffic_std if traffic_std != 0 else float('inf')
 
         if relative_mean_diff > 0.2 or relative_std_diff > 0.2:
-            logger.warning(
-                f"Train/val scaler mismatch detected: "
+            raise ValueError(
+                f"CRITICAL: Train/val scaler mismatch exceeds 20%: "
                 f"Δmean={val_mean_diff:.2f} ({relative_mean_diff*100:.1f}%), "
-                f"Δstd={val_std_diff:.2f} ({relative_std_diff*100:.1f}%)"
+                f"Δstd={val_std_diff:.2f} ({relative_std_diff*100:.1f}%). "
+                "Both subsets share the same full_dataset — this should never happen."
             )
         else:
             logger.info(
@@ -399,8 +450,8 @@ def run_training(
         f"time_series_dim={train_dataset.time_series_dim}, "
         f"embedding_dim={model_cfg['embedding_dim']}, "
         f"hidden_dim={model_cfg['hidden_dim']}, "
-        f"num_layers={model_cfg.get('num_layers', 2)}, "
-        f"num_heads={model_cfg.get('num_heads', 4)}"
+        f"num_layers={model_cfg['num_layers']}, "
+        f"num_heads={model_cfg['num_heads']}"
     )
 
     # ------------------------------------------------------------------ #
@@ -417,8 +468,8 @@ def run_training(
     holdout_manifest = None
 
     if eval_mode == "inductive":
-        inductive_seed = train_cfg.get("random_seed", 42)
-        inductive_frac = data_cfg.get("inductive_holdout_frac", 0.2)
+        inductive_seed = train_cfg["random_seed"]
+        inductive_frac = data_cfg["inductive_holdout_frac"]
         inductive_holdout_mask = make_fixed_holdout_mask(
             num_nodes=num_nodes,
             holdout_frac=inductive_frac,
@@ -431,9 +482,14 @@ def run_training(
         # to the exporters and the cross-model comparability key.
         if full_dataset is not None and hasattr(full_dataset, "locations"):
             location_ids = list(full_dataset.locations)
-        else:
+        elif use_mock_data:
             location_ids = [f"node_{i}" for i in range(num_nodes)]
-            logger.warning("HARNESS: dataset exposes no location ids; using synthetic names in manifest")
+            logger.warning("HARNESS: mock mode — holdout manifest uses synthetic node IDs")
+        else:
+            raise ValueError(
+                "CRITICAL: dataset exposes no location IDs in inductive mode. "
+                "The holdout manifest requires real sensor IDs, not synthetic names."
+            )
         manifest_path = save_holdout_manifest(
             checkpoint_dir, location_ids, inductive_holdout_mask.cpu(),
             seed=inductive_seed, holdout_frac=inductive_frac,
@@ -468,6 +524,20 @@ def run_training(
             f"spatial_holdout_prob={spatial_holdout_prob})"
         )
 
+    # Pre-compute constant that only requires a single sync (mask is fixed for the whole run).
+    val_holdout_node_count = int(val_holdout_mask.sum().item()) if val_holdout_mask is not None else 0
+
+    # Hoist constant payload to device once (real data paths only; mock path supplies these per-sample via its own collate).
+    if not use_mock_data:
+        _src = full_dataset if full_dataset is not None else (
+            train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset
+        )
+        static_features_dev = _src.static_features.to(device)
+        _batch_loc_ids = list(_src.locations)
+    else:
+        static_features_dev = None
+        _batch_loc_ids = None
+
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["lr"])
 
@@ -476,33 +546,36 @@ def run_training(
     best_val_loss = float("inf")
 
     epochs = train_cfg["epochs"]
-    grad_clip_max_norm = train_cfg.get("grad_clip_max_norm", 1.0)
-    early_stop_patience = train_cfg.get("early_stop_patience", 5)
-    early_stop_min_delta = train_cfg.get("early_stop_min_delta", 0.001)
+    grad_clip_max_norm = train_cfg["grad_clip_max_norm"]
+    early_stop_patience = train_cfg["early_stop_patience"]
+    early_stop_min_delta = train_cfg["early_stop_min_delta"]
     epochs_no_improve = 0
 
     import psutil
     memory_threshold_percent = 10.0 # Exit if < 10% RAM available
 
     for epoch in range(epochs):
-        # Soft Memory Limit Check
+        # Soft Memory Limit Check — loud failure so the artifact is not silently truncated.
         mem = psutil.virtual_memory()
         if mem.percent > (100.0 - memory_threshold_percent):
-            logger.warning(
-                f"Soft memory limit hit (Available: {mem.available / (1024**3):.2f} GB, "
-                f"{mem.percent}% used). Terminating training early to prevent OOM crash."
+            raise RuntimeError(
+                f"CRITICAL: Soft memory limit hit at epoch {epoch + 1}/{epochs} "
+                f"(Available: {mem.available / (1024**3):.2f} GB, {mem.percent}% used). "
+                "Aborting to prevent OOM crash — reduce batch_size or use a smaller dataset window."
             )
-            break
 
         model.train()
 
-        epoch_loss_total = 0.0
-        epoch_loss_forecast = 0.0
-        epoch_loss_impute = 0.0
-        epoch_loss_kriging = 0.0
+        epoch_loss_total = torch.zeros((), device=device)
+        epoch_loss_forecast = torch.zeros((), device=device)
+        epoch_loss_impute = torch.zeros((), device=device)
+        epoch_loss_kriging = torch.zeros((), device=device)
 
         for batch in train_loader:
-            batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
+            batch = {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
+            if static_features_dev is not None:
+                batch["static_features"] = static_features_dev
+                batch["location_ids"] = _batch_loc_ids
 
             # PHASE 2: Re-roll a random spatial holdout per batch and blank the held-out
             # nodes' dynamic features so the encoder must rely on neighbour message passing.
@@ -510,12 +583,7 @@ def run_training(
             # the fixed inductive holdout supplies no kriging training signal.
             blank_mask = None
             if kriging_active:
-                reroll_mask = make_spatial_holdout_mask(
-                    num_nodes=num_nodes,
-                    holdout_prob=spatial_holdout_prob,
-                    device=device,
-                    seed=None,
-                )
+                reroll_mask = torch.rand(num_nodes, device=device) < spatial_holdout_prob
                 if loss_node_mask is not None:
                     reroll_mask = reroll_mask & loss_node_mask
                 batch["spatial_holdout_mask"] = reroll_mask
@@ -539,25 +607,29 @@ def run_training(
 
             optimizer.step()
 
-            epoch_loss_total += losses.total.item()
-            epoch_loss_impute += losses.impute.item()
-            epoch_loss_forecast += losses.forecast.item()
-            epoch_loss_kriging += losses.kriging.item()
+            epoch_loss_total += losses.total.detach()
+            epoch_loss_impute += losses.impute.detach()
+            epoch_loss_forecast += losses.forecast.detach()
+            epoch_loss_kriging += losses.kriging.detach()
 
-        avg_train_loss = epoch_loss_total / len(train_loader)
-        avg_train_impute = epoch_loss_impute / len(train_loader)
-        avg_train_forecast = epoch_loss_forecast / len(train_loader)
-        avg_train_kriging = epoch_loss_kriging / len(train_loader)
+        avg_train_loss = (epoch_loss_total / len(train_loader)).item()
+        avg_train_impute = (epoch_loss_impute / len(train_loader)).item()
+        avg_train_forecast = (epoch_loss_forecast / len(train_loader)).item()
+        avg_train_kriging = (epoch_loss_kriging / len(train_loader)).item()
+        assert not math.isnan(avg_train_loss), "CRITICAL FAILURE: train loss is NaN"
 
         # Validation Loop — shared harness path (capability-gated metrics).
         model.eval()
-        val_loss_total = 0.0
-        val_loss_kriging_total = 0.0
+        val_loss_total = torch.zeros((), device=device)
+        val_loss_kriging_total = torch.zeros((), device=device)
         val_accum = MetricAccumulator()
 
         with torch.no_grad():
             for batch in val_loader:
-                batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
+                batch = {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
+                if static_features_dev is not None:
+                    batch["static_features"] = static_features_dev
+                    batch["location_ids"] = _batch_loc_ids
 
                 # Apply the fixed validation holdout for deterministic scoring
                 # (inductive fixed mask, or PHASE 2 seeded transductive mask).
@@ -570,14 +642,14 @@ def run_training(
                 losses, preds = adapter.step(
                     batch, loss_weights, loss_node_mask=loss_node_mask
                 )
-                val_loss_kriging_total += losses.kriging.item()
+                val_loss_kriging_total += losses.kriging.detach()
 
                 # HARNESS (inductive): model selection must not see holdout-node
                 # performance — strip the kriging term from the selection loss.
                 if eval_mode == "inductive":
-                    val_loss_total += losses.total.item() - w_kriging * losses.kriging.item()
+                    val_loss_total += losses.total.detach() - w_kriging * losses.kriging.detach()
                 else:
-                    val_loss_total += losses.total.item()
+                    val_loss_total += losses.total.detach()
 
                 val_accum.update(
                     evaluate_batch(
@@ -585,8 +657,8 @@ def run_training(
                     )
                 )
 
-        avg_val_loss = val_loss_total / len(val_loader)
-        avg_val_kriging = val_loss_kriging_total / len(val_loader)
+        avg_val_loss = (val_loss_total / len(val_loader)).item()
+        avg_val_kriging = (val_loss_kriging_total / len(val_loader)).item()
         val_metrics = val_accum.summary()
         val_rmse = val_metrics["rmse"]
         val_mae = val_metrics["mae"]
@@ -597,7 +669,7 @@ def run_training(
         val_kriging_mae = val_metrics["kriging_mae"]
 
         # Offensive Assertion for Divergence
-        if torch.isnan(torch.tensor(avg_val_loss)):
+        if math.isnan(avg_val_loss):
             raise DivergenceError("Validation loss is NaN! The Burn Test Failed.")
 
         # None-safe formatting: None means "model cannot produce this" — shown
@@ -655,7 +727,7 @@ def run_training(
                 log_payload.update({
                     "train_loss_kriging": avg_train_kriging,
                     "val_loss_kriging": avg_val_kriging,
-                    "val_kriging_nodes": int(val_holdout_mask.sum().item()),
+                    "val_kriging_nodes": val_holdout_node_count,
                 })
             wandb.log(log_payload)
 
@@ -666,7 +738,7 @@ def run_training(
             "model_type": model_type,
             "eval_mode": eval_mode,
             "epoch": epoch + 1,
-            "seed": train_cfg.get("random_seed", 42),
+            "seed": train_cfg["random_seed"],
             "holdout_manifest_sha": manifest_sha(holdout_manifest),
             "val_loss_total": avg_val_loss,
             "metrics": val_metrics,

@@ -3,9 +3,6 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List
 
-# Standard random seed initialization
-np.random.seed(42)
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -52,7 +49,9 @@ class PreprocessingPipeline:
         
         # We'll build the continuous grid for each group explicitly
         resampled_list = []
-        unique_groups = df[groups].drop_duplicates().dropna(subset=groups)
+        assert not df[groups].isna().any().any(), \
+            f"CRITICAL: NaN in group key columns {groups} — upstream data must not have null group identifiers"
+        unique_groups = df[groups].drop_duplicates()
         
         for _, row in unique_groups.iterrows():
             logger.info(f"DEBUG: Processing group: {row.to_dict()}")

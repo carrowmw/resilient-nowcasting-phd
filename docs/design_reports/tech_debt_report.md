@@ -166,3 +166,181 @@ Section 4 flagged the legacy local-export problem in general terms. The audit fo
 5. **Phase 3 toolchain still routed through `frontend/public/data/runs`** (`upload_to_r2.py:39`, `build_run_registry.py:22`, `publish_payloads.yml`, `generate_all_payloads.sh`).
 6. **Fabricated zero weather readings ingested as real data** (`ingest_weather.py:65-67`).
 7. **MapVisualizer run-switch deadlock** (`MapVisualizer.tsx:498-538`) — fix exists in `analytics/page.tsx` but was never ported.
+
+---
+
+# GPU Performance Optimizations — 2026-07-06 audit
+
+Deep-dive audit of the training pipeline (`src/train.py`, `src/dataset.py`, `src/pipeline.py`, plus the in-loop dependencies `src/harness/adapters.py` and `src/graph_learner.py`) targeting sustained near-100% GPU utilization. Line numbers verified against the working tree as of this date. Findings are ordered by expected impact; each includes a concrete fix that preserves the Fail-Fast / Offensive Programming doctrine (no tripwire is removed — several are relocated to points where a CPU↔GPU synchronization already occurs, so they become free).
+
+The current loop has a classic serialized profile: **single-process data loading → synchronous H2D copy → FP32 forward/backward → 4 forced GPU syncs per batch for loss bookkeeping.** The GPU idles at both ends of every step.
+
+## 13. DataLoader Configuration — Single-Process, Unpinned, No Prefetch (HIGH IMPACT)
+
+**Where:** `src/train.py:241-251` and `src/train.py:310-320` (real-data loaders), `src/train.py:121` (mock loader).
+
+All `DataLoader` constructions specify only `batch_size`, `collate_fn`, and `shuffle`:
+
+```python
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=train_cfg["batch_size"],
+    collate_fn=custom_collate_real,
+    shuffle=True,
+)
+```
+
+Consequences:
+
+- **`num_workers` defaults to 0** — every `__getitem__` (window slice, float64→float32 conversion, mask draw, two `.clone()`s — see §14) and every `custom_collate_real` `torch.stack` runs **on the main process, serially, between GPU steps**. The GPU is guaranteed idle for the full duration of batch preparation. This is the single largest utilization killer in the pipeline.
+- **`pin_memory` defaults to False** — H2D copies go through pageable memory (extra staging copy, and `non_blocking=True` would be a silent no-op; see §15).
+- **`prefetch_factor` / `persistent_workers` are unset** — moot at `num_workers=0`, but must be set together with the worker fix: without `persistent_workers=True`, the worker pool is torn down and re-forked at **every epoch boundary**, and with short epochs (early stopping at patience 5, small datasets) fork/teardown becomes a measurable fraction of wall time.
+- The collate functions (`src/dataset.py:277-287`, `src/train.py:112-119`) are list-comprehension `torch.stack` calls over per-sample dicts. This is acceptable *inside workers*, but today it executes on the main process. Note also that `custom_collate_real` stacks `node_mask` as `torch.bool` and discards nothing — three full-window tensors per sample cross the worker→main IPC boundary (see §14 for the structural fix that shrinks this 3× payload to 1×).
+
+**Proposed change** (`src/train.py`, both real-data branches; values sourced from config to honor the centralized-YAML mandate — add them to `configs/train/train.yaml` under `training:`):
+
+```python
+use_cuda = torch.cuda.is_available()
+num_workers = train_cfg["num_workers"]          # no .get() default — fail fast on missing key
+assert num_workers >= 0, f"CRITICAL: num_workers must be >= 0, got {num_workers}"
+
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=train_cfg["batch_size"],
+    collate_fn=custom_collate_real,
+    shuffle=True,
+    num_workers=num_workers,
+    pin_memory=use_cuda,
+    persistent_workers=num_workers > 0,
+    prefetch_factor=4 if num_workers > 0 else None,
+    drop_last=True,   # stable batch shapes; also required for CUDA-graph/compile work later
+)
+```
+
+A starting point of `num_workers: 4` is appropriate (the dataset is fully in-RAM after `__init__`, so workers are CPU-bound on masking/stacking, not I/O-bound; 2–4 is typically enough once §14 lands). `drop_last=True` on the train loader only — the val loader must keep every sample for metric integrity.
+
+> [!CAUTION]
+> **Worker-seed tripwire required.** With `num_workers > 0`, each worker inherits forked RNG state; PyTorch reseeds `torch` per worker but **not NumPy**. `RealIoTDataset.__getitem__` currently uses `torch.rand_like` (safe), but `make_spatial_holdout_mask` uses `np.random.RandomState` — if any NumPy randomness ever moves into `__getitem__`, all workers would draw identical masks silently. Add a `worker_init_fn` that seeds NumPy from `torch.initial_seed()` and asserts distinct worker seeds, keeping the failure loud.
+
+## 14. `__getitem__` CPU Overhead — Per-Sample dtype Conversion, Triple Copies, and Constant Payloads (HIGH IMPACT)
+
+**Where:** `src/dataset.py:192-220`, with root causes in `__init__` at `src/dataset.py:143-167,183`.
+
+Per sample, `__getitem__` currently performs:
+
+1. **float64→float32 conversion of the entire window, every call** — `src/dataset.py:198,204`. `self.dynamic_data` is built from `StandardScaler` output (`:143-167`), which is **float64 NumPy**; `self.unscaled_traffic` (`:132`) likewise. So `torch.tensor(dyn_slice, dtype=torch.float32)` re-converts and copies `[N, seq_len, 3]` doubles on every access, and the arrays occupy 2× the RAM they need for their entire lifetime.
+2. **Layout transpose per call** — `np.transpose(dyn_slice, (1, 0, 2))` at `:196` produces a non-contiguous view that the `torch.tensor(...)` copy then has to gather.
+3. **Two full-window `.clone()`s plus a same-shape bool mask** — `:207-210`. The clean window is cloned into `target_impute`, cloned *again* into `dyn_masked`, then NaN-scattered. Every sample therefore materializes **three window-sized tensors** (2 float + 1 bool ≈ 2.25× the raw window) that all cross collate, worker IPC, and the PCIe bus.
+4. **Constant payloads shipped per sample** — `:213,219`. `self.static_features` (full `[N, S]` tensor) and `self.locations` (a Python list of strings) are returned from every `__getitem__`. The collate at `:280,286` keeps only `batch_list[0]`'s copy, but with workers enabled each sample still pickles both through the IPC queue just to be discarded. The string list is particularly wasteful (per-sample pickling of N Python strings).
+
+**Proposed changes:**
+
+- **Pre-convert once in `__init__`** — after `:167`, store `self.dynamic_data = torch.from_numpy(self.dynamic_data.astype(np.float32))` in `[T, N, D]` layout, and `self.unscaled_traffic = torch.from_numpy(self.unscaled_traffic.astype(np.float32))`. Keep the existing offensive assertions on scaler stats; add one at conversion: `assert not torch.isnan(self.dynamic_data).any(), "CRITICAL: NaN in scaled dynamic data"` — this moves NaN detection from N-per-epoch to once-per-run *and makes it stronger* (it covers every element, not just sampled windows). `__getitem__` then becomes `self.dynamic_data[idx : idx + self.seq_len].permute(1, 0, 2)` — a zero-copy view until collate stacks it.
+- **Move mask injection to the GPU (recommended)** — the masking at `:207-210` is data augmentation, not data loading. Have `__getitem__` return only the *clean* window; generate the mask and NaN-blank **on-device** in the train loop right after the H2D copy:
+
+  ```python
+  # train.py inner loop, after batch is on device
+  clean = batch["dynamic_features"]                                # [B, N, T, D], clean
+  node_mask = torch.rand(clean.shape, device=device) < mask_prob   # GPU RNG, no H2D
+  batch["target_impute"] = clean
+  batch["dynamic_features"] = clean.masked_fill(node_mask, float("nan"))
+  batch["node_mask"] = node_mask
+  ```
+
+  This cuts the CPU→GPU transfer volume for the dominant tensors by ~3× (one float window instead of two floats + one bool), eliminates both `.clone()`s from the hot CPU path, and keeps the doctrine intact — the NaN tripwire semantics downstream (`pipeline.py:145` `nan_to_num`, decoder asserts) are unchanged because the masked tensor is bit-identical to today's. The per-sample RNG stream changes (GPU generator instead of per-worker CPU), which must be noted in the run manifest for reproducibility, and `mask_prob` moves from a dataset arg to a train-loop arg.
+- **Stop shipping constants through the loader** — remove `static_features` and `location_ids` from the per-sample dict and collate (`:213,219,280,286`); read them once from the dataset in `run_training` and insert into the batch dict on the training side (they are already treated as batch-invariant by both collates and by `pipeline.py:136,141`). Note `random_split` wraps the dataset in `Subset`, so access them via the propagated attributes already set at `train.py:300-302`.
+
+## 15. Host-to-Device Transfers — Synchronous Copies, and a Per-Batch NumPy→GPU Round Trip (MEDIUM-HIGH IMPACT)
+
+**Where:** `src/train.py:505` (train), `src/train.py:560` (val), `src/train.py:513-518` + `src/dataset.py:248-250` (mask re-roll), `src/dataset.py:272-274` (holdout blanking).
+
+- **`.to(device)` without `non_blocking=True`** — `train.py:505,560`:
+
+  ```python
+  batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
+  ```
+
+  Each copy blocks the host until the transfer completes. Fix (effective only in combination with `pin_memory=True` from §13 — without pinned staging, `non_blocking=True` silently degrades to a blocking copy, which is why §13 and §15 must land together):
+
+  ```python
+  batch = {
+      k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v
+      for k, v in batch.items()
+  }
+  ```
+
+- **Per-batch CPU RNG + H2D transfer for the kriging re-roll** — `train.py:513-518` calls `make_spatial_holdout_mask(..., seed=None)` every training batch when kriging is active; that function (`dataset.py:248-250`) draws from `np.random.RandomState()` on the CPU and then does `torch.from_numpy(mask).bool().to(device)` — an extra synchronous H2D copy *and* a fresh `RandomState` construction per batch. Fix: draw directly on-device — `torch.rand(num_nodes, device=device) < holdout_prob` — for the `seed=None` training path, keeping the seeded NumPy path for the deterministic validation mask (built once, outside the loop, at `train.py:453`). Keep both existing asserts; they check Python floats/ints and cost nothing.
+- **No inadvertent GPU→CPU→GPU round trips of batch data were found** in the steady-state loop — good. `apply_spatial_holdout` (`dataset.py:272-274`) runs on-device but does `masked = dynamic_features.clone()` followed by advanced-index assignment; a broadcast `masked_fill` avoids the scatter kernel: `dynamic_features.masked_fill(holdout_mask.view(1, -1, 1, 1), 0.0)` (`masked_fill` is out-of-place, so the "input left untouched" contract and all three entry asserts are preserved verbatim).
+
+## 16. Implicit CPU-GPU Synchronization — Four Forced Syncs per Training Batch (HIGH IMPACT)
+
+**Where:** `src/train.py:542-545` (train loop), `src/train.py:573,578-580` (val loop), `src/train.py:600`, `src/pipeline.py:225`, `src/graph_learner.py:197,201-207,248`.
+
+- **Loss bookkeeping calls `.item()` four times per training batch** — `train.py:542-545`:
+
+  ```python
+  epoch_loss_total += losses.total.item()
+  epoch_loss_impute += losses.impute.item()
+  epoch_loss_forecast += losses.forecast.item()
+  epoch_loss_kriging += losses.kriging.item()
+  ```
+
+  Each `.item()` stalls the host until the entire forward+backward for that batch has drained, defeating the CUDA stream's ability to overlap the next batch's data prep with the current batch's compute. The same pattern repeats in the val loop (`:573,578-580` — up to three `.item()`s per val batch). Fix: accumulate **as 0-dim GPU tensors** and synchronize once per epoch:
+
+  ```python
+  epoch_loss_total += losses.total.detach()      # stays on device, no sync
+  ...
+  avg_train_loss = (epoch_loss_total / len(train_loader)).item()   # ONE sync per epoch
+  ```
+
+  (Initialize the accumulators as `torch.zeros((), device=device)`.) All downstream logging/W&B/early-stopping code is untouched — it already consumes Python floats at epoch granularity.
+- **The per-batch NaN tripwire in the pipeline forward** — `pipeline.py:225` `assert not torch.isnan(loss).any()` forces a full sync inside every forward. Under the doctrine this tripwire must stay — so **relocate it, don't delete it**: with the accumulator fix above, assert on the *epoch* aggregate at the point of the already-paid sync (`assert not math.isnan(avg_train_loss), "CRITICAL FAILURE: train loss is NaN"`). A NaN in any batch propagates into the sum, so detection strength is preserved; latency of detection moves from batch-level to epoch-level, which is an acceptable trade the report should record explicitly. If batch-level detection latency is deemed mandatory, the middle ground is `torch.autograd.set_detect_anomaly` in a debug config, not a per-batch sync in production.
+- **Graph-learner per-forward syncs** — `graph_learner.py:197` (`assert not torch.isnan(edge_attr).any()`) and `:201-207` (road-fraction sum check via `torch.all(...)`) each force a sync **every forward pass**, yet they validate data that is *static per node-ordering*: `phys` is a gather from the memoized `_phys_dense` tensor built once at `:183`. Move both assertions into `_build_physical_dense` / the memoization branch so they run once per (node-ordering, device) instead of once per batch — the check is then strictly stronger (validates the full dense tensor, not just the edges that survived sparsification) and costs nothing in steady state. The `edge_attr.shape` assert at `:195` is shape metadata, sync-free, and can stay.
+- **`dense_to_sparse` at `graph_learner.py:248`** is an unavoidable per-batch sync today (`nonzero()` has a data-dependent output shape, so the host must wait for the count). It is legitimate — the learned adjacency changes every optimizer step — but it caps how far asynchrony can go and blocks future `torch.compile`/CUDA-graph capture of the full model. Worth recording as a known ceiling; a fixed-top-k sparsification would remove it, but that is a modelling change requiring separate sign-off.
+- **Minor:** `train.py:600` wraps a Python float in a tensor to check NaN (`torch.isnan(torch.tensor(avg_val_loss))`) — use `math.isnan(avg_val_loss)`; `train.py:658` `int(val_holdout_mask.sum().item())` syncs once per epoch inside the W&B block — compute it once before the epoch loop (the mask is fixed).
+
+## 17. Mixed Precision — Entirely Absent (HIGH IMPACT on tensor-core GPUs)
+
+**Where:** `src/train.py:504-545` (train step), `:558-586` (val step). No `torch.autocast`, no `GradScaler`, no TF32 configuration anywhere in `src/`.
+
+The full forward/backward — GATv2 attention, transformer-style encoder layers with `dim_feedforward` up to 256+, and all decoder matmuls — runs in FP32, leaving tensor cores idle.
+
+**Proposed change, in two stages:**
+
+1. **TF32 (zero-risk, one line, do immediately):** `torch.set_float32_matmul_precision("high")` at startup in `run_training`. On Ampere+ this routes FP32 matmuls through tensor cores with no numerics change relevant to this model, no API changes, no scaler.
+2. **bf16 autocast (recommended over fp16):**
+
+   ```python
+   amp_enabled = train_cfg["amp"] and device.type == "cuda"   # explicit config key, no silent default
+   if amp_enabled:
+       assert torch.cuda.is_bf16_supported(), "CRITICAL: amp=true but device lacks bf16 support"
+
+   with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp_enabled):
+       losses, _ = adapter.step(batch, loss_weights, loss_node_mask=loss_node_mask)
+   losses.total.backward()          # outside autocast, as required
+   ```
+
+   bf16 has FP32's exponent range, so **no `GradScaler` is needed** and there is no silent under/overflow failure mode to defend against — the better fit for this codebase's doctrine than fp16+scaler (which introduces `scaler.step()`'s *silent skip-on-inf* behavior, a defensive pattern the project forbids; if fp16 is ever required for pre-Ampere hardware, the skip counter must be asserted on, not ignored).
+
+   **Mathematical-safety carve-out:** the ZINB NLL (`src/decoders.py`, `compute_zinb_nll`) composes `log`/`lgamma`/division near clamp boundaries, and the existing tripwires there are calibrated for FP32. autocast already keeps many reductions in FP32, but the loss should be *explicitly* excluded rather than implicitly trusted: wrap `compute_loss` in `with torch.autocast(device_type="cuda", enabled=False):` inside `pipeline.py:207` and upcast its float inputs (`.float()`) — encoder/decoder matmuls get tensor cores; the numerically delicate NLL stays FP32. Apply the same autocast context to the val loop. Existing NaN tripwires then serve as the burn-test for the mixed-precision rollout: any instability crashes loudly, exactly as intended.
+
+## 18. Secondary Observations (LOW impact individually, cheap to fix)
+
+- **`torch.save` on the main thread at every improvement** — `train.py:633` serializes the checkpoint synchronously between epochs. Acceptable at current model sizes; revisit only if checkpoints grow.
+- **Validation runs under `torch.no_grad()` but not `model.eval()`-specific fast paths beyond dropout** — already correct at `train.py:553,558`; no change. (Noted so the audit trail shows it was checked.)
+- **`RIoTAdapter.step` dict copies** (`harness/adapters.py:54`) and the memo-key `tuple(location_ids)` comparison (`graph_learner.py:179-182`) are per-batch Python overhead of O(N) — negligible next to §13-§17, not worth churn.
+- **Mock loader** (`train.py:121`) generates `torch.randn` per `__getitem__` on the main process — fine for smoke tests; do not propagate its configuration to real runs.
+
+## Recommended Sequencing
+
+| Order | Item | Sections | Risk |
+|---|---|---|---|
+| 1 | Tensor accumulators + relocated NaN tripwires (one sync/epoch) | §16 | Low — pure loop refactor |
+| 2 | `num_workers` / `pin_memory` / `persistent_workers` / `prefetch_factor` + worker-seed tripwire | §13 | Low |
+| 3 | `non_blocking=True` transfers + on-device mask re-roll | §15 | Low |
+| 4 | TF32 matmul precision | §17.1 | Negligible |
+| 5 | Dataset float32 pre-conversion + constant-payload removal | §14 | Low |
+| 6 | GPU-side mask injection (3× H2D reduction) | §14 | Medium — RNG stream changes; document in manifest |
+| 7 | bf16 autocast with FP32 loss carve-out | §17.2 | Medium — validate against burn test + one full A/B training run |
+
+Items 1–4 are independent and can ship in a single PR; each preserves every existing assertion (some strengthened, some relocated to already-synchronized points). Measure before/after each stage with `torch.profiler` (one schedule-based trace per stage) rather than `nvidia-smi` sampling, so DataLoader wait time vs. kernel time is attributed correctly.

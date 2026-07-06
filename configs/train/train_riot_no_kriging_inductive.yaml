@@ -2,9 +2,6 @@
 # Ablation Test B: Ablate Kriging Pressure (The "Task 3" Proof)
 # ============================================================================
 
-# Source of the training data. 'database' pulls live from PostgreSQL, 'parquet' uses cached files.
-data_source: "database"
-
 wandb:
   # The Weights & Biases project name for standard training runs.
   project: "resilient-iot-v2"
@@ -54,10 +51,6 @@ model:
   dim_feedforward: null
   # Epsilon value added to the ZINB dispersion parameter for numerical stability.
   zinb_eps: 1.0e-6
-  # Path to the precomputed physical edge features (distances, road types) for observed nodes.
-  edge_features_cache_path: "data/external/edge_features_cache.json"
-  # Path to the precomputed physical edge features connecting simulated nodes to observed nodes.
-  simulated_edge_features_cache_path: "data/external/simulated_edge_features_cache.json"
 
 training:
   # Total number of training epochs.
@@ -68,8 +61,6 @@ training:
   lr: 0.0003
   # Maximum norm for gradient clipping to prevent exploding gradients.
   grad_clip_max_norm: 1.0
-  # Seed for PyTorch, NumPy, and random module for reproducible initialization.
-  random_seed: 42
   # Number of epochs to wait without improvement before stopping training.
   early_stop_patience: 10
   # Minimum required improvement in the monitored metric to reset the patience counter.

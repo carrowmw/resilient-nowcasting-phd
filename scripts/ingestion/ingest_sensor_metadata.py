@@ -5,7 +5,7 @@ Populate the sensor_metadata table from data/traffic_sensors.json.
 Must run before ingest_static_features.py due to the FK constraint.
 
 Usage:
-    python scripts/ingest_sensor_metadata.py [--dry-run]
+    python scripts/ingestion/ingest_sensor_metadata.py [--dry-run] [--allow-duplicates]
 """
 
 import argparse
@@ -29,6 +29,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Ingest sensor metadata to TimescaleDB")
     p.add_argument("--sensors", default=DEFAULT_SENSORS_PATH, help="Path to traffic_sensors.json")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--allow-duplicates", action="store_true",
+                   help="Suppress the assertion that no rows were skipped by ON CONFLICT DO NOTHING.")
     return p.parse_args()
 
 
@@ -80,7 +82,13 @@ def main():
             template="(%s, %s, %s, %s)",
         )
         conn.commit()
-        logger.info(f"Inserted {len(records)} rows into sensor_metadata (ON CONFLICT DO NOTHING)")
+        inserted = cursor.rowcount
+        skipped = len(records) - inserted
+        logger.info(f"Inserted {inserted} rows into sensor_metadata; {skipped} skipped (ON CONFLICT DO NOTHING)")
+        assert args.allow_duplicates or skipped == 0, (
+            f"CRITICAL: {skipped} row(s) were skipped by ON CONFLICT DO NOTHING. "
+            "Re-run with --allow-duplicates if this is expected (e.g. re-populating an existing table)."
+        )
     finally:
         conn.close()
 

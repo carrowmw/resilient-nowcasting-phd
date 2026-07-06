@@ -8,7 +8,7 @@ Populate the static_features table from:
 Requires sensor_metadata to be populated first (FK constraint).
 
 Usage:
-    python scripts/ingest_static_features.py [--dry-run]
+    python scripts/ingestion/ingest_static_features.py [--dry-run] [--allow-duplicates]
 """
 
 import argparse
@@ -41,6 +41,8 @@ def parse_args():
     p.add_argument("--places", default=PLACES_PATH, help="Path to places_cache.json")
     p.add_argument("--osm", default=OSM_PATH, help="Path to osm_features_cache.json")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--allow-duplicates", action="store_true",
+                   help="Suppress the assertion that no rows were skipped by ON CONFLICT DO NOTHING.")
     return p.parse_args()
 
 
@@ -75,26 +77,26 @@ def main():
 
     records = []
     for sensor_id in valid_sensor_ids:
-        p = places.get(sensor_id, {})
-        o = osm.get(sensor_id, {})
+        p = places[sensor_id]
+        o = osm[sensor_id]
 
         row = (
             sensor_id,
-            float(p.get('transit_count', 0)),
-            float(p.get('retail_count', 0)),
-            float(p.get('food_drink_count', 0)),
-            float(p.get('nightlife_count', 0)),
-            float(p.get('education_count', 0)),
-            float(p.get('recreation_count', 0)),
-            float(p.get('total_poi_count', 0)),
-            float(p.get('landuse_entropy', 0)),
-            float(1 if p.get('is_school_zone', False) else 0),
-            float(o.get('betweenness_centrality', 0)),
-            float(o.get('closeness_centrality', 0)),
-            float(p.get('dist_to_city_centre', 0)),
-            float(o.get('degree_centrality', 0)),
-            float(p.get('nearby_bus_stops', 0)),
-            float(p.get('nearby_parking', 0)),
+            float(p['transit_count']),
+            float(p['retail_count']),
+            float(p['food_drink_count']),
+            float(p['nightlife_count']),
+            float(p['education_count']),
+            float(p['recreation_count']),
+            float(p['total_poi_count']),
+            float(p['landuse_entropy']),
+            float(1 if p['is_school_zone'] else 0),
+            float(o['betweenness_centrality']),
+            float(o['closeness_centrality']),
+            float(p['dist_to_city_centre']),
+            float(o['degree_centrality']),
+            float(p['nearby_bus_stops']),
+            float(p['nearby_parking']),
         )
         records.append(row)
 
@@ -127,7 +129,13 @@ def main():
             template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         )
         conn.commit()
-        logger.info(f"Inserted {len(records)} rows into static_features (ON CONFLICT DO NOTHING)")
+        inserted = cursor.rowcount
+        skipped = len(records) - inserted
+        logger.info(f"Inserted {inserted} rows into static_features; {skipped} skipped (ON CONFLICT DO NOTHING)")
+        assert args.allow_duplicates or skipped == 0, (
+            f"CRITICAL: {skipped} row(s) were skipped by ON CONFLICT DO NOTHING. "
+            "Re-run with --allow-duplicates if this is expected (e.g. re-populating an existing table)."
+        )
     finally:
         conn.close()
 

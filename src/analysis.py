@@ -34,7 +34,7 @@ def list_studies(storage: str):
         for s in summaries:
             best_value = f"{s.best_trial.value:.6f}" if s.best_trial is not None else "N/A"
             print(f"{s.study_name:<40} {s.n_trials:<10} {best_value:<15}")
-    except Exception as e:
+    except (optuna.exceptions.InvalidStateError, RuntimeError, OSError) as e:
         logger.error(f"Failed to list studies: {e}")
 
 def analyze_study(storage: str, study_name: str):
@@ -72,12 +72,12 @@ def analyze_study(storage: str, study_name: str):
                 print("\nHyperparameter Importance:")
                 for param, importance in importances.items():
                     print(f"  - {param:<30}: {importance:.4f}")
-            except Exception as e:
+            except (ValueError, RuntimeError) as e:
                 logger.warning(f"Could not calculate importance: {e}")
-        
+
         print("="*60 + "\n")
 
-    except Exception as e:
+    except (KeyError, ValueError, RuntimeError, OSError) as e:
         logger.error(f"Failed to analyze study: {e}")
 
 def promote_study(storage: str, study_name: str, config_path: str):
@@ -119,7 +119,7 @@ def promote_study(storage: str, study_name: str, config_path: str):
         
         logger.info(f"Successfully promoted parameters to {config_path}")
 
-    except Exception as e:
+    except (KeyError, ValueError, OSError) as e:
         logger.error(f"Failed to promote study: {e}")
 
 def main():

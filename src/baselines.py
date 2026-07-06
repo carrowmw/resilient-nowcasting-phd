@@ -25,8 +25,6 @@ class RecurrentBaseline(nn.Module):
         rnn_type: str = "lstm",
     ):
         super().__init__()
-        torch.manual_seed(42)
-
         assert rnn_type in ("lstm", "gru"), f"Unknown rnn_type: {rnn_type}"
         rnn_cls = nn.LSTM if rnn_type == "lstm" else nn.GRU
         self.rnn = rnn_cls(

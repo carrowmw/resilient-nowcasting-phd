@@ -8,7 +8,7 @@ NOTE: This script is a temporary bridge. In a future task, this will be replaced
 fetcher that queries the Open-Meteo historical API and interpolates to 15-minute intervals.
 
 Usage:
-    python scripts/ingest_weather.py [--batch-size 50000] [--dry-run]
+    python scripts/ingestion/ingest_weather.py [--batch-size 50000] [--dry-run] [--allow-duplicates]
 """
 
 import argparse
@@ -34,6 +34,8 @@ def parse_args():
     p.add_argument("--cache", default=DEFAULT_CACHE_PATH, help="Path to static_features_cache.parquet")
     p.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--allow-duplicates", action="store_true",
+                   help="Suppress the assertion that no rows were skipped by ON CONFLICT DO NOTHING.")
     return p.parse_args()
 
 
@@ -62,9 +64,18 @@ def main():
     # Deduplicate: each (dt, location) pair should have one weather reading
     df = df.drop_duplicates(subset=['dt', 'location'])
     df = df.dropna(subset=['dt', 'location'])
-    # Weather data is placeholder (NaN) — fill with 0.0 to satisfy NOT NULL constraint.
-    df['Humidity'] = df['Humidity'].fillna(0.0)
-    df['Solar Radiation'] = df['Solar Radiation'].fillna(0.0)
+
+    # Reject NaN weather values — zero must never be fabricated as a reading.
+    nan_humidity = df['Humidity'].isna().sum()
+    nan_solar = df['Solar Radiation'].isna().sum()
+    assert nan_humidity == 0, (
+        f"CRITICAL: {nan_humidity} NaN Humidity value(s) in weather data. "
+        "Fix the upstream data source; do not fabricate zero readings."
+    )
+    assert nan_solar == 0, (
+        f"CRITICAL: {nan_solar} NaN 'Solar Radiation' value(s) in weather data. "
+        "Fix the upstream data source; do not fabricate zero readings."
+    )
 
     # Ensure dt is timezone-aware (UTC)
     if df['dt'].dt.tz is None:
@@ -93,7 +104,7 @@ def main():
             for row in df.itertuples(index=False)
         ]
 
-        inserted = 0
+        total_inserted = 0
         for i in range(0, total, args.batch_size):
             batch = records[i: i + args.batch_size]
             execute_values(
@@ -107,10 +118,17 @@ def main():
                 template="(%s, %s, %s, %s)",
             )
             conn.commit()
-            inserted += len(batch)
-            logger.info(f"Committed batch: {inserted:,}/{total:,} rows")
+            total_inserted += cursor.rowcount
+            logger.info(f"Committed batch ending at row {min(i + args.batch_size, total):,}: "
+                        f"{total_inserted:,} inserted so far")
 
-        logger.info(f"Inserted {total:,} rows into weather_readings (ON CONFLICT DO NOTHING)")
+        total_skipped = total - total_inserted
+        logger.info(f"Total: {total:,} attempted, {total_inserted:,} inserted, "
+                    f"{total_skipped:,} skipped (ON CONFLICT DO NOTHING)")
+        assert args.allow_duplicates or total_skipped == 0, (
+            f"CRITICAL: {total_skipped} row(s) were skipped by ON CONFLICT DO NOTHING. "
+            "Re-run with --allow-duplicates if this is expected (e.g. re-ingesting existing data)."
+        )
     finally:
         conn.close()
 

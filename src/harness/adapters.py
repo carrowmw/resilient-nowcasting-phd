@@ -52,9 +52,9 @@ class RIoTAdapter(ModelAdapter):
 
     def step(self, batch, weights, loss_node_mask=None):
         model_batch = dict(batch)
-        model_batch["w_impute"] = weights.get("w_impute", 1.0)
-        model_batch["w_forecast"] = weights.get("w_forecast", 1.0)
-        model_batch["w_kriging"] = weights.get("w_kriging", 0.0)
+        model_batch["w_impute"] = weights["w_impute"]
+        model_batch["w_forecast"] = weights["w_forecast"]
+        model_batch["w_kriging"] = weights["w_kriging"]
         if loss_node_mask is not None:
             model_batch["loss_node_mask"] = loss_node_mask
 
@@ -122,8 +122,8 @@ class RecurrentBaselineAdapter(ModelAdapter):
         loss_kriging = torch.zeros((), device=mu.device)
 
         total = (
-            weights.get("w_forecast", 1.0) * loss_forecast
-            + weights.get("w_impute", 1.0) * loss_impute
+            weights["w_forecast"] * loss_forecast
+            + weights["w_impute"] * loss_impute
         )
         assert not torch.isnan(total), "CRITICAL: baseline total loss is NaN"
 

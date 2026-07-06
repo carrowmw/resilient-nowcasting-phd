@@ -156,11 +156,6 @@ def main():
     except AssertionError as e:
         print(f"\n❌ DESK CHECK FAILED: {e}")
         return 1
-    except Exception as e:
-        print(f"\n❌ UNEXPECTED ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
 
 
 if __name__ == '__main__':

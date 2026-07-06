@@ -24,9 +24,6 @@ class MaskedSpatiotemporalEncoder(nn.Module):
                  edge_dim: int = 1):
         super(MaskedSpatiotemporalEncoder, self).__init__()
 
-        # Reproducibility at initialization
-        torch.manual_seed(42)
-
         self.num_nodes = num_nodes
         self.seq_len = seq_len
         self.time_series_dim = time_series_dim

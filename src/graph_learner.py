@@ -152,6 +152,18 @@ class DynamicGraphLearner(nn.Module):
                     dense[i, j, 3 + k] = pair[road_key]
 
         tensor = torch.from_numpy(dense).to(device)
+
+        # Asserts here are strictly stronger than at edge-selection time: they cover the
+        # full [N, N, 9] dense tensor once at build time vs. only surviving edges per forward pass.
+        assert not torch.isnan(tensor).any(), "CRITICAL: NaN in edge_attr"
+        road_sums = tensor[..., 3:9].sum(-1)  # [N, N]
+        connected = (road_sums - 1.0).abs() < 1e-3
+        disconnected = road_sums.abs() < 1e-3
+        assert torch.all(connected | disconnected), (
+            "CRITICAL: Road fractions must sum to ~1.0 (connected) or ~0.0 (disconnected); "
+            f"offending sums={road_sums[~(connected | disconnected)]}"
+        )
+
         logger.info(
             f"Built dense physical edge features: shape={tuple(tensor.shape)}, device={device}"
         )
@@ -191,20 +203,9 @@ class DynamicGraphLearner(nn.Module):
         learned = edge_weight.unsqueeze(1)                     # [E, 1]
         edge_attr = torch.cat([phys, learned], dim=1)          # [E, 10]
 
-        # OFFENSIVE ASSERTIONS
+        # Shape assertion is sync-free; data integrity checks run at build time in _build_physical_dense.
         assert edge_attr.shape == (E, _EDGE_ATTR_DIM), \
             f"CRITICAL: Expected ({E}, {_EDGE_ATTR_DIM}), got {tuple(edge_attr.shape)}"
-        assert not torch.isnan(edge_attr).any(), "CRITICAL: NaN in edge_attr"
-
-        # Road fractions (cols 3:9) must sum to ~1.0 for connected pairs OR ~0.0 for
-        # disconnected pairs (no OSM path — 38 such pairs exist in the real cache).
-        road_sums = edge_attr[:, 3:9].sum(dim=1)
-        connected = (road_sums - 1.0).abs() < 1e-3
-        disconnected = road_sums.abs() < 1e-3
-        assert torch.all(connected | disconnected), (
-            "CRITICAL: Road fractions must sum to ~1.0 (connected) or ~0.0 (disconnected); "
-            f"offending sums={road_sums[~(connected | disconnected)]}"
-        )
 
         return edge_attr
 

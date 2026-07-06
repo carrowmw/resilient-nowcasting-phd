@@ -34,9 +34,11 @@ class ResilientIoTPipeline(nn.Module):
                  simulated_edge_features_cache_path: str = None):
         super(ResilientIoTPipeline, self).__init__()
 
-        # Default dim_feedforward to 4x hidden_dim if not specified or invalid
-        if dim_feedforward is None or dim_feedforward <= 0:
+        # None is a documented API default (hidden_dim * 4); <= 0 is an invalid caller error.
+        if dim_feedforward is None:
             dim_feedforward = hidden_dim * 4
+        elif dim_feedforward <= 0:
+            raise ValueError(f"CRITICAL: dim_feedforward must be positive, got {dim_feedforward}")
 
         # 1. Topology Inference
         # PHASE 3: pass the edge features cache so the graph learner can build [E, 10] edge_attr.
@@ -215,14 +217,11 @@ class ResilientIoTPipeline(nn.Module):
             traffic_std=self.traffic_std,    # PHASE 1: scaler buffers
             kriging_pred=kriging_pred,                 # PHASE 2
             spatial_holdout_mask=holdout_mask,         # PHASE 2
-            w_impute=batch.get('w_impute', 1.0),
-            w_forecast=batch.get('w_forecast', 1.0),
-            w_kriging=batch.get('w_kriging', 0.0),     # PHASE 2
-            loss_node_mask=batch.get('loss_node_mask')  # HARNESS: inductive zero-shot guarantee
+            w_impute=batch['w_impute'],
+            w_forecast=batch['w_forecast'],
+            w_kriging=batch['w_kriging'],               # PHASE 2
+            loss_node_mask=batch.get('loss_node_mask')  # HARNESS: inductive zero-shot guarantee (optional)
         )
-
-        # CRITICAL SAFEGUARD
-        assert not torch.isnan(loss).any(), "CRITICAL FAILURE: Pipeline total_loss is NaN."
 
         return loss, loss_impute, loss_forecast, loss_kriging, imputed_features, mu, theta, pi, tripwires, kriging_pred
 
@@ -304,6 +303,11 @@ if __name__ == "__main__":
         epoch_loss = 0.0
         for batch_idx, batch in enumerate(dataloader):
             optimizer.zero_grad()
+
+            # Inject loss weights that the adapter normally provides.
+            batch["w_impute"] = 1.0
+            batch["w_forecast"] = 1.0
+            batch["w_kriging"] = 0.0
 
             # Forward Pass
             loss, *_ = model(batch)

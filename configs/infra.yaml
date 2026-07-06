@@ -1,0 +1,26 @@
+# ============================================================================
+# Infrastructure & runtime configuration
+#
+# Values here configure HOW the system runs, not WHAT it learns.
+# None of these keys affect model numerics, gradient flow, or evaluation metrics.
+#
+# Loaded by load_config (src/train.py) as a base layer before the training
+# config is applied — any key present in the training config takes precedence.
+# ============================================================================
+
+# Backend data source: 'database' pulls live from PostgreSQL; 'parquet' uses cached files.
+data_source: "database"
+
+model:
+  # Precomputed physical edge features for observed sensor nodes (distances, road types).
+  edge_features_cache_path: "data/external/edge_features_cache.json"
+  # Precomputed physical edge features connecting simulated nodes to observed nodes.
+  simulated_edge_features_cache_path: "data/external/simulated_edge_features_cache.json"
+
+training:
+  # DataLoader worker processes for parallel data prefetching (0 = main process only).
+  # Increase on fast storage; set to 0 when debugging DataLoader issues.
+  num_workers: 4
+  # Reproducibility seed applied once at run start (torch + numpy).
+  # Does not affect model architecture or loss landscape — only the random stream.
+  random_seed: 42

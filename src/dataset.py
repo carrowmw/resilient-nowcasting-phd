@@ -7,10 +7,6 @@ from sklearn.preprocessing import StandardScaler
 
 from db_connector import DataConnector
 
-# Standard random seed initialization
-np.random.seed(42)
-torch.manual_seed(42)
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -122,9 +118,18 @@ class RealIoTDataset(Dataset):
         dyn_df = df[['value', 'Humidity', 'Solar Radiation']].unstack('location')
         locations_idx = pd.Index(self.locations, name='location')
         
-        val_arr = dyn_df['value'].reindex(columns=locations_idx).fillna(0.0).values
-        hum_arr = dyn_df['Humidity'].reindex(columns=locations_idx).fillna(0.0).values
-        sol_arr = dyn_df['Solar Radiation'].reindex(columns=locations_idx).fillna(0.0).values
+        val_df = dyn_df['value'].reindex(columns=locations_idx)
+        hum_df = dyn_df['Humidity'].reindex(columns=locations_idx)
+        sol_df = dyn_df['Solar Radiation'].reindex(columns=locations_idx)
+        assert not val_df.isna().any().any(), \
+            "CRITICAL: NaN in traffic values after pivot/reindex — upstream data has gaps"
+        assert not hum_df.isna().any().any(), \
+            "CRITICAL: NaN in Humidity after pivot/reindex — upstream data has gaps"
+        assert not sol_df.isna().any().any(), \
+            "CRITICAL: NaN in Solar Radiation after pivot/reindex — upstream data has gaps"
+        val_arr = val_df.values
+        hum_arr = hum_df.values
+        sol_arr = sol_df.values
 
         # Preserve a raw, unscaled copy of traffic counts BEFORE any scaling.
         # ZINB NLL requires non-negative counts as targets; StandardScaler would
@@ -166,6 +171,10 @@ class RealIoTDataset(Dataset):
             weather_scaled[:, :, 1]   # Solar Radiation
         ], axis=-1)
 
+        self.dynamic_data = torch.from_numpy(self.dynamic_data.astype(np.float32))
+        self.unscaled_traffic = torch.from_numpy(self.unscaled_traffic.astype(np.float32))
+        assert not torch.isnan(self.dynamic_data).any(), "CRITICAL: NaN in scaled dynamic data"
+
         self.time_series_dim = self.dynamic_data.shape[-1]
 
         logger.info(f"Traffic scaler: mean={self.traffic_mean:.2f}, std={self.traffic_std:.2f}")
@@ -173,8 +182,12 @@ class RealIoTDataset(Dataset):
 
         # Static features
         stat_df = df[STATIC_FEATURE_COLS].groupby('location').first()
-        stat_df['is_school_zone'] = stat_df['is_school_zone'].astype(float).fillna(0.0)
-        stat_df = stat_df.reindex(locations_idx).fillna(0.0)
+        # is_school_zone is boolean in DB — convert to float; NaN here means the column is missing,
+        # which is a schema violation, not a gap.
+        stat_df['is_school_zone'] = stat_df['is_school_zone'].astype(float)
+        stat_df = stat_df.reindex(locations_idx)
+        assert not stat_df.isna().any().any(), \
+            "CRITICAL: NaN in static features after reindex — sensor IDs are mismatched or data missing"
 
         # Scale static features so DynamicGraphLearner receives normalised coordinates/metadata.
         stat_np = stat_df.values  # [num_nodes, static_feat_dim]
@@ -190,33 +203,26 @@ class RealIoTDataset(Dataset):
         return max(0, len(self.times) - self.seq_len)
 
     def __getitem__(self, idx: int) -> dict:
-        # Extract sliding window
         # Dynamic: [seq_len, num_nodes, D] -> permute -> [num_nodes, seq_len, D]
-        dyn_slice = self.dynamic_data[idx : idx + self.seq_len]
-        dyn_slice = np.transpose(dyn_slice, (1, 0, 2))
-        
-        dyn_tensor = torch.tensor(dyn_slice, dtype=torch.float32)
+        dyn_tensor = self.dynamic_data[idx : idx + self.seq_len].permute(1, 0, 2)
 
         # Forecast target: pull from unscaled traffic counts, not scaled dynamic_data.
-        # clamp(min=0) is a hard tripwire — raw counts must never be negative,
-        # but guards against any residual float precision artifacts from the parquet.
-        target = self.unscaled_traffic[idx + self.seq_len]  # [num_nodes]
-        target_tensor = torch.tensor(target, dtype=torch.float32).clamp(min=0)
-        
-        # 4. Dynamic Masking logic (~15% artificial NaN injection)
+        target_tensor = self.unscaled_traffic[idx + self.seq_len]
+        assert (target_tensor >= -1e-6).all(), \
+            f"CRITICAL: negative traffic count at window idx={idx} — expected non-negative raw counts"
+        target_tensor = target_tensor.clamp(min=0)  # clamp only float-precision dust (< 1e-6)
+
+        # Dynamic Masking logic (~15% artificial NaN injection)
         node_mask = torch.rand_like(dyn_tensor) < self.mask_prob
         target_impute = dyn_tensor.clone()
         dyn_masked = dyn_tensor.clone()
         dyn_masked[node_mask] = float('nan')
 
         return {
-            'static_features': self.static_features,
             'dynamic_features': dyn_masked,
             'target_impute': target_impute,
             'target_forecast': target_tensor,
             'node_mask': node_mask,
-            # PHASE 3: ordered node identifiers for physical edge feature lookup.
-            'location_ids': self.locations
         }
 
 def make_spatial_holdout_mask(num_nodes: int,
@@ -269,19 +275,14 @@ def apply_spatial_holdout(dynamic_features: torch.Tensor,
     assert holdout_mask.shape[0] == dynamic_features.shape[1], \
         f"CRITICAL: mask len {holdout_mask.shape[0]} != num_nodes {dynamic_features.shape[1]}"
 
-    masked = dynamic_features.clone()
-    masked[:, holdout_mask, :, :] = 0.0
-    return masked
+    return dynamic_features.masked_fill(holdout_mask.view(1, -1, 1, 1), 0.0)
 
 
 def custom_collate_real(batch_list):
     """Collate function to maintain node structural dimensions."""
     return {
-        'static_features': batch_list[0]['static_features'], # Static across batch
         'dynamic_features': torch.stack([b['dynamic_features'] for b in batch_list]),
         'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
         'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
         'node_mask': torch.stack([b['node_mask'] for b in batch_list]),
-        # PHASE 3: location_ids constant across the batch (same node ordering).
-        'location_ids': batch_list[0]['location_ids']
     }

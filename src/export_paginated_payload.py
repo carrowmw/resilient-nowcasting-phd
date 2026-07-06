@@ -72,7 +72,6 @@ from export_ui_payload import (  # noqa: E402
     compute_zero_inflation_reliability,
     compute_two_extremes,
     build_ego_graph_edges,
-    DEFAULT_MODEL_CFG,
     SIMULATED_NODE_COORDS,
     NUM_TIMESTEPS_TARGET,
     TOP_K_EGO_EDGES,
@@ -180,8 +179,12 @@ def load_analysis_config(path: str, args: argparse.Namespace) -> Dict:
                     return src[k]
         return default
 
-    start = pick(args.start_date, "holdout_start", "start_date", default="2026-06-01")
-    end = pick(args.end_date, "holdout_end", "end_date", default="2026-07-01")
+    start = pick(args.start_date, "holdout_start", "start_date", default=None)
+    end = pick(args.end_date, "holdout_end", "end_date", default=None)
+    if start is None:
+        raise ValueError("CRITICAL: start_date is required — set it via --start_date or config holdout_start.")
+    if end is None:
+        raise ValueError("CRITICAL: end_date is required — set it via --end_date or config holdout_end.")
 
     resolved = {
         "start_date": str(start),
@@ -278,28 +281,23 @@ def build_model(
     """Resolve model_type from the co-located config and build a ModelAdapter
     (GNN or recurrent baseline) via the shared builder, so this exporter serves
     any model family through the Predictions contract."""
-    model_cfg = dict(DEFAULT_MODEL_CFG)
-    model_type = "gnn"  # checkpoints predating the harness are GNN-only
-    loaded_config_data: Dict = {}
-    if os.path.exists(config_path):
-        logger.info(f"Resolving adjacent configuration from: {config_path}")
-        with open(config_path, "r") as f:
-            loaded_config_data = yaml.safe_load(f) or {}
-        model_type = loaded_config_data.get("model_type", "gnn")
-        if "model" in loaded_config_data:
-            model_cfg.update(loaded_config_data["model"])
-            logger.info(f"Loaded model hyperparameters: {model_cfg}")
-    else:
-        logger.warning(f"No co-located config at {config_path}! Using defaults (shape-mismatch risk).")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"CRITICAL: Co-located config not found at {config_path}. "
+            "Every checkpoint must ship with an adjacent config.yaml."
+        )
 
-    git_commit_hash = "unknown"
-    try:
-        import subprocess
-        git_commit_hash = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except Exception:
-        pass
+    logger.info(f"Resolving adjacent configuration from: {config_path}")
+    with open(config_path, "r") as f:
+        loaded_config_data = yaml.safe_load(f) or {}
+    model_type = loaded_config_data["model_type"]
+    model_cfg = loaded_config_data["model"]
+    logger.info(f"Loaded model_type={model_type}, hyperparameters: {model_cfg}")
+
+    import subprocess
+    git_commit_hash = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+    ).strip()
 
     adapter = build_model_and_adapter(
         model_type, checkpoint_path, model_cfg,
@@ -328,7 +326,9 @@ def build_nodes_meta(
     holdout_locations = holdout_locations or set()
     nodes_meta: List[Dict] = []
     for i, loc in enumerate(real_location_names):
-        coords = sensor_coords.get(loc, {"lat": float("nan"), "lon": float("nan")})
+        if loc not in sensor_coords:
+            raise KeyError(f"CRITICAL: sensor '{loc}' has no coordinates in sensor_coords")
+        coords = sensor_coords[loc]
         role = "holdout" if loc in holdout_locations else "observed"
         nodes_meta.append({
             "id": i,
@@ -1008,12 +1008,9 @@ def main() -> None:
     summaries = []
     try:
         for artifact_name in artifacts:
-            try:
-                summaries.append(
-                    generate_for_artifact(artifact_name, cfg, args, device, sensor_coords, connector)
-                )
-            except Exception:
-                logger.exception(f"Artifact {artifact_name} FAILED — continuing with the next.")
+            summaries.append(
+                generate_for_artifact(artifact_name, cfg, args, device, sensor_coords, connector)
+            )
     finally:
         connector.close()
 

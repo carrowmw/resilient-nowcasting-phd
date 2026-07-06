@@ -14,6 +14,8 @@ on:
 jobs:
   build-and-upload:
     runs-on: [self-hosted, gpu, payload-builder] # Target GPU server runner
+    env:
+      PAYLOAD_DIR: artifacts/payload_staging/runs
 
     steps:
       - name: Checkout repo
@@ -42,15 +44,15 @@ jobs:
 
       - name: Clean stale local payloads
         run: |
-          mkdir -p frontend/public/data/runs
-          rm -rf frontend/public/data/runs/*
+          mkdir -p "$PAYLOAD_DIR"
+          rm -rf "$PAYLOAD_DIR"/*
 
       - name: Export paginated payload
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
         run: |
           ARGS="--config configs/analysis/analysis.yaml \
-                --output_dir frontend/public/data/runs"
+                --output_dir $PAYLOAD_DIR"
 
           if [ "${{ github.event.inputs.all_artifacts }}" == "true" ]; then
             ARGS="$ARGS --all_artifacts"
@@ -62,7 +64,7 @@ jobs:
 
       - name: Build run registry
         run: |
-          python scripts/build_run_registry.py frontend/public/data/runs
+          python scripts/build_run_registry.py "$PAYLOAD_DIR"
 
       - name: Upload to R2
         env:
@@ -73,11 +75,13 @@ jobs:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
           python scripts/upload_to_r2.py \
-            --runs-dir frontend/public/data/runs \
+            --runs-dir "$PAYLOAD_DIR" \
             --prefix runs \
-            --delete-extra
+            --delete-extra \
+            --yes
 
       - name: Clean up local payloads
+        if: always()
         run: |
-          rm -rf frontend/public/data/runs/*
+          rm -rf "$PAYLOAD_DIR"/*
           echo "Payloads published to R2 and local artifacts cleaned up"

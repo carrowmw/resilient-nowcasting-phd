@@ -10,7 +10,7 @@
 set -euo pipefail
 
 CONFIG="${CONFIG:-configs/analysis/analysis.yaml}"     # D-1: user's existing config
-OUTPUT_DIR="${OUTPUT_DIR:-frontend/public/data/runs}"
+OUTPUT_DIR="${OUTPUT_DIR:-artifacts/payload_staging/runs}"
 R2_UPLOAD="${R2_UPLOAD:-1}"
 
 echo "[generate_all_payloads] config=$CONFIG output_dir=$OUTPUT_DIR r2_upload=$R2_UPLOAD"

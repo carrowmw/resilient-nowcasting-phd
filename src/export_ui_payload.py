@@ -162,8 +162,7 @@ def select_artifact_from_wandb(project: str = "resilient-iot-v2", collection_nam
     try:
         collection = api.artifact_collection('model', collection_path)
         artifacts = list(collection.artifacts())
-    except Exception as e:
-        logger.error(f"Failed to query W&B artifacts at {collection_path}: {e}")
+    except wandb.errors.CommError as e:
         raise RuntimeError(
             "Could not fetch model artifacts from Weights & Biases. Please ensure "
             "WANDB_API_KEY is configured and valid, or provide a local checkpoint path "
@@ -228,20 +227,6 @@ def load_model_from_wandb(artifact_name: str) -> Tuple[str, str, str]:
     return checkpoint_path, config_path, wandb_run_id
 
 
-# Backward-compat model hyperparameter defaults for checkpoints without a
-# co-located config.yaml (shape-mismatch risk; logged as a warning).
-DEFAULT_MODEL_CFG = {
-    "embedding_dim": 16,
-    "hidden_dim": 32,
-    "sparsity_threshold": 0.5,
-    "num_layers": 2,
-    "num_heads": 4,
-    "dropout": 0.1,
-    "dim_feedforward": None,
-    "zinb_eps": 1e-6,
-}
-
-
 def build_model_and_adapter(
     model_type: str,
     checkpoint_path: str,
@@ -300,11 +285,7 @@ def build_model_and_adapter(
 
     logger.info(f"Loading checkpoint from {checkpoint_path} (model_type={model_type})")
     state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    incompatible = model.load_state_dict(state_dict, strict=False)
-    if incompatible.missing_keys:
-        logger.warning(f"Missing keys in state_dict: {incompatible.missing_keys}")
-    if incompatible.unexpected_keys:
-        logger.info(f"Ignored unexpected keys in state_dict: {incompatible.unexpected_keys}")
+    model.load_state_dict(state_dict, strict=True)
     model.eval()
 
     adapter = build_adapter(model_type, model)
@@ -448,8 +429,8 @@ def load_semantic_tags(
             continue
         t = tags[loc]
 
-        # Commercial density
-        cd = int(feats.get("commercial_density", 0))
+        # Commercial density — mapped from features schema key `retail_count`
+        cd = int(feats["retail_count"])
         if cd >= 15:
             t.append("high_commercial_density")
         elif cd >= 5:
@@ -461,8 +442,8 @@ def load_semantic_tags(
         if feats.get("is_school_zone"):
             t.append("school_zone")
 
-        # Transit density
-        hp = int(feats.get("highway_proximity", 0))
+        # Transit density — mapped from features schema key `transit_count`
+        hp = int(feats["transit_count"])
         if hp >= 15:
             t.append("high_transit_density")
         elif hp >= 5:
@@ -470,8 +451,8 @@ def load_semantic_tags(
         elif hp > 0:
             t.append("low_transit_density")
 
-        # POI density (migrated from template CSV to live cache)
-        poi = int(feats.get("nearby_poi_count", 0))
+        # POI density — mapped from features schema key `total_poi_count`
+        poi = int(feats["total_poi_count"])
         if poi >= 20:
             t.append("high_poi_density")
         elif poi >= 8:
@@ -498,23 +479,23 @@ def _zinb_randomized_pit(y_obs: float, mu: float, theta: float, pi_val: float) -
     F_ZINB(y)          = pi + (1 - pi) * F_NB(y)
     """
     import random
-    assert mu > 0.0,    f"_zinb_randomized_pit: mu={mu} must be > 0"
-    assert theta > 0.0, f"_zinb_randomized_pit: theta={theta} must be > 0"
-    
-    safe_pi = max(1e-6, min(1.0 - 1e-6, float(pi_val)))
+    assert mu > 0.0,              f"_zinb_randomized_pit: mu={mu} must be > 0"
+    assert theta > 0.0,           f"_zinb_randomized_pit: theta={theta} must be > 0"
+    pi_f = float(pi_val)
+    assert 0.0 < pi_f < 1.0,     f"_zinb_randomized_pit: pi={pi_f} must be in (0, 1)"
     k = int(math.floor(y_obs))
     p_nb = theta / (theta + mu)
-    
+
     # Calculate upper bound F(y)
     cdf_nb_upper = float(betainc(theta, k + 1, p_nb))
-    f_upper = safe_pi + (1.0 - safe_pi) * cdf_nb_upper
-    
+    f_upper = pi_f + (1.0 - pi_f) * cdf_nb_upper
+
     # Calculate lower bound F(y-1)
     if k == 0:
         f_lower = 0.0
     else:
         cdf_nb_lower = float(betainc(theta, k, p_nb))
-        f_lower = safe_pi + (1.0 - safe_pi) * cdf_nb_lower
+        f_lower = pi_f + (1.0 - pi_f) * cdf_nb_lower
         
     # Draw uniform random value between F(y-1) and F(y)
     u = random.uniform(f_lower, f_upper)
@@ -612,12 +593,11 @@ def compute_zero_inflation_reliability(
         for gt, pi_val in zip(gt_seq, pi_seq):
             if gt is None or math.isnan(gt):
                 continue
-            # Prevent rounded 0.0 or 1.0 values from tripping the strictly-positive assert
-            safe_pi = max(1e-6, min(1.0 - 1e-6, float(pi_val)))
-            assert 0.0 < safe_pi < 1.0, f"Reliability: pi={safe_pi} outside (0,1)"
-            bin_idx = min(int(safe_pi * num_bins), num_bins - 1)
+            pi_f = float(pi_val)
+            assert 0.0 < pi_f < 1.0, f"Reliability: pi={pi_f} outside (0,1) — ZINB decoder must guarantee this"
+            bin_idx = min(int(pi_f * num_bins), num_bins - 1)
             total_counts[bin_idx] += 1
-            if gt == 0.0:
+            if gt == 0.0:  # noqa: comparing float to 0.0 is intentional (raw count)
                 zero_counts[bin_idx] += 1
 
     result = []
@@ -751,14 +731,12 @@ def build_ego_graph_edges(
             f"TRIPWIRE: NaN mean attention for edge ({src},{tgt})"
         )
 
-        src_lat, src_lon = node_coord_map.get(src, (float("nan"), float("nan")))
-        tgt_lat, tgt_lon = node_coord_map.get(tgt, (float("nan"), float("nan")))
-
-        if any(math.isnan(v) for v in (src_lat, src_lon, tgt_lat, tgt_lon)):
-            logger.warning(
-                f"ego_graph node {node_id}: NaN coordinates for edge ({src},{tgt}) — skipped"
-            )
-            continue
+        if src not in node_coord_map:
+            raise KeyError(f"CRITICAL: ego_graph node {node_id}: source node {src} has no coordinates")
+        if tgt not in node_coord_map:
+            raise KeyError(f"CRITICAL: ego_graph node {node_id}: target node {tgt} has no coordinates")
+        src_lat, src_lon = node_coord_map[src]
+        tgt_lat, tgt_lon = node_coord_map[tgt]
 
         entry = {
             "source_id": src,
@@ -897,7 +875,9 @@ def main() -> None:
 
     nodes_meta: List[Dict] = []
     for i, loc in enumerate(real_location_names):
-        coords = sensor_coords.get(loc, {"lat": float("nan"), "lon": float("nan")})
+        if loc not in sensor_coords:
+            raise KeyError(f"CRITICAL: sensor '{loc}' has no coordinates in sensor_coords")
+        coords = sensor_coords[loc]
         nodes_meta.append({
             "id": i,
             "location_name": loc,
@@ -960,39 +940,33 @@ def main() -> None:
             torch.zeros(num_simulated, dtype=torch.bool, device=device),
         ])
 
-    # Defaults in case no config.yaml is found (backward-compatibility fallback)
-    model_cfg = dict(DEFAULT_MODEL_CFG)
-    model_type = "gnn"  # checkpoints predating the harness are GNN-only
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"CRITICAL: Co-located config not found at {config_path}. "
+            "Every checkpoint must ship with an adjacent config.yaml."
+        )
 
-    if os.path.exists(config_path):
-        logger.info(f"ARCHITECT TWINNING: Resolving adjacent configuration from: {config_path}")
-        with open(config_path, "r") as f:
-            loaded_config_data = yaml.safe_load(f)
-        model_type = loaded_config_data.get("model_type", "gnn")
-        if "model" in loaded_config_data:
-            model_cfg.update(loaded_config_data["model"])
-            logger.info(f"Loaded model hyperparameters: {model_cfg}")
+    logger.info(f"ARCHITECT TWINNING: Resolving adjacent configuration from: {config_path}")
+    with open(config_path, "r") as f:
+        loaded_config_data = yaml.safe_load(f)
+    model_type = loaded_config_data["model_type"]
+    model_cfg = loaded_config_data["model"]
+    logger.info(f"Loaded model_type={model_type}, hyperparameters: {model_cfg}")
 
-        # Infer W&B Run ID from folder namespace if not already set by artifact
-        if wandb_run_id == "unknown":
-            checkpoint_dir = os.path.dirname(checkpoint_path)
-            folder_parts = [p for p in checkpoint_dir.split(os.sep) if p]
-            if len(folder_parts) >= 1:
-                wandb_run_id = folder_parts[-1]
-    else:
-        logger.warning(f"No co-located config found at {config_path}! Using defaults. WARNING: Potential shape mismatch risk.")
+    # Infer W&B Run ID from folder namespace if not already set by artifact
+    if wandb_run_id == "unknown":
+        checkpoint_dir = os.path.dirname(checkpoint_path)
+        folder_parts = [p for p in checkpoint_dir.split(os.sep) if p]
+        if len(folder_parts) >= 1:
+            wandb_run_id = folder_parts[-1]
 
-    # Get Git metadata dynamically
-    git_commit_hash = "unknown"
-    try:
-        import subprocess
-        git_commit_hash = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            text=True,
-            stderr=subprocess.DEVNULL
-        ).strip()
-    except Exception:
-        pass
+    # Get Git metadata dynamically — fails fast if the repo is not accessible.
+    import subprocess
+    git_commit_hash = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
 
     # HARNESS: build the served model by family and wrap in a ModelAdapter. The
     # exporter below reads adapter.capabilities to decide which payload sections
