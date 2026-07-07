@@ -28,8 +28,10 @@ services:
       - .env
     volumes:
       - ./frontend:/workspace/frontend
-      # ANONYMOUS VOLUME: Prevents node_modules from syncing back to the host
+      - ./workers:/workspace/workers
+      # ANONYMOUS VOLUMES: Prevents node_modules from syncing back to the host
       - /workspace/frontend/node_modules
+      - /workspace/workers/run-registry-builder/node_modules
       - /workspace/frontend/.next
     ports:
       - "3000:3000"
