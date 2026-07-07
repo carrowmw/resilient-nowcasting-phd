@@ -195,6 +195,7 @@ def load_analysis_config(path: str, args: argparse.Namespace) -> Dict:
         "num_simulated": int(pick(args.num_simulated, "num_simulated", default=5)),
         "data_source": pick(args.data_source, "data_source", default=None),
         "parquet_path": pick(args.parquet_path, "parquet_path", default=None),
+        "export": pick(None, "export", default={}),
     }
     # Tripwire: window must be non-empty and well-ordered.
     assert dt.date.fromisoformat(resolved["start_date"]) < dt.date.fromisoformat(resolved["end_date"]), (
@@ -245,10 +246,10 @@ def load_model_and_meta(artifact_name: str) -> Tuple[str, str, str, str, Dict]:
     api = wandb.Api()
     producer_run = api.artifact(artifact_name).logged_by()
     assert producer_run is not None, f"FATAL: Artifact {artifact_name} has no producer run. Manually uploaded artifacts are strictly forbidden."
-    
+
     run_name = producer_run.name or wandb_run_id
     metrics_summary: Dict = {}
-    
+
     summary = dict(producer_run.summary) if producer_run.summary else {}
     for k in METRIC_KEYS:
         if k in summary and isinstance(summary[k], (int, float)):
