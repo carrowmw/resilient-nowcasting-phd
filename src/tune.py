@@ -330,12 +330,11 @@ if __name__ == "__main__":
             except (OSError, KeyError) as e:
                 logger.warning(f"Could not load sweep config from {sweep_config_path}: {e}")
 
-        # Resolve W&B sweep project name checking sweep config override first
-        sweep_project = (
-            sweep_cfg.get("wandb", {}).get("sweep_project")
-            or base_cfg.get("wandb", {}).get("sweep_project")
-            or "resilient-iot-sweeps-v2"
-        )
+        # Resolve W&B sweep project name: sweep config may override, else fall back to base config.
+        if "wandb" in sweep_cfg and "sweep_project" in sweep_cfg["wandb"]:
+            sweep_project = sweep_cfg["wandb"]["sweep_project"]
+        else:
+            sweep_project = base_cfg["wandb"]["sweep_project"]
 
         if study_name is None:
             if sweep_config_path:
@@ -424,12 +423,11 @@ if __name__ == "__main__":
     sweep_config = load_config(sweep_config_path)
     logger.info(f"Sweep config loaded from: {sweep_config_path}")
 
-    # Resolve W&B sweep project name checking sweep config override first
-    sweep_project = (
-        sweep_config.get("wandb", {}).get("sweep_project")
-        or base_config.get("wandb", {}).get("sweep_project")
-        or "resilient-iot-sweeps-v2"
-    )
+    # Resolve W&B sweep project name: sweep config may override, else fall back to base config.
+    if "wandb" in sweep_config and "sweep_project" in sweep_config["wandb"]:
+        sweep_project = sweep_config["wandb"]["sweep_project"]
+    else:
+        sweep_project = base_config["wandb"]["sweep_project"]
 
     if study_name is None:
         if sweep_config_path:
@@ -484,7 +482,6 @@ if __name__ == "__main__":
             data_cfg["start_date"],
             data_cfg["end_date"],
             seq_len=data_cfg["seq_len"],
-            mask_prob=data_cfg["mask_prob"],
             target_veh_class=data_cfg["target_veh_class"],
             target_dir=data_cfg["target_dir"],
         )

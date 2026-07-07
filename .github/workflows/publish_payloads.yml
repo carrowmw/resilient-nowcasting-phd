@@ -31,16 +31,12 @@ jobs:
             done
             echo "Successfully linked /data subdirectories into ./data/"
           else
-            echo "No /data volume found. Running with default data directory."
+            echo "FATAL: No /data volume found. The self-hosted runner must have /data mounted." >&2
+            exit 1
           fi
 
 
 
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
 
       - name: Clean stale local payloads
         run: |
@@ -50,21 +46,20 @@ jobs:
       - name: Export paginated payload
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          ARTIFACT_REF: ${{ github.event.inputs.artifact_ref }}
+          ALL_ARTIFACTS: ${{ github.event.inputs.all_artifacts }}
         run: |
-          ARGS="--config configs/analysis/analysis.yaml \
-                --output_dir $PAYLOAD_DIR"
-
-          if [ "${{ github.event.inputs.all_artifacts }}" == "true" ]; then
-            ARGS="$ARGS --all_artifacts"
-          elif [ -n "${{ github.event.inputs.artifact_ref }}" ]; then
-            ARGS="$ARGS --artifact ${{ github.event.inputs.artifact_ref }}"
-          fi
-
-          python src/export_paginated_payload.py $ARGS
-
-      - name: Build run registry
-        run: |
-          python scripts/build_run_registry.py "$PAYLOAD_DIR"
+          docker compose run --rm --no-deps \
+            -e WANDB_API_KEY \
+            gpu-runner bash -c '
+              ARGS="--config configs/analysis/analysis.yaml --output_dir $PAYLOAD_DIR"
+              if [ "$ALL_ARTIFACTS" = "true" ]; then
+                ARGS="$ARGS --all_artifacts"
+              elif [ -n "$ARTIFACT_REF" ]; then
+                ARGS="$ARGS --artifact $ARTIFACT_REF"
+              fi
+              python src/export_paginated_payload.py $ARGS
+            '
 
       - name: Upload to R2
         env:
@@ -74,11 +69,19 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
-          python scripts/upload_to_r2.py \
-            --runs-dir "$PAYLOAD_DIR" \
-            --prefix runs \
-            --delete-extra \
-            --yes
+          docker compose run --rm --no-deps \
+            -e R2_ACCOUNT_ID -e R2_ACCESS_KEY_ID -e R2_SECRET_ACCESS_KEY \
+            -e R2_BUCKET_NAME -e R2_PUBLIC_URL \
+            gpu-runner python scripts/upload_to_r2.py \
+              --runs-dir "$PAYLOAD_DIR" \
+              --prefix runs
+
+      - name: Trigger Run Registry Rebuild
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          WORKER_REBUILD_TOKEN: ${{ secrets.WORKER_REBUILD_TOKEN }}
+        run: |
+          curl -X POST -H "Authorization: Bearer ${WORKER_REBUILD_TOKEN}" "${WORKER_URL}/rebuild"
 
       - name: Clean up local payloads
         if: always()

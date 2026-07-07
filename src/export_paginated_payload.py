@@ -72,9 +72,6 @@ from export_ui_payload import (  # noqa: E402
     compute_zero_inflation_reliability,
     compute_two_extremes,
     build_ego_graph_edges,
-    SIMULATED_NODE_COORDS,
-    NUM_TIMESTEPS_TARGET,
-    TOP_K_EGO_EDGES,
     SENSORS_PATH,
 )
 from dataset import RealIoTDataset, apply_spatial_holdout  # noqa: E402
@@ -166,7 +163,10 @@ def load_analysis_config(path: str, args: argparse.Namespace) -> Dict:
             cfg = yaml.safe_load(fh) or {}
         logger.info(f"Loaded analysis config from {path}: {cfg}")
     else:
-        logger.warning(f"Analysis config {path} not found — using CLI/defaults only.")
+        raise FileNotFoundError(
+            f"CRITICAL: analysis config not found at {path!r}. "
+            "Pass --config with the correct path."
+        )
 
     nested = cfg.get("analysis", {}) if isinstance(cfg, dict) else {}
 
@@ -315,6 +315,7 @@ def build_nodes_meta(
     real_location_names: List[str],
     num_simulated: int,
     sensor_coords: Dict[str, Dict[str, float]],
+    simulated_node_coords: List[Tuple[float, float]],
     holdout_locations: Optional[set] = None,
 ) -> List[Dict]:
     """node_role — three-tier display taxonomy for the frontend:
@@ -340,7 +341,7 @@ def build_nodes_meta(
         })
     num_nodes_real = len(real_location_names)
     for j in range(num_simulated):
-        lat, lon = SIMULATED_NODE_COORDS[j]
+        lat, lon = simulated_node_coords[j]
         nodes_meta.append({
             "id": num_nodes_real + j,
             "location_name": f"Simulated_Node_{j}",
@@ -755,7 +756,7 @@ def write_node_detail_jsons(out_dir: str, run_id: str, date_str: str, acc: Dict,
 
         if caps.graph:
             ego_edges = build_ego_graph_edges(
-                node_id, edge_attention_data, node_coord_map, num_timesteps, top_k=TOP_K_EGO_EDGES
+                node_id, edge_attention_data, node_coord_map, num_timesteps, top_k=top_k_ego_edges
             )
             for e in ego_edges:
                 assert len(e["weight_sequence"]) == num_timesteps, \
@@ -837,6 +838,13 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     start_date, end_date = cfg["start_date"], cfg["end_date"]
     seq_len, num_simulated = cfg["seq_len"], cfg["num_simulated"]
     veh_class, direction = cfg["veh_class"], cfg["dir"]
+    export_cfg = cfg["export"]
+    num_timesteps_target: int = export_cfg["num_timesteps_target"]
+    top_k_ego_edges: int = export_cfg["top_k_ego_edges"]
+    simulated_node_coords: List[Tuple[float, float]] = [
+        tuple(c) for c in export_cfg["simulated_node_coords"]
+    ]
+    mask_prob_export: float = export_cfg["mask_prob"]
 
     ckpt, cfg_path, wandb_run_id, run_id, metrics_summary = load_model_and_meta(artifact_name)
     logger.info(f"=== Run '{run_id}' (wandb_run_id={wandb_run_id}) from {artifact_name} ===")
@@ -866,7 +874,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
         connector,
         start_date=(dt.date.fromisoformat(start_date) - dt.timedelta(days=1)).isoformat(),
         end_date=end_date,
-        seq_len=seq_len, mask_prob=0.15,
+        seq_len=seq_len,
         target_veh_class=veh_class, target_dir=direction,
     )
     canonical_locations = list(full_ds.locations)
@@ -876,7 +884,9 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     time_series_dim = full_ds.time_series_dim
 
     nodes_meta = build_nodes_meta(
-        canonical_locations, num_simulated, sensor_coords, holdout_locations=holdout_locations
+        canonical_locations, num_simulated, sensor_coords,
+        simulated_node_coords=simulated_node_coords,
+        holdout_locations=holdout_locations,
     )
     location_ids = [m["location_name"] for m in nodes_meta]
 
@@ -913,9 +923,9 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
         if not window_indices:
             logger.warning(f"  {date_str}: no inference windows — skipping day.")
             continue
-        if len(window_indices) > NUM_TIMESTEPS_TARGET:
-            logger.info(f"  {date_str}: {len(window_indices)} windows; capping to {NUM_TIMESTEPS_TARGET}.")
-            window_indices = window_indices[:NUM_TIMESTEPS_TARGET]
+        if len(window_indices) > num_timesteps_target:
+            logger.info(f"  {date_str}: {len(window_indices)} windows; capping to {num_timesteps_target}.")
+            window_indices = window_indices[:num_timesteps_target]
 
         logger.info(f"  {date_str}: {len(window_indices)} inference timesteps …")
         acc = run_day_inference(

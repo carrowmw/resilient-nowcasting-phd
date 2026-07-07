@@ -11,6 +11,8 @@ import type {
   PITBin,
   ZeroInflationBin,
   NodeRole,
+  TripwireEntry,
+  AlphaNodeEntry,
 } from "@/types/payload";
 
 // ---------------------------------------------------------------------------
@@ -104,6 +106,6 @@ export interface TemporalPage {
   global_imputation_burden?: number[];
   global_healing_quality?: number[];
   attention_entropy_series?: number[];                    // empty for graph-less baselines
-  tripwire_audit_trail?: Record<string, unknown>[];
-  alpha_node_leaderboard?: Record<string, unknown>[] | null; // null for graph-less baselines
+  tripwire_audit_trail?: TripwireEntry[];
+  alpha_node_leaderboard?: AlphaNodeEntry[] | null; // null for graph-less baselines
 }

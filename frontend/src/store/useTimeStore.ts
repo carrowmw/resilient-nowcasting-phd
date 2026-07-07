@@ -9,8 +9,6 @@ interface TimeState {
   selectedNodeId: number | null;
   globalAttentionThreshold: number;
   egoGraphEdges: AttentionEdge[] | null;
-  /** ISO date string (YYYY-MM-DD) for the currently displayed day. */
-  startDate: string;
 
   // --- Multi-run + pagination state (Phase 1) ---
   activeRunId: string | null;
@@ -26,7 +24,6 @@ interface TimeState {
   setSelectedNodeId: (id: number | null) => void;
   setGlobalAttentionThreshold: (v: number) => void;
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
-  setStartDate: (date: string) => void;
 
   // --- Multi-run + pagination actions ---
   setActiveRunId: (runId: string) => void;
@@ -44,7 +41,6 @@ const useTimeStore = create<TimeState>((set, get) => ({
   selectedNodeId: null,
   globalAttentionThreshold: 0.5,
   egoGraphEdges: null,
-  startDate: '',
 
   activeRunId: null,
   activeDate: null,
@@ -75,12 +71,9 @@ const useTimeStore = create<TimeState>((set, get) => ({
 
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => set({ egoGraphEdges: edges }),
 
-  setStartDate: (date: string) => set({ startDate: date }),
-
   setActiveRunId: (runId: string) => set({ activeRunId: runId }),
 
-  // Changing the day resets the playhead and the current selection's stale detail.
-  setActiveDate: (date: string) => set({ activeDate: date, startDate: date }),
+  setActiveDate: (date: string) => set({ activeDate: date }),
 
   setAvailableDates: (dates: string[]) => set({ availableDates: dates }),
 
@@ -95,7 +88,7 @@ const useTimeStore = create<TimeState>((set, get) => ({
     if (idx === -1) return;
     const nextIdx = direction === 'next' ? idx + 1 : idx - 1;
     if (nextIdx < 0 || nextIdx >= availableDates.length) return; // boundary
-    set({ activeDate: availableDates[nextIdx], startDate: availableDates[nextIdx] });
+    set({ activeDate: availableDates[nextIdx] });
   },
 }));
 

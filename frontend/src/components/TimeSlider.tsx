@@ -22,31 +22,36 @@ export default function TimeSlider() {
   const togglePlayback = useTimeStore((s) => s.togglePlayback);
   const incrementTimestep = useTimeStore((s) => s.incrementTimestep);
 
-  // Log every timestep change so the test can be verified in the console
-  useEffect(() => {
-    console.log(`[TimeSlider] currentTimestep=${currentTimestep}  (${timestepToLabel(currentTimestep)})`);
-  }, [currentTimestep]);
-
-  // Playback animation loop
+  // Playback animation loop.
+  // animateRef stores the latest callback so the RAF loop can recurse through
+  // the ref rather than closing over the `animate` identifier, which avoids
+  // both the "ref updated during render" and "variable accessed before
+  // declaration" lint rules.
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number>(0);
+  const animateRef = useRef<(now: number) => void>(() => {});
   const TICK_INTERVAL_MS = 300; // one step every 300 ms
 
+  // Keep animateRef.current in sync with the latest incrementTimestep closure.
   const animate = useCallback(
     (now: number) => {
       if (now - lastTickRef.current >= TICK_INTERVAL_MS) {
         incrementTimestep();
         lastTickRef.current = now;
       }
-      rafRef.current = requestAnimationFrame(animate);
+      rafRef.current = requestAnimationFrame(animateRef.current);
     },
     [incrementTimestep]
   );
 
   useEffect(() => {
+    animateRef.current = animate;
+  }, [animate]);
+
+  useEffect(() => {
     if (isPlaying) {
       lastTickRef.current = performance.now();
-      rafRef.current = requestAnimationFrame(animate);
+      rafRef.current = requestAnimationFrame(animateRef.current);
     } else {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);

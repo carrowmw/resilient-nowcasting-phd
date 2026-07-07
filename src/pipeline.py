@@ -8,7 +8,7 @@ from encoder import MaskedSpatiotemporalEncoder
 from decoders import DecoupledDecoders, SpatialKrigingDecoder, compute_loss
 from dataset import RealIoTDataset
 
-from typing import Dict, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class ResilientIoTPipeline(nn.Module):
                  num_layers: int = 2,
                  num_heads: int = 4,
                  dropout: float = 0.1,
-                 dim_feedforward: int = None,
+                 dim_feedforward: Optional[int] = None,
                  zinb_eps: float = 1.0e-6,
                  edge_features_cache_path: str = None,
                  simulated_edge_features_cache_path: str = None):
@@ -212,23 +212,26 @@ class ResilientIoTPipeline(nn.Module):
             if holdout_mask is not None else None
         )
 
-        # 4. Compute Joint Loss
-        loss, loss_impute, loss_forecast, loss_kriging = compute_loss(
-            imputed_features=imputed_features,
-            target_impute=target_impute,
-            mu=mu,
-            theta=theta,
-            pi=pi,
-            target_forecast=target_forecast,
-            traffic_mean=self.traffic_mean,  # PHASE 1: scaler buffers
-            traffic_std=self.traffic_std,    # PHASE 1: scaler buffers
-            kriging_pred=kriging_pred,                 # PHASE 2
-            spatial_holdout_mask=holdout_mask,         # PHASE 2
-            w_impute=batch['w_impute'],
-            w_forecast=batch['w_forecast'],
-            w_kriging=batch['w_kriging'],               # PHASE 2
-            loss_node_mask=batch.get('loss_node_mask')  # HARNESS: inductive zero-shot guarantee (optional)
-        )
+        # 4. Compute Joint Loss — kept in FP32 to avoid bf16 precision issues in ZINB NLL.
+        # The autocast(enabled=False) guard ensures this block runs at full precision even
+        # when the surrounding adapter.step() call is wrapped in torch.autocast(bfloat16).
+        with torch.autocast(device_type=target_forecast.device.type, enabled=False):
+            loss, loss_impute, loss_forecast, loss_kriging = compute_loss(
+                imputed_features=imputed_features.float(),
+                target_impute=target_impute.float(),
+                mu=mu.float(),
+                theta=theta.float(),
+                pi=pi.float(),
+                target_forecast=target_forecast.float(),
+                traffic_mean=self.traffic_mean,
+                traffic_std=self.traffic_std,
+                kriging_pred=kriging_pred.float() if kriging_pred is not None else None,
+                spatial_holdout_mask=holdout_mask,
+                w_impute=batch['w_impute'],
+                w_forecast=batch['w_forecast'],
+                w_kriging=batch['w_kriging'],
+                loss_node_mask=batch.get('loss_node_mask')
+            )
 
         return loss, loss_impute, loss_forecast, loss_kriging, imputed_features, mu, theta, pi, tripwires, kriging_pred
 
@@ -256,39 +259,31 @@ if __name__ == "__main__":
     # [B, N, T, D] out of the DataLoader, we must adjust how we interact with it or mock the batch.
 
     # We'll create a custom mock Dataset specifically for testing the pipeline requirements.
+    mask_prob = 0.15
+
     class MockPipelineDataset(torch.utils.data.Dataset):
-        def __init__(self, size, mask_prob=0.15):
+        def __init__(self, size):
             self.size = size
-            self.mask_prob = mask_prob
         def __len__(self):
             return self.size
         def __getitem__(self, idx):
-            # dynamic: [N, T, D]
+            # dynamic: [N, T, D] — clean (mask generated below, mirroring on-device path)
             dyn = torch.randn(num_nodes, seq_len, time_series_dim)
-            mask = torch.rand_like(dyn) < self.mask_prob
-            dyn_masked = dyn.clone()
-            dyn_masked[mask] = float('nan')
-
             return {
-                # We return static feature entirely since it's shared across the batch
                 'static_features': torch.randn(num_nodes, static_feat_dim),
-                'dynamic_features': dyn_masked,
-                'target_impute': dyn.clone(),
+                'dynamic_features': dyn,
                 'target_forecast': torch.randint(0, 50, (num_nodes,)).float(),
-                'node_mask': mask
+                'structural_masks': torch.zeros(num_nodes, seq_len, 2),
             }
 
     dataset = MockPipelineDataset(size=20)
 
     def custom_collate(batch_list):
-        # The pipeline expects static_features to be exactly [num_nodes, static_feat_dim]
-        # not [B, num_nodes, static_feat_dim]. So we just take the first one.
         return {
             'static_features': batch_list[0]['static_features'],
             'dynamic_features': torch.stack([b['dynamic_features'] for b in batch_list]),
-            'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
             'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
-            'node_mask': torch.stack([b['node_mask'] for b in batch_list])
+            'structural_masks': torch.stack([b['structural_masks'] for b in batch_list]),
         }
 
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate)
@@ -310,6 +305,13 @@ if __name__ == "__main__":
         epoch_loss = 0.0
         for batch_idx, batch in enumerate(dataloader):
             optimizer.zero_grad()
+
+            # Generate mask on-device (mirrors train.py GPU-side mask injection).
+            clean_dyn = batch["dynamic_features"]
+            node_mask = torch.rand(clean_dyn.shape) < mask_prob
+            batch["target_impute"] = clean_dyn.clone()
+            batch["dynamic_features"] = clean_dyn.masked_fill(node_mask, float("nan"))
+            batch["node_mask"] = node_mask
 
             # Inject loss weights that the adapter normally provides.
             batch["w_impute"] = 1.0

@@ -8,6 +8,7 @@ logs/
 .next/
 .pytest_cache/
 
+src/__pycache__/
 __pycache__/
 .DS_Store
 .vscode/

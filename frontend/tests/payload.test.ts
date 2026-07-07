@@ -11,6 +11,14 @@
 import { describe, it, expect } from 'vitest';
 import type { UIPayload, NodeEntry, EdgeEntry, NodeRole } from '@/types/payload';
 
+// FullNodeEntry: NodeEntry with legacy series fields always present (as produced
+// by makeNode and the monolithic master_index.json format).
+type FullNodeEntry = NodeEntry & {
+  ground_truth_series: (number | null)[];
+  imputed_series: number[];
+  mask_series: boolean[];
+};
+
 // ── Mock payload factory ──────────────────────────────────────────────────────
 
 interface MakeNodeOpts {
@@ -23,7 +31,7 @@ function makeNode(
   isSimulated: boolean,
   timesteps: number,
   opts: MakeNodeOpts = {},
-): NodeEntry {
+): FullNodeEntry {
   const role: NodeRole = opts.role ?? (isSimulated ? 'simulated' : 'observed');
   return {
     id,
@@ -63,8 +71,8 @@ function makeMockPayload(
   numSimNodes = 2,
   timesteps = 96,
   numEdges = 10,
-): UIPayload {
-  const nodes: NodeEntry[] = [
+): UIPayload & { nodes: FullNodeEntry[] } {
+  const nodes: FullNodeEntry[] = [
     ...Array.from({ length: numRealNodes }, (_, i) => makeNode(i, false, timesteps)),
     ...Array.from({ length: numSimNodes }, (_, i) =>
       makeNode(numRealNodes + i, true, timesteps),
@@ -207,8 +215,8 @@ describe('UIPayload schema', () => {
   it('simulated nodes carry null ground truth and all-true mask', () => {
     const p = makeMockPayload(3, 4, 16);
     for (const node of p.nodes.filter((n) => n.is_simulated)) {
-      expect(node.ground_truth_series.every((v) => v === null)).toBe(true);
-      expect(node.mask_series.every((m) => m === true)).toBe(true);
+      expect(node.ground_truth_series!.every((v) => v === null)).toBe(true);
+      expect(node.mask_series!.every((m) => m === true)).toBe(true);
     }
   });
 

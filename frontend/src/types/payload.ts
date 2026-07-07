@@ -34,7 +34,7 @@ export interface PayloadMetadata {
   // --- ARTIFACT TWINNING ---
   wandb_run_id?: string;
   git_commit_hash?: string;
-  hyperparameters?: any;
+  hyperparameters?: Record<string, unknown>;
 }
 
 export interface EdgeEntry {
@@ -82,6 +82,26 @@ export interface NodeEntry {
   timeseries: TimestepEntry[];
   semantic_tags?: string[];   // flattened POI/land-use tags; absent in pre-sharding payloads
   two_extremes?: TwoExtremes; // absent in payloads generated before Iteration 4
+  // Legacy master_index.json fields — present in monolithic payloads, moved to
+  // NodeDetailPayload in the paginated split format.
+  ground_truth_series?: (number | null)[];
+  imputed_series?: number[];
+  mask_series?: boolean[];
+}
+
+/** One entry in the per-inference tripwire audit trail produced by export_paginated_payload.py. */
+export interface TripwireEntry {
+  timestep: number;
+  node_id?: number;
+  event_type?: string;
+  [key: string]: unknown;
+}
+
+/** One entry in the alpha-node influence leaderboard (graph models only). */
+export interface AlphaNodeEntry {
+  node_id: number;
+  total_outgoing_attention: number;
+  location_name: string;
 }
 
 export interface MasterIndex {
@@ -95,8 +115,8 @@ export interface MasterIndex {
   global_imputation_burden?: number[];
   global_healing_quality?: number[];
   attention_entropy_series?: number[];                      // empty for graph-less baselines
-  tripwire_audit_trail?: Record<string, any>[];
-  alpha_node_leaderboard?: Record<string, any>[] | null;    // null for graph-less baselines
+  tripwire_audit_trail?: TripwireEntry[];
+  alpha_node_leaderboard?: AlphaNodeEntry[] | null;         // null for graph-less baselines
 }
 
 // Backward-compat alias used by MapVisualizer / NodeInspector

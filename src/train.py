@@ -1,5 +1,6 @@
 import argparse
 import os
+from typing import Optional
 
 # Perform early GPU selection before ANY PyTorch or W&B bindings are loaded
 if __name__ == "__main__":
@@ -103,7 +104,6 @@ def create_mock_dataloader(
     time_series_dim: int,
     static_feat_dim: int,
     dataset_size: int,
-    mask_prob: float = 0.15,
 ):
     """
     Creates a mock DataLoader yielding batches that match the pipeline's
@@ -120,16 +120,12 @@ def create_mock_dataloader(
             return self.size
 
         def __getitem__(self, idx: int) -> dict:
+            # Clean dynamic features only — mask generated on-device in the train/val loop.
             dyn = torch.randn(num_nodes, seq_len, time_series_dim)
-            mask = torch.rand_like(dyn) < mask_prob
-            dyn_masked = dyn.clone()
-            dyn_masked[mask] = float("nan")
             return {
                 "static_features": torch.randn(num_nodes, static_feat_dim),
-                "dynamic_features": dyn_masked,
-                "target_impute": dyn.clone(),
+                "dynamic_features": dyn,
                 "target_forecast": torch.randint(0, 50, (num_nodes,)).float(),
-                "node_mask": mask,
                 "structural_masks": torch.zeros(num_nodes, seq_len, 2),
             }
 
@@ -139,9 +135,7 @@ def create_mock_dataloader(
         return {
             "static_features": batch_list[0]["static_features"],
             "dynamic_features": torch.stack([b["dynamic_features"] for b in batch_list]),
-            "target_impute": torch.stack([b["target_impute"] for b in batch_list]),
             "target_forecast": torch.stack([b["target_forecast"] for b in batch_list]),
-            "node_mask": torch.stack([b["node_mask"] for b in batch_list]),
             "structural_masks": torch.stack([b["structural_masks"] for b in batch_list]),
         }
 
@@ -156,7 +150,7 @@ def run_training(
     train_loader: DataLoader = None,
     val_loader: DataLoader = None,
     full_dataset: RealIoTDataset = None,
-    trial_number: int = None
+    trial_number: Optional[int] = None
 ) -> float:
     """
     Core execution logic for a single training run.
@@ -174,6 +168,15 @@ def run_training(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
     torch.set_float32_matmul_precision("high")
+
+    amp_enabled: bool = config["amp"]
+    if amp_enabled:
+        assert torch.cuda.is_bf16_supported(), \
+            "CRITICAL: amp=true requested but this device does not support bf16. " \
+            "Set amp: false in train.yaml or use a bf16-capable GPU."
+        logger.info("bf16 autocast ENABLED (amp=true)")
+    else:
+        logger.info("bf16 autocast DISABLED (amp=false)")
 
     # Initialize W&B only if requested; pass the full nested config so all
     # hyperparameters (data / model / training / loss) are logged together.
@@ -248,12 +251,14 @@ def run_training(
     kriging_active = spatial_holdout_prob > 0.0
     loss_weights = {"w_impute": w_impute, "w_forecast": w_forecast, "w_kriging": w_kriging}
 
+    train_split = config["train_split"]
+
     if train_loader is not None and val_loader is not None:
         logger.info("Using provided data loaders.")
         train_dataset = train_loader.dataset
     elif full_dataset is not None:
         logger.info("Using provided full_dataset.")
-        train_size = int(0.8 * len(full_dataset))
+        train_size = int(train_split * len(full_dataset))
         val_size = len(full_dataset) - train_size
 
         train_dataset, val_dataset = torch.utils.data.random_split(
@@ -301,7 +306,6 @@ def run_training(
             time_series_dim=model_cfg["time_series_dim"],
             static_feat_dim=model_cfg["static_feat_dim"],
             dataset_size=20,
-            mask_prob=data_cfg["mask_prob"],
         )
         val_loader, _ = create_mock_dataloader(
             batch_size=train_cfg["batch_size"],
@@ -310,7 +314,6 @@ def run_training(
             time_series_dim=model_cfg["time_series_dim"],
             static_feat_dim=model_cfg["static_feat_dim"],
             dataset_size=8,
-            mask_prob=data_cfg["mask_prob"],
         )
     else:
         logger.info(f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}")
@@ -321,7 +324,6 @@ def run_training(
                 data_cfg["start_date"],
                 data_cfg["end_date"],
                 seq_len=data_cfg["seq_len"],
-                mask_prob=data_cfg["mask_prob"],
                 target_veh_class=data_cfg["target_veh_class"],
                 target_dir=data_cfg["target_dir"],
             )
@@ -330,7 +332,7 @@ def run_training(
             # no longer needed after construction whether it succeeded or failed.
             connector.close()
 
-        train_size = int(0.8 * len(full_dataset))
+        train_size = int(train_split * len(full_dataset))
         val_size = len(full_dataset) - train_size
 
         if train_size == 0 or val_size == 0:
@@ -553,6 +555,7 @@ def run_training(
     grad_clip_max_norm = train_cfg["grad_clip_max_norm"]
     early_stop_patience = train_cfg["early_stop_patience"]
     early_stop_min_delta = train_cfg["early_stop_min_delta"]
+    mask_prob = data_cfg["mask_prob"]
     epochs_no_improve = 0
 
     import psutil
@@ -581,6 +584,14 @@ def run_training(
                 batch["static_features"] = static_features_dev
                 batch["location_ids"] = _batch_loc_ids
 
+            # GPU-side imputation mask: generate AFTER transfer so CUDA RNG is used,
+            # eliminating a CPU→GPU copy of the mask tensor (§14 medium-risk).
+            clean_dyn = batch["dynamic_features"]
+            node_mask = torch.rand(clean_dyn.shape, device=device) < mask_prob
+            batch["target_impute"] = clean_dyn.clone()
+            batch["dynamic_features"] = clean_dyn.masked_fill(node_mask, float("nan"))
+            batch["node_mask"] = node_mask
+
             # PHASE 2: Re-roll a random spatial holdout per batch and blank the held-out
             # nodes' dynamic features so the encoder must rely on neighbour message passing.
             # HARNESS (inductive): the re-roll draws from participating nodes only —
@@ -603,8 +614,9 @@ def run_training(
                 )
 
             optimizer.zero_grad()
-            losses, _ = adapter.step(batch, loss_weights, loss_node_mask=loss_node_mask)
-            losses.total.backward()
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
+                losses, _ = adapter.step(batch, loss_weights, loss_node_mask=loss_node_mask)
+            losses.total.backward()  # outside autocast — backward always in full precision
 
             # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
@@ -635,6 +647,13 @@ def run_training(
                     batch["static_features"] = static_features_dev
                     batch["location_ids"] = _batch_loc_ids
 
+                # GPU-side imputation mask for val (random, same distribution as train).
+                clean_dyn_val = batch["dynamic_features"]
+                node_mask_val = torch.rand(clean_dyn_val.shape, device=device) < mask_prob
+                batch["target_impute"] = clean_dyn_val.clone()
+                batch["dynamic_features"] = clean_dyn_val.masked_fill(node_mask_val, float("nan"))
+                batch["node_mask"] = node_mask_val
+
                 # Apply the fixed validation holdout for deterministic scoring
                 # (inductive fixed mask, or PHASE 2 seeded transductive mask).
                 if val_holdout_mask is not None:
@@ -643,9 +662,10 @@ def run_training(
                         batch["dynamic_features"], val_holdout_mask
                     )
 
-                losses, preds = adapter.step(
-                    batch, loss_weights, loss_node_mask=loss_node_mask
-                )
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
+                    losses, preds = adapter.step(
+                        batch, loss_weights, loss_node_mask=loss_node_mask
+                    )
                 val_loss_kriging_total += losses.kriging.detach()
 
                 # HARNESS (inductive): model selection must not see holdout-node
@@ -746,6 +766,7 @@ def run_training(
             "holdout_manifest_sha": manifest_sha(holdout_manifest),
             "val_loss_total": avg_val_loss,
             "metrics": val_metrics,
+            "mask_rng": "cuda",  # augmentation RNG stream moved to GPU (§14 medium-risk)
         })
 
         if epochs_no_improve >= early_stop_patience:

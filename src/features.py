@@ -11,6 +11,7 @@ import numpy as np
 import random
 import networkx as nx
 import osmnx as ox
+import yaml
 
 # Reproducibility
 SEED = 42
@@ -22,6 +23,25 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 NEWCASTLE_CENTRE = (54.9738, -1.6131)
+
+def _load_geo_config() -> dict:
+    """Load OSMnx constants from configs/geo.yaml (searched relative to this file and repo root)."""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", "configs", "geo.yaml"),
+        os.path.join(os.getcwd(), "configs", "geo.yaml"),
+    ]
+    for path in candidates:
+        path = os.path.normpath(path)
+        if os.path.exists(path):
+            with open(path) as f:
+                return yaml.safe_load(f)["osm"]
+    raise FileNotFoundError(
+        "configs/geo.yaml not found. Expected at repo-root/configs/geo.yaml."
+    )
+
+_GEO = _load_geo_config()
+OSM_CENTER = tuple(_GEO["center"])  # (lat, lon)
+OSM_DIST = int(_GEO["dist"])
 OSM_CACHE_PATH = 'data/external/osm_features_cache.json'
 
 REQUIRED_KEYS = [
@@ -244,7 +264,7 @@ class StaticFeatureLoader:
             return existing
 
         logger.info("Downloading Newcastle walking network via OSMnx (this runs once)...")
-        G = ox.graph_from_point((54.978, -1.610), dist=5000, network_type='walk')
+        G = ox.graph_from_point(OSM_CENTER, dist=OSM_DIST, network_type='walk')
         logger.info(f"OSMnx graph: {len(G.nodes)} nodes, {len(G.edges)} edges. Computing centralities...")
 
         # Convert to undirected — walking is symmetric and dramatically speeds up centrality.

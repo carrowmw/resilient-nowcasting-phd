@@ -34,6 +34,8 @@ import type {
   NodeRole,
   PITBin,
   UIPayload,
+  AlphaNodeEntry,
+  TripwireEntry,
 } from "@/types/payload";
 import type { SpatialIndex, TemporalPage, RunRegistry } from "@/types/registry";
 import useTimeStore from "@/store/useTimeStore";
@@ -128,6 +130,7 @@ function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
 export default function AnalyticsPage() {
   const [masterIndex, setMasterIndex] = useState<MasterIndex | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [filterText, setFilterText] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [activeTab, setActiveTab] = useState(0);
@@ -145,19 +148,24 @@ export default function AnalyticsPage() {
   // Stage 1 — registry (no-op if already loaded from map page)
   useEffect(() => {
     if (runRegistry.length > 0) return;
-    let cancelled = false;
-    fetch(registryUrl())
-      .then((r) => (r.ok ? (r.json() as Promise<RunRegistry>) : Promise.reject()))
+    const controller = new AbortController();
+    fetch(registryUrl(), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<RunRegistry>;
+      })
       .then((registry) => {
-        if (cancelled) return;
+        setFetchError(null);
         setRunRegistry(registry.runs);
         const def = registry.default_run_id ?? registry.runs[0]?.run_id ?? null;
         if (def) setActiveRunId(def);
       })
-      .catch(() => setLoading(false));
-    return () => {
-      cancelled = true;
-    };
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load run registry: ${err.message}`);
+        setLoading(false);
+      });
+    return () => controller.abort();
   }, [runRegistry.length, setRunRegistry, setActiveRunId]);
 
   // Stage 2 — spatial index (re-fetches on run change)
@@ -165,20 +173,25 @@ export default function AnalyticsPage() {
   // arrives even if activeDate hasn't changed (e.g. navigating from the map page).
   useEffect(() => {
     if (!activeRunId) return;
-    let cancelled = false;
-    fetch(spatialUrl(activeRunId))
-      .then((r) => (r.ok ? (r.json() as Promise<SpatialIndex>) : Promise.reject()))
+    const controller = new AbortController();
+    fetch(spatialUrl(activeRunId), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<SpatialIndex>;
+      })
       .then((spatial) => {
-        if (cancelled) return;
+        setFetchError(null);
         setSpatialIndex(spatial);
         const dates = spatial.metadata.available_dates ?? [];
         setAvailableDates(dates);
         if (dates.length > 0) setActiveDate(dates[0]);
       })
-      .catch(() => setLoading(false));
-    return () => {
-      cancelled = true;
-    };
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load spatial index for ${activeRunId}: ${err.message}`);
+        setLoading(false);
+      });
+    return () => controller.abort();
   }, [activeRunId, setAvailableDates, setActiveDate]);
 
   // Stage 3 — page fetch + merge (re-fetches on run, date, or spatial change)
@@ -186,19 +199,25 @@ export default function AnalyticsPage() {
     if (!activeRunId || !activeDate || !spatialIndex) return;
     // Guard against run-switch race: spatialIndex may still be for the previous run.
     if (spatialIndex.metadata.run_id !== activeRunId) return;
-    let cancelled = false;
+    const controller = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    fetch(pageUrl(activeRunId, activeDate))
-      .then((r) => (r.ok ? (r.json() as Promise<TemporalPage>) : Promise.reject()))
+    fetch(pageUrl(activeRunId, activeDate), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<TemporalPage>;
+      })
       .then((page) => {
-        if (cancelled) return;
+        setFetchError(null);
         setMasterIndex(mergePayload(spatialIndex, page));
         setLoading(false);
       })
-      .catch(() => setLoading(false));
-    return () => {
-      cancelled = true;
-    };
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load page for ${activeRunId}/${activeDate}: ${err.message}`);
+        setLoading(false);
+      });
+    return () => controller.abort();
   }, [activeRunId, activeDate, spatialIndex]);
 
   // ---- DataGrid rows (computed aggregates) --------------------------------
@@ -298,14 +317,16 @@ export default function AnalyticsPage() {
       headerName: "Avg μ",
       width: 95,
       type: "number",
-      valueFormatter: (value: number) => value.toFixed(3),
+      valueFormatter: (value: number | null | undefined) =>
+        value == null ? "—" : value.toFixed(3),
     },
     {
       field: "max_mu",
       headerName: "Peak μ",
       width: 95,
       type: "number",
-      valueFormatter: (value: number) => value.toFixed(3),
+      valueFormatter: (value: number | null | undefined) =>
+        value == null ? "—" : value.toFixed(3),
     },
     {
       field: "avg_sigma",
@@ -383,7 +404,7 @@ export default function AnalyticsPage() {
         }}
       >
         <Alert severity="error">
-          Failed to load payload — check the run registry and R2 bucket.
+          {fetchError ?? "Failed to load payload — check the run registry and R2 bucket."}
         </Alert>
       </Box>
     );
@@ -721,7 +742,7 @@ export default function AnalyticsPage() {
               </Typography>
               <Box sx={{ flex: 1, minHeight: 0 }}>
                 <DataGrid
-                  rows={(masterIndex?.alpha_node_leaderboard || []).map((r, i) => ({ id: r.node_id, ...r }))}
+                  rows={(masterIndex?.alpha_node_leaderboard ?? []).map((r: AlphaNodeEntry) => ({ id: r.node_id, ...r }))}
                   columns={[
                     { field: "node_id", headerName: "ID", width: 60 },
                     { field: "location_name", headerName: "Location", flex: 1 },
@@ -762,20 +783,30 @@ export default function AnalyticsPage() {
                 Global Imputation Burden vs. Healing Quality
               </Typography>
               <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart data={(masterIndex?.global_imputation_burden || []).map((b, i) => ({
+                {(() => {
+                  const burden = masterIndex?.global_imputation_burden ?? [];
+                  const healingQ = masterIndex?.global_healing_quality;
+                  const hasHealingQ = Array.isArray(healingQ) && healingQ.length > 0;
+                  const chartData = burden.map((b, i) => ({
                     t: i,
                     burden: b * 100,
-                    mse: masterIndex?.global_healing_quality?.[i] || 0
-                  }))}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                  <XAxis dataKey="t" stroke="#1e293b" tick={{ fill: "#334155" }} />
-                  <YAxis yAxisId="left" stroke="#f87171" tick={{ fill: "#f87171" }} orientation="left" />
-                  <YAxis yAxisId="right" stroke="#60a5fa" tick={{ fill: "#60a5fa" }} orientation="right" />
-                  <Tooltip contentStyle={{ background: "rgba(10,10,10,0.9)", borderColor: "#334155" }} />
-                  <Legend />
-                  <Area yAxisId="left" type="step" dataKey="burden" fill="#f87171" stroke="#ef4444" fillOpacity={0.2} name="% Sensors Offline" />
-                  <Line yAxisId="right" type="monotone" dataKey="mse" stroke="#60a5fa" dot={false} strokeWidth={2} name="Global Imputation MSE" />
-                </ComposedChart>
+                    ...(hasHealingQ ? { mse: healingQ[i] } : {}),
+                  }));
+                  return (
+                    <ComposedChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                      <XAxis dataKey="t" stroke="#1e293b" tick={{ fill: "#334155" }} />
+                      <YAxis yAxisId="left" stroke="#f87171" tick={{ fill: "#f87171" }} orientation="left" />
+                      <YAxis yAxisId="right" stroke="#60a5fa" tick={{ fill: "#60a5fa" }} orientation="right" />
+                      <Tooltip contentStyle={{ background: "rgba(10,10,10,0.9)", borderColor: "#334155" }} />
+                      <Legend />
+                      <Area yAxisId="left" type="step" dataKey="burden" fill="#f87171" stroke="#ef4444" fillOpacity={0.2} name="% Sensors Offline" />
+                      {hasHealingQ && (
+                        <Line yAxisId="right" type="monotone" dataKey="mse" stroke="#60a5fa" dot={false} strokeWidth={2} name="Global Imputation MSE" />
+                      )}
+                    </ComposedChart>
+                  );
+                })()}
               </ResponsiveContainer>
             </Box>
             <Box sx={{ flex: 1, minWidth: 300, display: "flex", flexDirection: "column" }}>
@@ -784,7 +815,7 @@ export default function AnalyticsPage() {
               </Typography>
               <Box sx={{ flex: 1, minHeight: 0 }}>
                 <DataGrid
-                  rows={(masterIndex?.tripwire_audit_trail || []).map((r, i) => ({ id: i, ...r }))}
+                  rows={(masterIndex?.tripwire_audit_trail ?? []).map((r: TripwireEntry, i) => ({ id: i, ...r }))}
                   columns={[
                     { field: "timestep", headerName: "Time", width: 60 },
                     { field: "node_id", headerName: "Node ID", width: 80 },

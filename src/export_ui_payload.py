@@ -82,21 +82,10 @@ NODES_DIR = "frontend/public/data/nodes"
 PLACES_CACHE_PATH = "data/external/places_cache.json"
 
 
-# Newcastle city bounding box (WGS84) for simulated node placement
-NCL_LAT_MIN, NCL_LAT_MAX = 54.968, 55.012
-NCL_LON_MIN, NCL_LON_MAX = -1.660, -1.576
-
-# Five deterministic simulated node positions within the bounding box
-SIMULATED_NODE_COORDS: List[Tuple[float, float]] = [
-    (54.978, -1.595),
-    (55.005, -1.580),
-    (54.977851, -1.612579), # Saint Marys Place
-    (54.976248, -1.610691), # John Dobson Street Bottom
-    (54.973199, -1.611128), # Pilgrim Street / Market Street
-]
-
-NUM_TIMESTEPS_TARGET = 96  # 24 h × 4 per hour
-TOP_K_EGO_EDGES = 10      # top K incoming + top K outgoing per node in ego_graph_edges
+# Export constants — loaded from configs/analysis/analysis.yaml at runtime.
+# These sentinel values are replaced by config values in main(); do not use directly.
+NUM_TIMESTEPS_TARGET: int = 96  # overridden from export.num_timesteps_target
+TOP_K_EGO_EDGES: int = 10       # overridden from export.top_k_ego_edges
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +670,7 @@ def build_ego_graph_edges(
     edge_attention_data: Dict[Tuple[int, int], List[float]],
     node_coord_map: Dict[int, Tuple[float, float]],
     num_timesteps: int,
-    top_k: int = TOP_K_EGO_EDGES,
+    top_k: int = 10,
 ) -> List[Dict]:
     """
     Extract top-K incoming and top-K outgoing GAT attention edges for node_id.
@@ -781,6 +770,24 @@ def main() -> None:
         import yaml as _yaml
         with open(args.config) as _fh:
             analysis_cfg = _yaml.safe_load(_fh) or {}
+    else:
+        raise FileNotFoundError(
+            f"CRITICAL: analysis config not found at {args.config!r}. "
+            "Pass --config with the correct path."
+        )
+
+    export_cfg = analysis_cfg["export"]
+    num_timesteps_target: int = export_cfg["num_timesteps_target"]
+    top_k_ego_edges: int = export_cfg["top_k_ego_edges"]
+    ncl_lat_min: float = export_cfg["ncl_lat_min"]
+    ncl_lat_max: float = export_cfg["ncl_lat_max"]
+    ncl_lon_min: float = export_cfg["ncl_lon_min"]
+    ncl_lon_max: float = export_cfg["ncl_lon_max"]
+    simulated_node_coords: List[Tuple[float, float]] = [
+        tuple(c) for c in export_cfg["simulated_node_coords"]
+    ]
+    mask_prob_export: float = export_cfg["mask_prob"]
+
     connector = create_connector(analysis_cfg)
 
     # ------------------------------------------------------------------
@@ -799,15 +806,11 @@ def main() -> None:
     #    where T_day1 ≈ 96 for a full day.
     # ------------------------------------------------------------------
     logger.info(f"Loading dataset: {args.start_date} → {args.end_date}")
-    # mask_prob=0.15 (training default) so node_mask + target_impute carry meaningful
-    # signal: the model's imputation reconstructs the masked timesteps and the UI
-    # can visualise the "self-healing" behaviour at the masked positions.
     dataset = RealIoTDataset(
         connector,
         start_date=args.start_date,
         end_date=args.end_date,
         seq_len=args.seq_len,
-        mask_prob=0.15,
         target_veh_class=args.veh_class,
         target_dir=args.dir,
     )
@@ -855,11 +858,11 @@ def main() -> None:
     half = total_times // 2
     skip = max(0, half - args.seq_len)  # first window whose prediction lands in day 2
 
-    max_windows = min(len(dataset) - skip, NUM_TIMESTEPS_TARGET)
+    max_windows = min(len(dataset) - skip, num_timesteps_target)
     if max_windows <= 0:
         # Single-day dataset: use all available windows
         skip = 0
-        max_windows = min(len(dataset), NUM_TIMESTEPS_TARGET)
+        max_windows = min(len(dataset), num_timesteps_target)
 
     num_timesteps = max_windows
     logger.info(
@@ -888,7 +891,7 @@ def main() -> None:
 
     for j in range(num_simulated):
         node_id = num_nodes_real + j
-        lat, lon = SIMULATED_NODE_COORDS[j]
+        lat, lon = simulated_node_coords[j]
         nodes_meta.append({
             "id": node_id,
             "location_name": f"Simulated_Node_{j}",
@@ -1454,7 +1457,8 @@ def main() -> None:
         # for graph-less baselines (empty list — the frontend renders no ego graph).
         if caps.graph:
             ego_edges = build_ego_graph_edges(
-                node_id, edge_attention_data, node_coord_map, num_timesteps
+                node_id, edge_attention_data, node_coord_map, num_timesteps,
+                top_k=top_k_ego_edges,
             )
             assert isinstance(ego_edges, list)
             for e in ego_edges:

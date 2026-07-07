@@ -1,10 +1,18 @@
 import type { NextConfig } from "next";
 
+// Short-lived for the registry so new runs appear quickly, but allow stale reads during revalidation.
+const REGISTRY_MAX_AGE = 60;
+const REGISTRY_SWR = 30;
+
 const nextConfig: NextConfig = {
   async rewrites() {
-    const R2_PUBLIC_URL =
-      process.env.R2_PUBLIC_URL ||
-      "https://pub-b102fa91750348f78a6385248654688a.r2.dev";
+    const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
+    if (!R2_PUBLIC_URL) {
+      throw new Error(
+        "FATAL: R2_PUBLIC_URL environment variable is not set. " +
+          "Add it to .env.local or the deployment environment. See .env.example."
+      );
+    }
 
     return [
       {
@@ -17,12 +25,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Immutable cache for historical payloads (spatial.json, page.json, node_*.json)
+        // Mutable cache for payloads to allow re-inference updates
         source: "/data/runs/:runId/:date*/(.*).(json)",
         headers: [
           {
             key: "Cache-Control",
-            value: "public, max-age=31536000, immutable",
+            value: "public, s-maxage=3600, stale-while-revalidate=86400",
           },
         ],
       },
@@ -32,17 +40,17 @@ const nextConfig: NextConfig = {
         headers: [
           {
             key: "Cache-Control",
-            value: "public, s-maxage=60, stale-while-revalidate=30",
+            value: `public, s-maxage=${REGISTRY_MAX_AGE}, stale-while-revalidate=${REGISTRY_SWR}`,
           },
         ],
       },
       {
-        // Immutable cache for spatial.json (run-level, no date)
+        // Mutable cache for spatial.json (run-level, no date) to allow re-inference updates
         source: "/data/runs/:runId/spatial.json",
         headers: [
           {
             key: "Cache-Control",
-            value: "public, max-age=31536000, immutable",
+            value: "public, s-maxage=3600, stale-while-revalidate=86400",
           },
         ],
       },

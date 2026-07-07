@@ -34,9 +34,9 @@ if [ -n "${REGISTRATION_TOKEN}" ] && [ "${REGISTRATION_TOKEN}" != "null" ]; then
   echo "Successfully obtained registration token using GITHUB_TOKEN."
   TOKEN_TO_USE="${REGISTRATION_TOKEN}"
 else
-  echo "Could not obtain registration token via API (Response: ${API_RESPONSE})."
-  echo "Assuming GITHUB_TOKEN is a direct registration token..."
-  TOKEN_TO_USE="${GITHUB_TOKEN}"
+  echo "FATAL: Could not obtain registration token via GitHub API (Response: ${API_RESPONSE})." >&2
+  echo "Ensure GITHUB_TOKEN is a valid PAT with 'repo' scope and the runner registration endpoint is reachable." >&2
+  exit 1
 fi
 
 if [ -f .runner ]; then

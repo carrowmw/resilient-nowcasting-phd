@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import pandas as pd
 import logging
+from typing import Optional
 from sklearn.preprocessing import StandardScaler
 
 from db_connector import DataConnector
@@ -29,7 +30,6 @@ class RealIoTDataset(Dataset):
                  start_date: str,
                  end_date: str,
                  seq_len: int = 12,
-                 mask_prob: float = 0.15,
                  target_veh_class: str = 'person',
                  target_dir: str = 'all'):
 
@@ -106,7 +106,6 @@ class RealIoTDataset(Dataset):
         self.locations = sorted(df['location'].unique())
         self.times = sorted(df['dt'].unique())
         self.seq_len = seq_len
-        self.mask_prob = mask_prob
         self.num_nodes = len(self.locations)
 
         logger.info(f"Loaded {len(self.times)} timesteps across {self.num_nodes} locations for class={target_veh_class}, dir={target_dir}.")
@@ -218,9 +217,9 @@ class RealIoTDataset(Dataset):
         return max(0, len(self.times) - self.seq_len)
 
     def __getitem__(self, idx: int) -> dict:
-        # Dynamic: [seq_len, num_nodes, D] -> permute -> [num_nodes, seq_len, D]
+        # Dynamic: [seq_len, num_nodes, D] -> permute -> [num_nodes, seq_len, D] (clean, no masking)
         dyn_tensor = self.dynamic_data[idx : idx + self.seq_len].permute(1, 0, 2)
-        
+
         # Also slice and permute the structural masks to match
         struct_masks = self.structural_masks[idx : idx + self.seq_len].permute(1, 0, 2)
 
@@ -230,24 +229,18 @@ class RealIoTDataset(Dataset):
             f"CRITICAL: negative traffic count at window idx={idx} — expected non-negative raw counts"
         target_tensor = target_tensor.clamp(min=0)  # clamp only float-precision dust (< 1e-6)
 
-        # Dynamic Masking logic (~15% artificial NaN injection)
-        node_mask = torch.rand_like(dyn_tensor) < self.mask_prob
-        target_impute = dyn_tensor.clone()
-        dyn_masked = dyn_tensor.clone()
-        dyn_masked[node_mask] = float('nan')
-
+        # NaN injection and node_mask are generated on-device in the train/val loops so
+        # masking uses CUDA RNG and avoids a CPU→GPU tensor copy of the mask.
         return {
-            'dynamic_features': dyn_masked,
-            'target_impute': target_impute,
+            'dynamic_features': dyn_tensor,
             'target_forecast': target_tensor,
-            'node_mask': node_mask,
             'structural_masks': struct_masks,
         }
 
 def make_spatial_holdout_mask(num_nodes: int,
                               holdout_prob: float,
                               device: str = 'cpu',
-                              seed: int = None) -> torch.Tensor:
+                              seed: Optional[int] = None) -> torch.Tensor:
     """
     Create a boolean mask marking spatially held-out nodes (IGNNK-style node masking,
     Spatial Estimation Architecture Component 2, docs §4).
@@ -298,11 +291,11 @@ def apply_spatial_holdout(dynamic_features: torch.Tensor,
 
 
 def custom_collate_real(batch_list):
-    """Collate function to maintain node structural dimensions."""
+    """Collate function to maintain node structural dimensions.
+    Note: target_impute and node_mask are NOT returned here — they are generated
+    on-device in the train/val loops after .to(device)."""
     return {
         'dynamic_features': torch.stack([b['dynamic_features'] for b in batch_list]),
-        'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
         'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
-        'node_mask': torch.stack([b['node_mask'] for b in batch_list]),
         'structural_masks': torch.stack([b['structural_masks'] for b in batch_list]),
     }

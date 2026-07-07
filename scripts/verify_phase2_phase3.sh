@@ -116,25 +116,27 @@ if [[ "$PHASE3_ONLY" == false ]]; then
 
     # 7. Check TimescaleDB container (if running)
     echo "7. Checking TimescaleDB container..."
+    PG_USER="${POSTGRES_USER:?POSTGRES_USER env var must be set}"
+    PG_DB="${POSTGRES_DB:?POSTGRES_DB env var must be set}"
     if docker ps --format '{{.Names}}' | grep -q "ml-timescaledb"; then
         check_pass "TimescaleDB container is running"
 
         # Test database connection
-        if docker exec ml-timescaledb pg_isready -U riotuser > /dev/null 2>&1; then
+        if docker exec ml-timescaledb pg_isready -U "$PG_USER" > /dev/null 2>&1; then
             check_pass "Database is accepting connections"
         else
             check_warn "Database container running but not ready"
         fi
 
         # Check if migrations applied
-        if docker exec ml-timescaledb psql -U riotuser -d riot_traffic -c "\dt" 2>/dev/null | grep -q "traffic_readings"; then
+        if docker exec ml-timescaledb psql -U "$PG_USER" -d "$PG_DB" -c "\dt" 2>/dev/null | grep -q "traffic_readings"; then
             check_pass "Migrations applied (traffic_readings table exists)"
         else
             check_warn "Migrations NOT applied (run: alembic upgrade head)"
         fi
 
         # Check row count
-        ROW_COUNT=$(docker exec ml-timescaledb psql -U riotuser -d riot_traffic -t -c "SELECT COUNT(*) FROM traffic_readings;" 2>/dev/null | tr -d ' ' || echo "0")
+        ROW_COUNT=$(docker exec ml-timescaledb psql -U "$PG_USER" -d "$PG_DB" -t -c "SELECT COUNT(*) FROM traffic_readings;" 2>/dev/null | tr -d ' ' || echo "0")
         if [[ "$ROW_COUNT" -gt 1000000 ]]; then
             check_pass "Data ingested ($ROW_COUNT rows)"
         elif [[ "$ROW_COUNT" -gt 0 ]]; then

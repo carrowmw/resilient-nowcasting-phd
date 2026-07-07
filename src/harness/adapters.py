@@ -115,8 +115,10 @@ class RecurrentBaselineAdapter(ModelAdapter):
         else:
             mu_l, recon_l = mu, recon
 
-        loss_forecast = F.mse_loss(mu_l, target_forecast)
-        loss_impute = F.mse_loss(recon_l, target_impute)
+        # Keep MSE losses in FP32 to match ZINB carve-out in pipeline.py.
+        with torch.autocast(device_type=mu.device.type, enabled=False):
+            loss_forecast = F.mse_loss(mu_l.float(), target_forecast.float())
+            loss_impute = F.mse_loss(recon_l.float(), target_impute.float())
         # The reconstruction loss already trains the head that produces
         # kriging_pred, so there is no separate kriging objective.
         loss_kriging = torch.zeros((), device=mu.device)

@@ -28,6 +28,7 @@ sys.path.insert(0, _REPO_ROOT)
 sys.path.insert(0, _SCRIPTS_DIR)
 
 import networkx as nx
+import yaml
 
 from src.features import compute_pairwise_edge_features
 
@@ -37,8 +38,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_OUTPUT = 'data/external/simulated_edge_features_cache.json'
 DEFAULT_SENSORS_PATH = 'data/traffic_sensors.json'
 DEFAULT_NUM_SIMULATED = 5
-GRAPH_CENTER = (54.978, -1.610)
-GRAPH_DIST = 5000
+
+def _load_geo_config():
+    path = os.path.join(_REPO_ROOT, "configs", "geo.yaml")
+    with open(path) as f:
+        return yaml.safe_load(f)["osm"]
+
+_GEO = _load_geo_config()
+GRAPH_CENTER = tuple(_GEO["center"])
+GRAPH_DIST = int(_GEO["dist"])
 
 
 # ---------------------------------------------------------------------------

@@ -189,10 +189,7 @@ interface PiChartProps {
 function PiChart({ node, currentTimestep }: PiChartProps) {
   const series = node.zinb_series;
   const T = series.length;
-
-  // Guard: models without a zero-inflation head (pi null) or old payloads
-  // without the pi field degrade gracefully — no chart.
-  if (T === 0 || series[0].pi == null) return null;
+  const hasPiData = T > 0 && series[0].pi != null;
 
   const xOf = (t: number) => PAD.left + (T <= 1 ? 0 : (t / (T - 1)) * INNER_W);
   // pi is always in (0,1) — fixed Y axis
@@ -200,6 +197,7 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
 
   // Contiguous runs of is_missing === true for background shading
   const missingRuns = useMemo(() => {
+    if (!hasPiData) return [];
     const runs: { x1: number; x2: number }[] = [];
     let start: number | null = null;
     for (const { t, is_missing } of series) {
@@ -212,7 +210,12 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
     if (start !== null) runs.push({ x1: xOf(start), x2: xOf(T - 1) });
     return runs;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series]);
+  }, [series, hasPiData]);
+
+  // Guard: models without a zero-inflation head (pi null) or old payloads
+  // without the pi field degrade gracefully — no chart.
+  // This guard is AFTER all hook calls to satisfy rules-of-hooks.
+  if (!hasPiData) return null;
 
   const piPoints = series
     .map(({ t, pi }) => `${xOf(t)},${yOf(pi ?? 0)}`)
@@ -326,9 +329,7 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
 // Attention Edge rank list
 // ---------------------------------------------------------------------------
 
-function EdgeList({ edges }: { edges: AttentionEdge[] }) {
-  const currentTimestep = useTimeStore((s) => s.currentTimestep);
-
+function EdgeList({ edges, currentTimestep }: { edges: AttentionEdge[]; currentTimestep: number }) {
   const { topIncoming, topOutgoing } = useMemo(() => {
     const byWeight = (a: AttentionEdge, b: AttentionEdge) =>
       (b.weight_sequence[currentTimestep] ?? 0) -
@@ -407,35 +408,67 @@ export default function NodeInspector() {
   const activeDate = useTimeStore((s) => s.activeDate);
 
   const [nodeDetail, setNodeDetail] = useState<NodeDetailPayload | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Lazy per-node fetch: load the day-scoped node_{id}.json from R2 whenever the
   // selection, run, or day changes. Write ego_graph_edges into the store so
   // MapVisualizer can render the ArcLayer.
   useEffect(() => {
     if (selectedNodeId === null || !activeRunId || !activeDate) {
-      setNodeDetail(null);
+      // Only update external state (Zustand); local React state is left stale
+      // but never rendered since selectedNodeId === null causes early return below.
       setEgoGraphEdges(null);
       return;
     }
-    let cancelled = false;
-    fetch(nodeUrl(activeRunId, activeDate, selectedNodeId))
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: NodeDetailPayload | null) => {
-        if (cancelled) return;
+    const controller = new AbortController();
+    fetch(nodeUrl(activeRunId, activeDate, selectedNodeId), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<NodeDetailPayload>;
+      })
+      .then((d) => {
+        setFetchError(null);
         setNodeDetail(d);
         setEgoGraphEdges(d?.ego_graph_edges ?? null);
       })
-      .catch(() => {
-        if (cancelled) return;
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load node detail: ${err.message}`);
         setNodeDetail(null);
         setEgoGraphEdges(null);
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [selectedNodeId, activeRunId, activeDate, setEgoGraphEdges]);
 
   if (selectedNodeId === null) return null;
+
+  if (fetchError) {
+    return (
+      <aside
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          width: 360,
+          zIndex: 10,
+        }}
+        className="rounded-lg border border-red-500/30 bg-neutral-950/85 p-4 text-xs text-red-300 shadow-xl backdrop-blur"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span>{fetchError}</span>
+          <button
+            type="button"
+            onClick={() => setSelectedNodeId(null)}
+            className="rounded px-2 py-0.5 text-slate-300 hover:bg-white/10"
+            aria-label="Close inspector"
+          >
+            ✕
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
   if (!nodeDetail) return null;
 
   const hasImputation =
@@ -605,7 +638,7 @@ export default function NodeInspector() {
               <span className="text-amber-400">→</span> out
             </span>
           </div>
-          <EdgeList edges={nodeDetail.ego_graph_edges!} />
+          <EdgeList edges={nodeDetail.ego_graph_edges!} currentTimestep={currentTimestep} />
         </div>
       )}
     </aside>
