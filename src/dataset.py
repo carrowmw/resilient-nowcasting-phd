@@ -121,12 +121,27 @@ class RealIoTDataset(Dataset):
         val_df = dyn_df['value'].reindex(columns=locations_idx)
         hum_df = dyn_df['Humidity'].reindex(columns=locations_idx)
         sol_df = dyn_df['Solar Radiation'].reindex(columns=locations_idx)
-        assert not val_df.isna().any().any(), \
-            "CRITICAL: NaN in traffic values after pivot/reindex — upstream data has gaps"
-        assert not hum_df.isna().any().any(), \
-            "CRITICAL: NaN in Humidity after pivot/reindex — upstream data has gaps"
-        assert not sol_df.isna().any().any(), \
-            "CRITICAL: NaN in Solar Radiation after pivot/reindex — upstream data has gaps"
+
+        # 4b. Extract explicit MNAR masks
+        # val_df index is 'dt', columns are 'location'. Shape: [num_times, num_nodes]
+        total_mnar_mask = val_df.isna().values.astype(np.float32)
+        
+        # Extract hours from the DatetimeIndex to build the night heuristic mask
+        # Broadast hour comparison to the shape of the data
+        hours = val_df.index.get_level_values('dt').hour.values[:, None]
+        is_night_arr = (hours >= 0) & (hours < 5)
+        night_mnar_mask = (val_df.isna().values & is_night_arr).astype(np.float32)
+        
+        # Shape: [num_times, num_nodes, 2]
+        self.structural_masks = torch.from_numpy(np.stack([total_mnar_mask, night_mnar_mask], axis=-1))
+        
+        logger.info(f"MNAR Masks Generated. Total missing: {(total_mnar_mask.mean()*100):.2f}%. Night missing: {(night_mnar_mask.mean()*100):.2f}%")
+        
+        # Explicitly apply 0.0 imputation to resolve nulls upstream
+        val_df = val_df.fillna(0.0)
+        hum_df = hum_df.fillna(0.0)
+        sol_df = sol_df.fillna(0.0)
+
         val_arr = val_df.values
         hum_arr = hum_df.values
         sol_arr = sol_df.values
@@ -205,6 +220,9 @@ class RealIoTDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         # Dynamic: [seq_len, num_nodes, D] -> permute -> [num_nodes, seq_len, D]
         dyn_tensor = self.dynamic_data[idx : idx + self.seq_len].permute(1, 0, 2)
+        
+        # Also slice and permute the structural masks to match
+        struct_masks = self.structural_masks[idx : idx + self.seq_len].permute(1, 0, 2)
 
         # Forecast target: pull from unscaled traffic counts, not scaled dynamic_data.
         target_tensor = self.unscaled_traffic[idx + self.seq_len]
@@ -223,6 +241,7 @@ class RealIoTDataset(Dataset):
             'target_impute': target_impute,
             'target_forecast': target_tensor,
             'node_mask': node_mask,
+            'structural_masks': struct_masks,
         }
 
 def make_spatial_holdout_mask(num_nodes: int,

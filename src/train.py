@@ -128,6 +128,7 @@ def create_mock_dataloader(
                 "target_impute": dyn.clone(),
                 "target_forecast": torch.randint(0, 50, (num_nodes,)).float(),
                 "node_mask": mask,
+                "structural_masks": torch.zeros(num_nodes, seq_len, 2),
             }
 
     dataset = MockPipelineDataset(size=dataset_size)
@@ -139,6 +140,7 @@ def create_mock_dataloader(
             "target_impute": torch.stack([b["target_impute"] for b in batch_list]),
             "target_forecast": torch.stack([b["target_forecast"] for b in batch_list]),
             "node_mask": torch.stack([b["node_mask"] for b in batch_list]),
+            "structural_masks": torch.stack([b["structural_masks"] for b in batch_list]),
         }
 
     return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate), dataset

@@ -21,12 +21,14 @@ class MaskedSpatiotemporalEncoder(nn.Module):
                  num_layers: int = 2,
                  dropout: float = 0.1,
                  dim_feedforward: int = 256,
-                 edge_dim: int = 1):
+                 edge_dim: int = 1,
+                 mask_dim: int = 2):
         super(MaskedSpatiotemporalEncoder, self).__init__()
 
         self.num_nodes = num_nodes
         self.seq_len = seq_len
         self.time_series_dim = time_series_dim
+        self.mask_dim = mask_dim
         self.hidden_dim = hidden_dim
         # PHASE 3: edge_dim=1 -> learned similarity only; edge_dim=10 -> enriched
         # physical + learned edge features from the cache.
@@ -36,7 +38,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         # We use a single layer for simplicity as per common IoT patterns,
         # or can be extended to multiple.
         self.gat = GATv2Conv(
-            in_channels=time_series_dim,
+            in_channels=time_series_dim + mask_dim,
             out_channels=hidden_dim // num_heads,
             heads=num_heads,
             dropout=dropout,
@@ -83,7 +85,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         batch_size, num_nodes, seq_len, ts_dim = dynamic_features.shape
         assert num_nodes == self.num_nodes, f"Node mismatch: {num_nodes} != {self.num_nodes}"
         assert seq_len == self.seq_len, f"Seq mismatch: {seq_len} != {self.seq_len}"
-        assert ts_dim == self.time_series_dim, f"Feature mismatch: {ts_dim} != {self.time_series_dim}"
+        assert ts_dim == self.time_series_dim + self.mask_dim, f"Feature mismatch: {ts_dim} != {self.time_series_dim + self.mask_dim}"
 
         # --- Spatial Processing ---
         # Reshape to [B, T, N, D] then to [B*T*N, D]

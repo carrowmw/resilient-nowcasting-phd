@@ -146,6 +146,13 @@ class ResilientIoTPipeline(nn.Module):
         # Replace NaNs (injected by our Dataset masking or simulated nodes) with 0.0
         dynamic_features_clean = torch.nan_to_num(dynamic_features, nan=0.0)
 
+        # Retrieve and concatenate explicit MNAR masks
+        # structural_masks shape: [batch_size, num_nodes, seq_len, 2]
+        structural_masks = batch.get('structural_masks')
+        if structural_masks is not None:
+            encoder_input = torch.cat([dynamic_features_clean, structural_masks], dim=-1)
+        else:
+            encoder_input = dynamic_features_clean
         # 1. Graph Learner — PHASE 3 returns enriched edge_attr [E, 10] (or [E, 1] fallback).
         edge_index, edge_weight, edge_attr = self.graph_learner(
             static_features, location_ids=location_ids
@@ -165,7 +172,7 @@ class ResilientIoTPipeline(nn.Module):
         # 2. Encoder — request attention weights when in analysis mode
         if return_analysis:
             latent_embeddings, alpha = self.encoder(
-                dynamic_features_clean, edge_index, edge_attr,
+                encoder_input, edge_index, edge_attr,
                 return_attention_weights=True,
             )
 
@@ -194,7 +201,7 @@ class ResilientIoTPipeline(nn.Module):
         target_forecast = batch['target_forecast']
         target_impute = batch['target_impute']
 
-        latent_embeddings = self.encoder(dynamic_features_clean, edge_index, edge_attr)
+        latent_embeddings = self.encoder(encoder_input, edge_index, edge_attr)
 
         # 3. Decoders
         imputed_features, mu, theta, pi, tripwires = self.decoders(latent_embeddings)
