@@ -7,7 +7,8 @@ services:
     container_name: my-ml-agent
 
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - .:/workspace
       - ~/.config/gcloud:/root/.config/gcloud  # Required for ADC authentication
@@ -25,7 +26,8 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: nextjs-frontend
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./frontend:/workspace/frontend
       - ./workers:/workspace/workers
@@ -46,7 +48,8 @@ services:
       dockerfile: Dockerfile.gpu
     container_name: gpu-executor
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - .:/workspace
     networks:
@@ -69,7 +72,8 @@ services:
       dockerfile: Dockerfile.cpu
     container_name: cpu-executor
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - .:/workspace
     networks:

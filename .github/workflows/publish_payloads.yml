@@ -21,9 +21,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Create empty .env for Docker Compose
-        run: touch .env
-
       - name: Link host data directory
         run: |
           if [ -d "/data" ]; then
