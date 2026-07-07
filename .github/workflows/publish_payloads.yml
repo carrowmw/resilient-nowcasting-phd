@@ -38,43 +38,46 @@ jobs:
 
 
 
-      - name: Clean stale local payloads
+      - name: Build CI Payload Runner
         run: |
-          mkdir -p "$PAYLOAD_DIR"
-          rm -rf "$PAYLOAD_DIR"/*
+          cp Dockerfile.gpu Dockerfile.ci
+          echo "COPY . ." >> Dockerfile.ci
+          docker build -t ci-payload-runner -f Dockerfile.ci .
 
-      - name: Export paginated payload
+      - name: Export and Upload Payloads
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
           ARTIFACT_REF: ${{ github.event.inputs.artifact_ref }}
           ALL_ARTIFACTS: ${{ github.event.inputs.all_artifacts }}
-        run: |
-          docker compose run --rm --no-deps \
-            -e WANDB_API_KEY \
-            gpu-runner bash -c '
-              ARGS="--config configs/analysis/analysis.yaml --output_dir $PAYLOAD_DIR"
-              if [ "$ALL_ARTIFACTS" = "true" ]; then
-                ARGS="$ARGS --all_artifacts"
-              elif [ -n "$ARTIFACT_REF" ]; then
-                ARGS="$ARGS --artifact $ARTIFACT_REF"
-              fi
-              python src/export_paginated_payload.py $ARGS
-            '
-
-      - name: Upload to R2
-        env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
-          docker compose run --rm --no-deps \
+          docker run --rm \
+            -e WANDB_API_KEY \
             -e R2_ACCOUNT_ID -e R2_ACCESS_KEY_ID -e R2_SECRET_ACCESS_KEY \
             -e R2_BUCKET_NAME -e R2_PUBLIC_URL \
-            gpu-runner python scripts/upload_to_r2.py \
-              --runs-dir "$PAYLOAD_DIR" \
-              --prefix runs
+            -e PAYLOAD_DIR \
+            -v /data:/data:ro \
+            ci-payload-runner bash -c '
+              mkdir -p "$PAYLOAD_DIR"
+              rm -rf "$PAYLOAD_DIR"/*
+              
+              ARGS="--config configs/analysis/analysis.yaml --output_dir $PAYLOAD_DIR"
+              if [ "$ALL_ARTIFACTS" = "true" ]; then
+                ARGS="$ARGS --all_artifacts"
+              elif [ -n "$ARTIFACT_REF" ]; then
+                ARGS="$ARGS --artifact $ARTIFACT_REF"
+              fi
+              
+              echo "Exporting payloads..."
+              python src/export_paginated_payload.py $ARGS
+              
+              echo "Uploading to R2..."
+              python scripts/upload_to_r2.py --runs-dir "$PAYLOAD_DIR" --prefix runs
+            '
 
       - name: Trigger Run Registry Rebuild
         env:
