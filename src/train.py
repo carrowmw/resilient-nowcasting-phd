@@ -8,10 +8,12 @@ if __name__ == "__main__":
     early_args, _ = parser.parse_known_args()
     
     if not early_args.use_mock_data:
-        from gpu_selector import select_gpus
-        selected_gpus = select_gpus()
-        if selected_gpus:
-            os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
+        existing_gpus = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if not existing_gpus:
+            from gpu_selector import select_gpus
+            selected_gpus = select_gpus()
+            if selected_gpus:
+                os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
 
 import copy
 import logging
