@@ -56,7 +56,7 @@ jobs:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          docker run --rm --network ml-network \
+          docker run --rm --network ml-agent-workspace_ml-network \
             -e WANDB_API_KEY \
             -e DATABASE_URL \
             -e R2_ACCOUNT_ID -e R2_ACCESS_KEY_ID -e R2_SECRET_ACCESS_KEY \
