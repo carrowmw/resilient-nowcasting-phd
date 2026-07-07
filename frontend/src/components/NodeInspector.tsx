@@ -308,7 +308,7 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
         strokeDasharray="2 2"
       />
       {/* Pi value at cursor */}
-      {currentPi !== undefined && (
+      {currentPi != null && (
         <text
           x={Math.min(cursorX + 3, PAD.left + INNER_W - 22)}
           y={PAD.top + 9}
