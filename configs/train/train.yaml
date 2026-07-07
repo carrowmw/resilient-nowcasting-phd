@@ -94,13 +94,8 @@ export:
   ncl_lat_max: 55.012
   ncl_lon_min: -1.660
   ncl_lon_max: -1.576
-  # Five deterministic simulated node positions within the bounding box.
-  simulated_node_coords:
-    - [54.978, -1.595]
-    - [55.005, -1.580]
-    - [54.977851, -1.612579]
-    - [54.976248, -1.610691]
-    - [54.973199, -1.611128]
+  # Number of simulated nodes to randomly sample within the bounding box.
+  num_simulated_nodes: 50
 
 # Disable bf16 autocast by default; set true only on hardware with bf16 support.
 # When true, adapter.step() runs under torch.autocast(dtype=bfloat16); compute_loss

@@ -8,6 +8,7 @@ interface TimeState {
   isPlaying: boolean;
   selectedNodeId: number | null;
   globalAttentionThreshold: number;
+  showSimulatedNodes: boolean;
   egoGraphEdges: AttentionEdge[] | null;
 
   // --- Multi-run + pagination state (Phase 1) ---
@@ -23,6 +24,7 @@ interface TimeState {
   incrementTimestep: () => void;
   setSelectedNodeId: (id: number | null) => void;
   setGlobalAttentionThreshold: (v: number) => void;
+  setShowSimulatedNodes: (v: boolean) => void;
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
 
   // --- Multi-run + pagination actions ---
@@ -40,6 +42,7 @@ const useTimeStore = create<TimeState>((set, get) => ({
   isPlaying: false,
   selectedNodeId: null,
   globalAttentionThreshold: 0.5,
+  showSimulatedNodes: true,
   egoGraphEdges: null,
 
   activeRunId: null,
@@ -68,6 +71,8 @@ const useTimeStore = create<TimeState>((set, get) => ({
   // Clamp threshold to [0, 1] — attention weights live in [0, 1].
   setGlobalAttentionThreshold: (v: number) =>
     set({ globalAttentionThreshold: Math.max(0, Math.min(1, v)) }),
+
+  setShowSimulatedNodes: (v: boolean) => set({ showSimulatedNodes: v }),
 
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => set({ egoGraphEdges: edges }),
 

@@ -35,6 +35,8 @@ export default function ModelInfoOverlay() {
   const [open, setOpen] = useState(false);
   const runRegistry = useTimeStore((s) => s.runRegistry);
   const activeRunId = useTimeStore((s) => s.activeRunId);
+  const showSimulatedNodes = useTimeStore((s) => s.showSimulatedNodes);
+  const setShowSimulatedNodes = useTimeStore((s) => s.setShowSimulatedNodes);
 
   const entry: RunRegistryEntry | undefined = runRegistry.find(
     (r) => r.run_id === activeRunId,
@@ -133,6 +135,17 @@ export default function ModelInfoOverlay() {
             label="Nodes"
             value={`${entry.num_nodes} (${entry.num_nodes - entry.num_simulated_nodes} real + ${entry.num_simulated_nodes} sim)`}
           />
+
+          <Section title="VISUALIZATION" />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
+            <span style={{ color: "#94a3b8" }}>Simulated Nodes</span>
+            <input 
+              type="checkbox" 
+              checked={showSimulatedNodes} 
+              onChange={(e) => setShowSimulatedNodes(e.target.checked)}
+              style={{ cursor: "pointer" }}
+            />
+          </div>
 
           <Section title="PROVENANCE" />
           <Row label="W&B run" value={entry.wandb_run_id} />

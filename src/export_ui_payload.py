@@ -51,6 +51,7 @@ from baselines import GRUForecaster, LSTMForecaster
 from dataset import RealIoTDataset, apply_spatial_holdout
 from db_connector import create_connector
 from features import StaticFeatureLoader, REQUIRED_KEYS
+from simulated_nodes import SimulatedNodeInjector
 from harness import (
     ModelAdapter,
     build_adapter,
@@ -280,55 +281,6 @@ def build_model_and_adapter(
     adapter = build_adapter(model_type, model)
     logger.info(f"Model loaded (eval mode). Capabilities: {adapter.capabilities}")
     return adapter
-
-
-def build_simulated_static(
-    real_static: torch.Tensor,
-    n: int,
-    nodes_meta: List[Dict],
-    static_scaler,
-) -> torch.Tensor:
-    """
-    Create static features for n simulated nodes by fetching spatial features
-    from Google Places and OSMnx, and scaling them.
-    """
-    sim_nodes = [m for m in nodes_meta if m["is_simulated"]]
-    assert len(sim_nodes) == n
-
-    loader = StaticFeatureLoader(cache_path="data/external/simulated_places_cache.json")
-
-    # Query missing Google features
-    for meta in sim_nodes:
-        loc = meta["location_name"]
-        if loc not in loader.cache:
-            logger.info(f"Fetching live data for simulated node: {loc}")
-            loader.cache[loc] = loader._fetch_location_data(meta["lat"], meta["lon"])
-            loader._save_cache()
-
-    # Query OSM features
-    sim_sensors_data = [
-        {"location": m["location_name"], "lat": m["lat"], "lon": m["lon"]}
-        for m in sim_nodes
-    ]
-    osm_cache = loader._build_osm_cache(sim_sensors_data)
-
-    rows = []
-    for meta in sim_nodes:
-        loc = meta["location_name"]
-        feats = dict(loader.cache[loc])
-        feats.update(osm_cache.get(loc, {}))
-
-        if 'is_school_zone' in feats:
-            feats['is_school_zone'] = float(feats['is_school_zone'])
-
-        row = [float(feats[k]) for k in REQUIRED_KEYS]
-        rows.append(row)
-
-    raw_static_np = np.array(rows, dtype=np.float32)
-    scaled_static_np = static_scaler.transform(raw_static_np)
-
-    return torch.tensor(scaled_static_np, dtype=torch.float32, device=real_static.device)
-
 
 def compute_std_dev(mu: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
     """
@@ -783,9 +735,8 @@ def main() -> None:
     ncl_lat_max: float = export_cfg["ncl_lat_max"]
     ncl_lon_min: float = export_cfg["ncl_lon_min"]
     ncl_lon_max: float = export_cfg["ncl_lon_max"]
-    simulated_node_coords: List[Tuple[float, float]] = [
-        tuple(c) for c in export_cfg["simulated_node_coords"]
-    ]
+    num_simulated_nodes: int = export_cfg.get("num_simulated_nodes", 50)
+    assert num_simulated_nodes <= 100, "Maximum simulated nodes is 100"
     mask_prob_export: float = export_cfg["mask_prob"]
 
     connector = create_connector(analysis_cfg)
@@ -832,7 +783,9 @@ def main() -> None:
     num_nodes_real: int = dataset.num_nodes
     static_feat_dim: int = dataset.static_feat_dim
     time_series_dim: int = dataset.time_series_dim
-    num_simulated: int = args.num_simulated
+    
+    # Allow args override, fallback to config
+    num_simulated: int = args.num_simulated if args.num_simulated is not None else num_simulated_nodes
     num_nodes_total: int = num_nodes_real + num_simulated
 
     logger.info(
@@ -889,16 +842,25 @@ def main() -> None:
             "is_simulated": False,
         })
 
-    for j in range(num_simulated):
-        node_id = num_nodes_real + j
-        lat, lon = simulated_node_coords[j]
-        nodes_meta.append({
-            "id": node_id,
-            "location_name": f"Simulated_Node_{j}",
-            "lat": lat,
-            "lon": lon,
-            "is_simulated": True,
-        })
+    # Instantiate the SimulatedNodeInjector
+    bbox = {
+        'lat_min': ncl_lat_min,
+        'lat_max': ncl_lat_max,
+        'lon_min': ncl_lon_min,
+        'lon_max': ncl_lon_max
+    }
+    sim_injector = SimulatedNodeInjector(
+        num_nodes=num_simulated,
+        seq_len=args.seq_len,
+        bbox=bbox,
+        static_scaler=dataset.static_scaler,
+        device=device
+    )
+
+    for j, meta in enumerate(sim_injector.nodes_meta):
+        meta["id"] = num_nodes_real + j
+        nodes_meta.append(meta)
+        
     location_ids = [m["location_name"] for m in nodes_meta]
 
     # ------------------------------------------------------------------
@@ -987,13 +949,11 @@ def main() -> None:
     # 6. Build static features for simulated nodes once (reused every step)
     # ------------------------------------------------------------------
     real_static: torch.Tensor = dataset.static_features.to(device)   # [num_nodes_real, static_feat_dim]
-    sim_static: torch.Tensor = build_simulated_static(
-        real_static, num_simulated, nodes_meta, dataset.static_scaler
-    )  # [num_simulated, static_feat_dim]
-    combined_static: torch.Tensor = torch.cat([real_static, sim_static], dim=0)    # [total, static_feat_dim]
+    combined_static = sim_injector.inject_static(real_static)
 
     assert combined_static.shape == (num_nodes_total, static_feat_dim), \
         f"Static features shape mismatch: {combined_static.shape}"
+
 
     # ------------------------------------------------------------------
     # 7. 24-hour inference loop
@@ -1021,30 +981,11 @@ def main() -> None:
     with torch.no_grad():
         for t, window_idx in enumerate(range(skip, skip + num_timesteps)):
             raw_item = dataset[window_idx]
-
-            # Real node dynamic features: [num_nodes_real, seq_len, time_series_dim]
-            real_dynamic: torch.Tensor = raw_item["dynamic_features"].to(device)
-            assert real_dynamic.shape == (num_nodes_real, args.seq_len, time_series_dim), \
-                f"t={t}: unexpected real_dynamic shape {real_dynamic.shape}"
-
-            # Real node boolean mask: [num_nodes_real, seq_len, time_series_dim]
-            real_node_mask: torch.Tensor = raw_item["node_mask"].to(device)
-            assert real_node_mask.shape == real_dynamic.shape, (
-                f"t={t}: node_mask shape {real_node_mask.shape} != "
-                f"dynamic shape {real_dynamic.shape}"
-            )
-
-            # Simulated node dynamic features: all NaN → zeros via nan_to_num in pipeline
-            sim_dynamic: torch.Tensor = torch.full(
-                (num_simulated, args.seq_len, time_series_dim),
-                float("nan"),
-                device=device,
-            )
-
-            # Combined: [num_nodes_total, seq_len, time_series_dim]
-            combined_dynamic = torch.cat([real_dynamic, sim_dynamic], dim=0)
-
-            # Add batch dimension: [1, num_nodes_total, seq_len, time_series_dim]
+            
+            # Inject simulated dynamic features and masks
+            combined_item = sim_injector.inject_dynamic_item(raw_item)
+            
+            combined_dynamic = combined_item["dynamic_features"]
             combined_dynamic = combined_dynamic.unsqueeze(0)
 
             # HARNESS: blank inductive holdout nodes exactly as during training so
@@ -1052,15 +993,11 @@ def main() -> None:
             if holdout_mask_total is not None:
                 combined_dynamic = apply_spatial_holdout(combined_dynamic, holdout_mask_total)
 
-            # Mask to prevent simulated nodes from sending messages
-            sim_mask = torch.zeros(num_nodes_total, dtype=torch.bool, device=device)
-            if num_simulated > 0:
-                sim_mask[num_nodes_real:] = True
-
             batch = {
                 "static_features": combined_static,
                 "dynamic_features": combined_dynamic,
-                "simulated_nodes_mask": sim_mask,
+                "structural_masks": combined_item["structural_masks"].unsqueeze(0),
+                "simulated_nodes_mask": combined_item["simulated_nodes_mask"],
                 "location_ids": location_ids,
             }
 

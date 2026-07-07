@@ -135,6 +135,7 @@ interface FilterState {
   selectedNodeId: number | null;
   attentionThreshold: number;
   hoveredNodeId: number | null;
+  showSimulatedNodes: boolean;
   egoGraphEdges: AttentionEdge[] | null;
 }
 
@@ -161,7 +162,7 @@ function buildLayers(
   onSelectNode: (id: number | null) => void,
   onHoverNode: (id: number | null) => void,
 ) {
-  const { selectedNodeId, attentionThreshold, hoveredNodeId, egoGraphEdges } =
+  const { selectedNodeId, attentionThreshold, hoveredNodeId, showSimulatedNodes, egoGraphEdges } =
     filters;
 
   // ── Observed-node layer ────────────────────────────────────────────────────
@@ -334,7 +335,11 @@ function buildLayers(
     },
   });
 
-  return [realLayer, holdoutLayer, simLayer, arcLayer, egoArcLayer];
+  const layers = [realLayer, holdoutLayer, arcLayer, egoArcLayer];
+  if (showSimulatedNodes) {
+    layers.push(simLayer);
+  }
+  return layers;
 }
 
 /** Pre-compute the stable edge data for the topology layer.
@@ -593,6 +598,7 @@ export default function MapVisualizer() {
             selectedNodeId: s.selectedNodeId,
             attentionThreshold: s.globalAttentionThreshold,
             hoveredNodeId: id,
+            showSimulatedNodes: s.showSimulatedNodes,
             egoGraphEdges: s.egoGraphEdges,
           },
           stableEdgesRef.current,
@@ -617,6 +623,7 @@ export default function MapVisualizer() {
             selectedNodeId: s.selectedNodeId,
             attentionThreshold: s.globalAttentionThreshold,
             hoveredNodeId: hoveredNodeIdRef.current,
+            showSimulatedNodes: s.showSimulatedNodes,
             egoGraphEdges: s.egoGraphEdges,
           },
           stableEdgesRef.current,
@@ -631,10 +638,22 @@ export default function MapVisualizer() {
     selectedNodeId,
     globalAttentionThreshold,
     egoGraphEdges,
-    setSelectedNodeId,
+    useTimeStore.getState().showSimulatedNodes,
     payloadVersion,
     mapReady,
+    setSelectedNodeId,
   ]);
+
+  // Subscribe to showSimulatedNodes specifically so it triggers a rebuild without React renders
+  useEffect(() => {
+    let prevShow = useTimeStore.getState().showSimulatedNodes;
+    const unsub = useTimeStore.subscribe((state) => {
+      if (state.showSimulatedNodes === prevShow) return;
+      prevShow = state.showSimulatedNodes;
+      rebuildRef.current();
+    });
+    return unsub;
+  }, []);
 
   // ── Timestep subscribe — bypasses React render cycle ─────────────────────
   // On every increment from TimeSlider's RAF loop, directly calls overlay.setProps

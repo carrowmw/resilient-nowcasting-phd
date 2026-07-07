@@ -64,8 +64,8 @@ from export_ui_payload import (  # noqa: E402
     select_artifact_from_wandb,
     load_model_from_wandb,
     build_model_and_adapter,
-    build_simulated_static,
     compute_std_dev,
+
     extract_timestep_attention,
     load_semantic_tags,
     compute_pit_histogram,
@@ -74,6 +74,7 @@ from export_ui_payload import (  # noqa: E402
     build_ego_graph_edges,
     SENSORS_PATH,
 )
+from simulated_nodes import SimulatedNodeInjector
 from dataset import RealIoTDataset, apply_spatial_holdout  # noqa: E402
 from db_connector import create_connector, DataConnector  # noqa: E402
 from harness import (  # noqa: E402
@@ -314,9 +315,8 @@ def build_model(
 
 def build_nodes_meta(
     real_location_names: List[str],
-    num_simulated: int,
+    sim_injector: SimulatedNodeInjector,
     sensor_coords: Dict[str, Dict[str, float]],
-    simulated_node_coords: List[Tuple[float, float]],
     holdout_locations: Optional[set] = None,
 ) -> List[Dict]:
     """node_role — three-tier display taxonomy for the frontend:
@@ -341,16 +341,11 @@ def build_nodes_meta(
             "is_simulated": False,
         })
     num_nodes_real = len(real_location_names)
-    for j in range(num_simulated):
-        lat, lon = simulated_node_coords[j]
-        nodes_meta.append({
-            "id": num_nodes_real + j,
-            "location_name": f"Simulated_Node_{j}",
-            "lat": lat,
-            "lon": lon,
-            "node_role": "simulated",
-            "is_simulated": True,
-        })
+    for j, meta in enumerate(sim_injector.nodes_meta):
+        meta_copy = dict(meta)
+        meta_copy["id"] = num_nodes_real + j
+        meta_copy["node_role"] = "simulated"
+        nodes_meta.append(meta_copy)
     return nodes_meta
 
 
@@ -398,9 +393,8 @@ def run_day_inference(
     *,
     combined_static: torch.Tensor,
     num_nodes_real: int,
-    num_simulated: int,
+    sim_injector: SimulatedNodeInjector,
     seq_len: int,
-    time_series_dim: int,
     device: torch.device,
     location_ids: List[str],
     holdout_mask: Optional[torch.Tensor] = None,
@@ -415,7 +409,7 @@ def run_day_inference(
     holdout_manifest.json. Their dynamic features are blanked exactly as during
     training, so their displayed predictions are genuine zero-shot reconstructions."""
     caps = adapter.capabilities
-    num_nodes_total = num_nodes_real + num_simulated
+    num_nodes_total = num_nodes_real + sim_injector.num_nodes
     num_timesteps = len(window_indices)
     assert num_timesteps > 0, "TRIPWIRE: day has zero inference windows."
 
@@ -437,33 +431,21 @@ def run_day_inference(
     attention_entropy_series: List[float] = []
     tripwire_audit_trail: List[Dict] = []
 
-    sim_mask = torch.zeros(num_nodes_total, dtype=torch.bool, device=device)
-    if num_simulated > 0:
-        sim_mask[num_nodes_real:] = True
-
     with torch.no_grad():
         for t, window_idx in enumerate(window_indices):
             raw_item = dataset[window_idx]
-
-            real_dynamic: torch.Tensor = raw_item["dynamic_features"].to(device)
-            assert real_dynamic.shape == (num_nodes_real, seq_len, time_series_dim), \
-                f"t={t}: unexpected real_dynamic shape {real_dynamic.shape}"
-
-            real_node_mask: torch.Tensor = raw_item["node_mask"].to(device)
-            assert real_node_mask.shape == real_dynamic.shape, \
-                f"t={t}: node_mask shape {real_node_mask.shape} != dynamic {real_dynamic.shape}"
-
-            sim_dynamic = torch.full(
-                (num_simulated, seq_len, time_series_dim), float("nan"), device=device
-            )
-            combined_dynamic = torch.cat([real_dynamic, sim_dynamic], dim=0).unsqueeze(0)
+            
+            combined_item = sim_injector.inject_dynamic_item(raw_item)
+            combined_dynamic = combined_item["dynamic_features"].unsqueeze(0)
+            
             if holdout_mask is not None:
                 combined_dynamic = apply_spatial_holdout(combined_dynamic, holdout_mask)
 
             batch = {
                 "static_features": combined_static,
                 "dynamic_features": combined_dynamic,
-                "simulated_nodes_mask": sim_mask,
+                "structural_masks": combined_item["structural_masks"].unsqueeze(0),
+                "simulated_nodes_mask": combined_item["simulated_nodes_mask"],
                 "location_ids": location_ids,
             }
             preds = adapter.predict(batch)
@@ -842,9 +824,12 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     export_cfg = cfg["export"]
     num_timesteps_target: int = export_cfg["num_timesteps_target"]
     top_k_ego_edges: int = export_cfg["top_k_ego_edges"]
-    simulated_node_coords: List[Tuple[float, float]] = [
-        tuple(c) for c in export_cfg["simulated_node_coords"]
-    ]
+    ncl_lat_min: float = export_cfg["ncl_lat_min"]
+    ncl_lat_max: float = export_cfg["ncl_lat_max"]
+    ncl_lon_min: float = export_cfg["ncl_lon_min"]
+    ncl_lon_max: float = export_cfg["ncl_lon_max"]
+    num_simulated_nodes: int = export_cfg.get("num_simulated_nodes", 50)
+    assert num_simulated_nodes <= 100, "Maximum simulated nodes is 100"
     mask_prob_export: float = export_cfg["mask_prob"]
 
     ckpt, cfg_path, wandb_run_id, run_id, metrics_summary = load_model_and_meta(artifact_name)
@@ -884,9 +869,23 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     static_feat_dim = full_ds.static_feat_dim
     time_series_dim = full_ds.time_series_dim
 
+    # Instantiate the SimulatedNodeInjector
+    bbox = {
+        'lat_min': ncl_lat_min,
+        'lat_max': ncl_lat_max,
+        'lon_min': ncl_lon_min,
+        'lon_max': ncl_lon_max
+    }
+    sim_injector = SimulatedNodeInjector(
+        num_nodes=num_simulated,
+        seq_len=seq_len,
+        bbox=bbox,
+        static_scaler=full_ds.static_scaler,
+        device=device
+    )
+
     nodes_meta = build_nodes_meta(
-        canonical_locations, num_simulated, sensor_coords,
-        simulated_node_coords=simulated_node_coords,
+        canonical_locations, sim_injector, sensor_coords,
         holdout_locations=holdout_locations,
     )
     location_ids = [m["location_name"] for m in nodes_meta]
@@ -909,8 +908,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
 
     # Static features (real + simulated) → identical topology every day.
     real_static = full_ds.static_features.to(device)
-    sim_static = build_simulated_static(real_static, num_simulated, nodes_meta, full_ds.static_scaler)
-    combined_static = torch.cat([real_static, sim_static], dim=0)
+    combined_static = sim_injector.inject_static(real_static)
     assert combined_static.shape == (num_nodes_total, static_feat_dim), \
         f"Static features shape mismatch: {combined_static.shape}"
 
@@ -932,8 +930,8 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
         acc = run_day_inference(
             adapter, full_ds, window_indices,
             combined_static=combined_static, num_nodes_real=num_nodes_real,
-            num_simulated=num_simulated, seq_len=seq_len,
-            time_series_dim=time_series_dim, device=device,
+            sim_injector=sim_injector, seq_len=seq_len,
+            device=device,
             location_ids=location_ids,
             holdout_mask=holdout_mask_total,
         )
