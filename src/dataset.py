@@ -50,13 +50,13 @@ class RealIoTDataset(Dataset):
         assert df['Solar Radiation'].notna().all(), "CRITICAL: NaN Solar Radiation after weather join"
         for _col in STATIC_FEATURE_COLS:
             assert _col in df.columns, f"CRITICAL: Missing static feature column '{_col}'"
-        
+
         if df.empty:
             raise ValueError(f"No data found for the specified date range: {start_date} to {end_date}")
 
         available_classes = sorted(df['veh_class'].dropna().astype(str).unique().tolist())
         available_dirs = sorted(df['dir'].dropna().astype(str).unique().tolist())
-            
+
         # 2. Filter target stream to ensure unique (dt, location) indices
         df = df[df['veh_class'] == target_veh_class]
         if df.empty:
@@ -64,7 +64,7 @@ class RealIoTDataset(Dataset):
                 f"No rows after veh_class filter. Requested veh_class='{target_veh_class}' "
                 f"for range {start_date} to {end_date}. Available veh_class values: {available_classes}"
             )
-        
+
         if target_dir == 'all':
             # Group by dt and location, sum values, take first for weather/static features
             agg_funcs = {
@@ -101,23 +101,23 @@ class RealIoTDataset(Dataset):
                 f"No rows available after filtering and aggregation for range {start_date} to {end_date}, "
                 f"veh_class='{target_veh_class}', dir='{target_dir}'."
             )
-            
+
         # 3. Extract dimensions
         self.locations = sorted(df['location'].unique())
         self.times = sorted(df['dt'].unique())
         self.seq_len = seq_len
         self.mask_prob = mask_prob
         self.num_nodes = len(self.locations)
-        
+
         logger.info(f"Loaded {len(self.times)} timesteps across {self.num_nodes} locations for class={target_veh_class}, dir={target_dir}.")
-        
+
         # 4. Pivot for Sliding Window Logic
         df = df.set_index(['dt', 'location'])
-        
+
         # Dynamic features
         dyn_df = df[['value', 'Humidity', 'Solar Radiation']].unstack('location')
         locations_idx = pd.Index(self.locations, name='location')
-        
+
         val_df = dyn_df['value'].reindex(columns=locations_idx)
         hum_df = dyn_df['Humidity'].reindex(columns=locations_idx)
         sol_df = dyn_df['Solar Radiation'].reindex(columns=locations_idx)
@@ -211,7 +211,7 @@ class RealIoTDataset(Dataset):
         self.static_features = torch.tensor(stat_np_scaled, dtype=torch.float32)
         self.static_feat_dim = self.static_features.shape[-1]
         logger.info(f"Static features scaled: mean≈0, std≈1 over {stat_np.shape[0]} nodes.")
-        
+
         logger.info(f"Feature dimensions established. Static: {self.static_feat_dim}, Dynamic: {self.time_series_dim}")
 
     def __len__(self) -> int:
@@ -304,4 +304,5 @@ def custom_collate_real(batch_list):
         'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
         'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
         'node_mask': torch.stack([b['node_mask'] for b in batch_list]),
+        'structural_masks': torch.stack([b['structural_masks'] for b in batch_list]),
     }
