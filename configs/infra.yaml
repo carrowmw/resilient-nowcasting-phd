@@ -20,7 +20,7 @@ model:
 training:
   # DataLoader worker processes for parallel data prefetching (0 = main process only).
   # Increase on fast storage; set to 0 when debugging DataLoader issues.
-  num_workers: 4
+  num_workers: 16
   # Reproducibility seed applied once at run start (torch + numpy).
   # Does not affect model architecture or loss landscape — only the random stream.
   random_seed: 42
