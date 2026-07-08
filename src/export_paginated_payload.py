@@ -679,7 +679,7 @@ def write_page_json(out_dir: str, run_id: str, date_str: str, acc: Dict, day_met
 
 def write_node_detail_jsons(out_dir: str, run_id: str, date_str: str, acc: Dict,
                             day_metrics: Dict, nodes_meta: List[Dict],
-                            *, num_nodes_total: int) -> int:
+                            *, num_nodes_total: int, top_k_ego_edges: int) -> int:
     """Write {run_id}/{date}/nodes/node_{id}.json (port of legacy lines 1252-1342)."""
     caps = acc["capabilities"]
     num_timesteps = acc["num_timesteps"]
@@ -943,7 +943,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
                         seq_len=seq_len, num_nodes_total=num_nodes_total,
                         num_nodes_real=num_nodes_real, nodes_meta=nodes_meta)
         write_node_detail_jsons(args.output_dir, run_id, date_str, acc, day_metrics,
-                                nodes_meta, num_nodes_total=num_nodes_total)
+                                nodes_meta, num_nodes_total=num_nodes_total, top_k_ego_edges=top_k_ego_edges)
 
         # Edge topology is fixed per run; empty for graph-less baselines.
         if edge_topology is None:
