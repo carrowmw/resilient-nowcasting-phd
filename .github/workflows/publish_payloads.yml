@@ -25,7 +25,7 @@ jobs:
         run: |
           if [ -d "/data" ]; then
             for dir in /data/*; do
-              if [ -d "$dir" ]; then
+              if [ -d "$dir" ] && [ "$(basename "$dir")" != "external" ]; then
                 ln -sf "$dir" "./data/$(basename "$dir")"
               fi
             done
@@ -65,6 +65,7 @@ jobs:
             -e PAYLOAD_DIR \
             -e GOOGLE_PLACES_API_KEY \
             -v /data:/data:ro \
+            -v /data/external:/workspace/data/external \
             ci-payload-runner bash -c '
               mkdir -p "$PAYLOAD_DIR"
               rm -rf "$PAYLOAD_DIR"/*
