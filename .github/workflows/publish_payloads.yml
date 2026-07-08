@@ -88,10 +88,10 @@ jobs:
 
       - name: Trigger Run Registry Rebuild
         env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          WORKER_REBUILD_TOKEN: ${{ secrets.WORKER_REBUILD_TOKEN }}
+          CLOUDFLARE_WORKER_URL: ${{ secrets.CLOUDFLARE_WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          curl -X POST -H "Authorization: Bearer ${WORKER_REBUILD_TOKEN}" "${WORKER_URL}/rebuild"
+          curl -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${CLOUDFLARE_WORKER_URL}/rebuild"
 
       - name: Clean up local payloads
         if: always()
