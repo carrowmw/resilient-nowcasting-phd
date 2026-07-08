@@ -61,3 +61,11 @@ model_type: lstm
 # whose targets are excluded from every training loss (zero-shot guarantee).
 eval_mode: temporal
 
+# Fraction of the dataset used for training (remainder is validation).
+train_split: 0.8
+
+
+# Disable bf16 autocast by default; set true only on hardware with bf16 support.
+# When true, adapter.step() runs under torch.autocast(dtype=bfloat16); compute_loss
+# and MSE heads are kept in FP32 via an explicit autocast(enabled=False) guard.
+amp: false
