@@ -496,7 +496,7 @@ def run_day_inference(
             gt_index = window_idx + seq_len - 1
             assert 0 <= gt_index < dataset.unscaled_traffic.shape[0], \
                 f"t={t}: gt_index={gt_index} out of bounds"
-            real_gt = dataset.unscaled_traffic[gt_index]
+            real_gt = dataset.unscaled_traffic[gt_index].cpu().numpy()
 
             mask_np = real_mask_last.cpu().numpy().astype(bool)
             imputed_np = imputed_last_raw[:num_nodes_real].cpu().numpy()

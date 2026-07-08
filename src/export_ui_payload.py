@@ -1064,7 +1064,7 @@ def main() -> None:
             imputed_last_raw = imputed_last_scaled * traffic_scale + traffic_mean
 
             # Mask at the last step, traffic channel — boolean per node
-            real_mask_last = real_node_mask[:, -1, 0]  # [num_nodes_real]
+            real_mask_last = raw_item["structural_masks"][:, -1, 0]  # [num_nodes_real]
 
             # Ground truth at the absolute timestamp = window_idx + seq_len - 1
             # (last step inside the input window). Pull directly from
@@ -1072,7 +1072,7 @@ def main() -> None:
             gt_index = window_idx + args.seq_len - 1
             assert 0 <= gt_index < dataset.unscaled_traffic.shape[0], \
                 f"t={t}: gt_index={gt_index} out of bounds"
-            real_gt = dataset.unscaled_traffic[gt_index]  # numpy [num_nodes_real]
+            real_gt = dataset.unscaled_traffic[gt_index].cpu().numpy()  # numpy [num_nodes_real]
 
             mask_np = real_mask_last.cpu().numpy().astype(bool)
             imputed_np = imputed_last_raw[:num_nodes_real].cpu().numpy()
