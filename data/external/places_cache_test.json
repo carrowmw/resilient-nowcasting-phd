@@ -1,0 +1,17 @@
+{
+  "NclConventRdOrdCtANPR": {
+    "commercial_density": 20,
+    "is_school_zone": true,
+    "highway_proximity": 20
+  },
+  "NclPercyStEldonSqANPR": {
+    "commercial_density": 20,
+    "is_school_zone": true,
+    "highway_proximity": 20
+  },
+  "NclSaltersHollywood": {
+    "commercial_density": 20,
+    "is_school_zone": false,
+    "highway_proximity": 18
+  }
+}

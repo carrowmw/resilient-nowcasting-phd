@@ -187,16 +187,19 @@ def load_analysis_config(path: str, args: argparse.Namespace) -> Dict:
     if end is None:
         raise ValueError("CRITICAL: end_date is required — set it via --end_date or config holdout_end.")
 
+    export_cfg = pick(None, "export", default={})
+    num_sim_default = export_cfg.get("num_simulated_nodes", 5)
+
     resolved = {
         "start_date": str(start),
         "end_date": str(end),
         "veh_class": pick(args.veh_class, "veh_class", default="person"),
         "dir": pick(args.dir, "dir", default="all"),
         "seq_len": int(pick(args.seq_len, "seq_len", default=12)),
-        "num_simulated": int(pick(args.num_simulated, "num_simulated", default=5)),
+        "num_simulated": int(pick(args.num_simulated, "num_simulated", default=num_sim_default)),
         "data_source": pick(args.data_source, "data_source", default=None),
         "parquet_path": pick(args.parquet_path, "parquet_path", default=None),
-        "export": pick(None, "export", default={}),
+        "export": export_cfg,
     }
     # Tripwire: window must be non-empty and well-ordered.
     assert dt.date.fromisoformat(resolved["start_date"]) < dt.date.fromisoformat(resolved["end_date"]), (
@@ -828,8 +831,7 @@ def generate_for_artifact(artifact_name: str, cfg: Dict, args: argparse.Namespac
     ncl_lat_max: float = export_cfg["ncl_lat_max"]
     ncl_lon_min: float = export_cfg["ncl_lon_min"]
     ncl_lon_max: float = export_cfg["ncl_lon_max"]
-    num_simulated_nodes: int = export_cfg.get("num_simulated_nodes", 50)
-    assert num_simulated_nodes <= 100, "Maximum simulated nodes is 100"
+
     mask_prob_export: float = export_cfg["mask_prob"]
 
     ckpt, cfg_path, wandb_run_id, run_id, metrics_summary = load_model_and_meta(artifact_name)
