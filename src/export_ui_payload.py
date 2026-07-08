@@ -186,9 +186,10 @@ def select_artifact_from_wandb(project: str = "resilient-iot-v2", collection_nam
                 print("Invalid input. Please enter a number.")
     else:
         # Non-interactive mode (e.g., CI or background task)
-        selected_idx = 0
-        logger.info("Non-interactive session detected. Defaulting to the latest W&B artifact.")
-
+        raise ValueError(
+            "Non-interactive session detected but no artifact was explicitly provided. "
+            "Please specify an artifact using the --artifact flag to prevent silent fallbacks."
+        )
     selected_art = artifacts[selected_idx]
     version = selected_art.name.split(':')[-1]
     full_name = f"{collection_path}:{version}"
@@ -437,10 +438,10 @@ def _zinb_randomized_pit(y_obs: float, mu: float, theta: float, pi_val: float) -
     else:
         cdf_nb_lower = float(betainc(theta, k, p_nb))
         f_lower = pi_f + (1.0 - pi_f) * cdf_nb_lower
-        
+
     # Draw uniform random value between F(y-1) and F(y)
     u = random.uniform(f_lower, f_upper)
-    
+
     # Clip just in case of floating point inaccuracies
     u = max(0.0, min(1.0, u))
     return u
@@ -482,11 +483,11 @@ def compute_pit_histogram(
         ):
             if gt is None or math.isnan(gt):
                 continue
-            
+
             # Prevent perfectly rounded 0.0s from tripping the strictly-positive assert
             safe_mu = max(1e-6, float(mu_val))
             safe_th = max(1e-6, float(th_val))
-            
+
             u = _zinb_randomized_pit(float(gt), safe_mu, safe_th, float(pi_val))
             bin_idx = min(int(u * num_bins), num_bins - 1)
             counts[bin_idx] += 1
@@ -783,7 +784,7 @@ def main() -> None:
     num_nodes_real: int = dataset.num_nodes
     static_feat_dim: int = dataset.static_feat_dim
     time_series_dim: int = dataset.time_series_dim
-    
+
     # Allow args override, fallback to config
     num_simulated: int = args.num_simulated if args.num_simulated is not None else num_simulated_nodes
     num_nodes_total: int = num_nodes_real + num_simulated
@@ -860,7 +861,7 @@ def main() -> None:
     for j, meta in enumerate(sim_injector.nodes_meta):
         meta["id"] = num_nodes_real + j
         nodes_meta.append(meta)
-        
+
     location_ids = [m["location_name"] for m in nodes_meta]
 
     # ------------------------------------------------------------------
@@ -981,10 +982,10 @@ def main() -> None:
     with torch.no_grad():
         for t, window_idx in enumerate(range(skip, skip + num_timesteps)):
             raw_item = dataset[window_idx]
-            
+
             # Inject simulated dynamic features and masks
             combined_item = sim_injector.inject_dynamic_item(raw_item)
-            
+
             combined_dynamic = combined_item["dynamic_features"]
             combined_dynamic = combined_dynamic.unsqueeze(0)
 

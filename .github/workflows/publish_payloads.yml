@@ -64,8 +64,11 @@ jobs:
             -e R2_BUCKET_NAME -e R2_PUBLIC_URL \
             -e PAYLOAD_DIR \
             -e GOOGLE_PLACES_API_KEY \
+            -e ARTIFACT_REF \
+            -e ALL_ARTIFACTS \
             -v /data:/data:ro \
             ci-payload-runner bash -c '
+              set -euo pipefail
               mkdir -p "$PAYLOAD_DIR"
               rm -rf "$PAYLOAD_DIR"/*
 
