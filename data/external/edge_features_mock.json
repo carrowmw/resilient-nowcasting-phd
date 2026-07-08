@@ -1,0 +1,232 @@
+{
+  "S1": {
+    "S2": {
+      "shortest_path_distance": 100.0,
+      "euclidean_distance": 12.82049041876252,
+      "directness": 0.1282049041876252,
+      "pedestrian": 1.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.0,
+      "service": 0.0
+    },
+    "S3": {
+      "shortest_path_distance": 300.0,
+      "euclidean_distance": 25.64097292741696,
+      "directness": 0.08546990975805653,
+      "pedestrian": 0.3333333333333333,
+      "residential": 0.6666666666666666,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.0,
+      "service": 0.0
+    },
+    "S4": {
+      "shortest_path_distance": 600.0,
+      "euclidean_distance": 38.461447524563724,
+      "directness": 0.06410241254093954,
+      "pedestrian": 0.16666666666666666,
+      "residential": 0.3333333333333333,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.5,
+      "service": 0.0
+    },
+    "S5": {
+      "shortest_path_distance": 1000.0,
+      "euclidean_distance": 51.281914211565436,
+      "directness": 0.05128191421156544,
+      "pedestrian": 0.1,
+      "residential": 0.2,
+      "tertiary": 0.0,
+      "secondary": 0.4,
+      "primary": 0.3,
+      "service": 0.0
+    }
+  },
+  "S2": {
+    "S1": {
+      "shortest_path_distance": 100.0,
+      "euclidean_distance": 12.82049041876252,
+      "directness": 0.1282049041876252,
+      "pedestrian": 1.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.0,
+      "service": 0.0
+    },
+    "S3": {
+      "shortest_path_distance": 200.0,
+      "euclidean_distance": 12.82048250867454,
+      "directness": 0.0641024125433727,
+      "pedestrian": 0.0,
+      "residential": 1.0,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.0,
+      "service": 0.0
+    },
+    "S4": {
+      "shortest_path_distance": 500.0,
+      "euclidean_distance": 25.640957105861517,
+      "directness": 0.05128191421172303,
+      "pedestrian": 0.0,
+      "residential": 0.4,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.6,
+      "service": 0.0
+    },
+    "S5": {
+      "shortest_path_distance": 900.0,
+      "euclidean_distance": 38.46142379292354,
+      "directness": 0.0427349153254706,
+      "pedestrian": 0.0,
+      "residential": 0.2222222222222222,
+      "tertiary": 0.0,
+      "secondary": 0.4444444444444444,
+      "primary": 0.3333333333333333,
+      "service": 0.0
+    }
+  },
+  "S3": {
+    "S1": {
+      "shortest_path_distance": 300.0,
+      "euclidean_distance": 25.64097292741696,
+      "directness": 0.08546990975805653,
+      "pedestrian": 0.3333333333333333,
+      "residential": 0.6666666666666666,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.0,
+      "service": 0.0
+    },
+    "S2": {
+      "shortest_path_distance": 200.0,
+      "euclidean_distance": 12.82048250867454,
+      "directness": 0.0641024125433727,
+      "pedestrian": 0.0,
+      "residential": 1.0,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.0,
+      "service": 0.0
+    },
+    "S4": {
+      "shortest_path_distance": 300.0,
+      "euclidean_distance": 12.820474597207077,
+      "directness": 0.04273491532402359,
+      "pedestrian": 0.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 1.0,
+      "service": 0.0
+    },
+    "S5": {
+      "shortest_path_distance": 700.0,
+      "euclidean_distance": 25.64094128430931,
+      "directness": 0.03662991612044187,
+      "pedestrian": 0.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 0.5714285714285714,
+      "primary": 0.42857142857142855,
+      "service": 0.0
+    }
+  },
+  "S4": {
+    "S1": {
+      "shortest_path_distance": 600.0,
+      "euclidean_distance": 38.461447524563724,
+      "directness": 0.06410241254093954,
+      "pedestrian": 0.16666666666666666,
+      "residential": 0.3333333333333333,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.5,
+      "service": 0.0
+    },
+    "S2": {
+      "shortest_path_distance": 500.0,
+      "euclidean_distance": 25.640957105861517,
+      "directness": 0.05128191421172303,
+      "pedestrian": 0.0,
+      "residential": 0.4,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 0.6,
+      "service": 0.0
+    },
+    "S3": {
+      "shortest_path_distance": 300.0,
+      "euclidean_distance": 12.820474597207077,
+      "directness": 0.04273491532402359,
+      "pedestrian": 0.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 0.0,
+      "primary": 1.0,
+      "service": 0.0
+    },
+    "S5": {
+      "shortest_path_distance": 400.0,
+      "euclidean_distance": 12.820466687122337,
+      "directness": 0.03205116671780584,
+      "pedestrian": 0.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 1.0,
+      "primary": 0.0,
+      "service": 0.0
+    }
+  },
+  "S5": {
+    "S1": {
+      "shortest_path_distance": 1000.0,
+      "euclidean_distance": 51.281914211565436,
+      "directness": 0.05128191421156544,
+      "pedestrian": 0.1,
+      "residential": 0.2,
+      "tertiary": 0.0,
+      "secondary": 0.4,
+      "primary": 0.3,
+      "service": 0.0
+    },
+    "S2": {
+      "shortest_path_distance": 900.0,
+      "euclidean_distance": 38.46142379292354,
+      "directness": 0.0427349153254706,
+      "pedestrian": 0.0,
+      "residential": 0.2222222222222222,
+      "tertiary": 0.0,
+      "secondary": 0.4444444444444444,
+      "primary": 0.3333333333333333,
+      "service": 0.0
+    },
+    "S3": {
+      "shortest_path_distance": 700.0,
+      "euclidean_distance": 25.64094128430931,
+      "directness": 0.03662991612044187,
+      "pedestrian": 0.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 0.5714285714285714,
+      "primary": 0.42857142857142855,
+      "service": 0.0
+    },
+    "S4": {
+      "shortest_path_distance": 400.0,
+      "euclidean_distance": 12.820466687122337,
+      "directness": 0.03205116671780584,
+      "pedestrian": 0.0,
+      "residential": 0.0,
+      "tertiary": 0.0,
+      "secondary": 1.0,
+      "primary": 0.0,
+      "service": 0.0
+    }
+  }
+}

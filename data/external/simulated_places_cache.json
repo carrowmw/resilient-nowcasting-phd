@@ -1,0 +1,72 @@
+{
+  "Simulated_Node_0": {
+    "transit_count": 34,
+    "retail_count": 11,
+    "food_drink_count": 34,
+    "nightlife_count": 16,
+    "education_count": 6,
+    "recreation_count": 6,
+    "total_poi_count": 107,
+    "landuse_entropy": 0.8760813164913185,
+    "is_school_zone": false,
+    "nearby_bus_stops": 0,
+    "nearby_parking": 6,
+    "dist_to_city_centre": 1245.9286072423768
+  },
+  "Simulated_Node_1": {
+    "transit_count": 17,
+    "retail_count": 2,
+    "food_drink_count": 9,
+    "nightlife_count": 1,
+    "education_count": 2,
+    "recreation_count": 0,
+    "total_poi_count": 31,
+    "landuse_entropy": 0.6434721448772647,
+    "is_school_zone": true,
+    "nearby_bus_stops": 0,
+    "nearby_parking": 2,
+    "dist_to_city_centre": 4061.393846934212
+  },
+  "Simulated_Node_2": {
+    "transit_count": 60,
+    "retail_count": 60,
+    "food_drink_count": 80,
+    "nightlife_count": 20,
+    "education_count": 20,
+    "recreation_count": 11,
+    "total_poi_count": 251,
+    "landuse_entropy": 0.8867490005033397,
+    "is_school_zone": true,
+    "nearby_bus_stops": 3,
+    "nearby_parking": 20,
+    "dist_to_city_centre": 451.6760639952285
+  },
+  "Simulated_Node_3": {
+    "transit_count": 60,
+    "retail_count": 60,
+    "food_drink_count": 80,
+    "nightlife_count": 20,
+    "education_count": 20,
+    "recreation_count": 14,
+    "total_poi_count": 254,
+    "landuse_entropy": 0.8961044699169212,
+    "is_school_zone": false,
+    "nearby_bus_stops": 7,
+    "nearby_parking": 20,
+    "dist_to_city_centre": 312.6199937442342
+  },
+  "Simulated_Node_4": {
+    "transit_count": 60,
+    "retail_count": 60,
+    "food_drink_count": 80,
+    "nightlife_count": 20,
+    "education_count": 17,
+    "recreation_count": 20,
+    "total_poi_count": 257,
+    "landuse_entropy": 0.9039115358164256,
+    "is_school_zone": true,
+    "nearby_bus_stops": 9,
+    "nearby_parking": 20,
+    "dist_to_city_centre": 142.49716515590106
+  }
+}

@@ -65,7 +65,6 @@ jobs:
             -e PAYLOAD_DIR \
             -e GOOGLE_PLACES_API_KEY \
             -v /data:/data:ro \
-            -v /data/external:/workspace/data/external \
             ci-payload-runner bash -c '
               mkdir -p "$PAYLOAD_DIR"
               rm -rf "$PAYLOAD_DIR"/*
