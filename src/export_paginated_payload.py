@@ -485,7 +485,7 @@ def run_day_inference(
                     pi_data[node_id].append(round(float(pi_raw[node_id]), 6))
 
             imputed_features = preds.imputed
-            assert imputed_features.shape == (1, num_nodes_total, seq_len, time_series_dim), \
+            assert imputed_features.shape == (1, num_nodes_total, seq_len, dataset.time_series_dim), \
                 f"t={t}: unexpected imputed_features shape {tuple(imputed_features.shape)}"
             assert not torch.isnan(imputed_features).any(), f"t={t}: NaN in imputed_features"
 
