@@ -520,28 +520,253 @@
     "degree_centrality": 0.0002361553902467824
   },
   "Simulated_Node_0": {
-    "betweenness_centrality": 0.014711939211688833,
-    "closeness_centrality": 0.01602210441232183,
+    "betweenness_centrality": 0.0016329077415589744,
+    "closeness_centrality": 0.0107730205099535,
     "degree_centrality": 8.855827134254339e-05
   },
   "Simulated_Node_1": {
-    "betweenness_centrality": 0.010012907239932055,
-    "closeness_centrality": 0.01134957259860184,
-    "degree_centrality": 8.855827134254339e-05
+    "betweenness_centrality": 0.001194692412202138,
+    "closeness_centrality": 0.01187358397451715,
+    "degree_centrality": 0.0001180776951233912
   },
   "Simulated_Node_2": {
-    "betweenness_centrality": 0.0,
-    "closeness_centrality": 0.016433619354763597,
-    "degree_centrality": 2.95194237808478e-05
+    "betweenness_centrality": 0.00048164661324695876,
+    "closeness_centrality": 0.014670695376929383,
+    "degree_centrality": 8.855827134254339e-05
   },
   "Simulated_Node_3": {
-    "betweenness_centrality": 0.02923657660912173,
-    "closeness_centrality": 0.017016018444568345,
+    "betweenness_centrality": 4.827997301645029e-05,
+    "closeness_centrality": 0.01592480797951531,
     "degree_centrality": 8.855827134254339e-05
   },
   "Simulated_Node_4": {
-    "betweenness_centrality": 0.2008092296690541,
-    "closeness_centrality": 0.01749281073156777,
-    "degree_centrality": 0.00014759711890423898
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015231082991327869,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_5": {
+    "betweenness_centrality": 8.49485715770253e-06,
+    "closeness_centrality": 0.015675234462194532,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_6": {
+    "betweenness_centrality": 0.0007775346164434205,
+    "closeness_centrality": 0.01302479732860161,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_7": {
+    "betweenness_centrality": 6.811675927742962e-05,
+    "closeness_centrality": 0.01069825403332009,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_8": {
+    "betweenness_centrality": 0.0027402756385001307,
+    "closeness_centrality": 0.012554208491175068,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_9": {
+    "betweenness_centrality": 0.00022494434219040221,
+    "closeness_centrality": 0.012531721428518581,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_10": {
+    "betweenness_centrality": 0.0007364383605757887,
+    "closeness_centrality": 0.015217098347842493,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_11": {
+    "betweenness_centrality": 5.876613393684012e-05,
+    "closeness_centrality": 0.012794138474757107,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_12": {
+    "betweenness_centrality": 0.0005847467992695092,
+    "closeness_centrality": 0.016219042293225884,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_13": {
+    "betweenness_centrality": 0.0354532269534863,
+    "closeness_centrality": 0.012286698332467698,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_14": {
+    "betweenness_centrality": 5.04430420905966e-05,
+    "closeness_centrality": 0.015867699843974174,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_15": {
+    "betweenness_centrality": 0.0022814692177389644,
+    "closeness_centrality": 0.015560320356294406,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_16": {
+    "betweenness_centrality": 0.0008036235578966158,
+    "closeness_centrality": 0.013863124359297022,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_17": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.016925026966829924,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_18": {
+    "betweenness_centrality": 4.7889264804182876e-05,
+    "closeness_centrality": 0.013072349410980217,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_19": {
+    "betweenness_centrality": 0.020826300456981358,
+    "closeness_centrality": 0.014667417731745937,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_20": {
+    "betweenness_centrality": 0.009142243426040452,
+    "closeness_centrality": 0.015136729222520108,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_21": {
+    "betweenness_centrality": 7.289573211189534e-05,
+    "closeness_centrality": 0.01215581664223016,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_22": {
+    "betweenness_centrality": 0.00011861443866803466,
+    "closeness_centrality": 0.014928313161425937,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_23": {
+    "betweenness_centrality": 0.0003399789015746339,
+    "closeness_centrality": 0.01588388205153212,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_24": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01565093734219585,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_25": {
+    "betweenness_centrality": 0.0026715565122131853,
+    "closeness_centrality": 0.01354780424070748,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_26": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01360278705350044,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_27": {
+    "betweenness_centrality": 0.009863712225453243,
+    "closeness_centrality": 0.016364434744425265,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_28": {
+    "betweenness_centrality": 1.8452454795794685e-05,
+    "closeness_centrality": 0.014936000850059323,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_29": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015825314242922967,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_30": {
+    "betweenness_centrality": 5.904059040590406e-05,
+    "closeness_centrality": 0.0136833860927583,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_31": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01379029037525173,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_32": {
+    "betweenness_centrality": 0.007586116050150619,
+    "closeness_centrality": 0.017182646521168396,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_33": {
+    "betweenness_centrality": 0.0004927034285449494,
+    "closeness_centrality": 0.014983937251113645,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_34": {
+    "betweenness_centrality": 2.5856691623512507e-05,
+    "closeness_centrality": 0.014205506835425203,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_35": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.011680698607563903,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_36": {
+    "betweenness_centrality": 0.0013530251088737523,
+    "closeness_centrality": 0.013036907502071413,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_37": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.013426000053900579,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_38": {
+    "betweenness_centrality": 0.012943236299619723,
+    "closeness_centrality": 0.013784746199286348,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_39": {
+    "betweenness_centrality": 4.6881806993313984e-05,
+    "closeness_centrality": 0.016590844866589058,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_40": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.009806558142995227,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_41": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.013105702543572515,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_42": {
+    "betweenness_centrality": 0.0002066420664206642,
+    "closeness_centrality": 0.013150161679133882,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_43": {
+    "betweenness_centrality": 2.952029520295203e-05,
+    "closeness_centrality": 0.00973798059647862,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_44": {
+    "betweenness_centrality": 0.0026335559571448864,
+    "closeness_centrality": 0.014776262368075317,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_45": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.014477776894534805,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_46": {
+    "betweenness_centrality": 0.0009004165494832805,
+    "closeness_centrality": 0.012018250882583648,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_47": {
+    "betweenness_centrality": 9.94573518221998e-05,
+    "closeness_centrality": 0.01361833369580817,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_48": {
+    "betweenness_centrality": 0.00019416430474468804,
+    "closeness_centrality": 0.012517116998611426,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_49": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01278618988828125,
+    "degree_centrality": 2.95194237808478e-05
   }
 }

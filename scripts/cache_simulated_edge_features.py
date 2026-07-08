@@ -165,20 +165,41 @@ def main():
         run_self_test()
         return
 
-    # Lazy import: avoid dragging export_ui_payload's heavy deps into self-test / tests.
-    from src.export_ui_payload import SIMULATED_NODE_COORDS
     import osmnx as ox
     from cache_edge_features import load_sensor_coords
+    import random
 
-    assert args.num_simulated <= len(SIMULATED_NODE_COORDS), (
-        f"--num_simulated={args.num_simulated} exceeds available coords "
-        f"(max {len(SIMULATED_NODE_COORDS)})"
-    )
+    # Same bounding box as configs/analysis/analysis.yaml
+    bbox = {
+        'lat_min': 54.968, 'lat_max': 55.012,
+        'lon_min': -1.660, 'lon_max': -1.576
+    }
+    
+    # Same center and dist as src/simulated_nodes.py
+    OSM_CENTER = (54.980, -1.600)
+    OSM_DIST = 4000
+
+    logger.info(f"Downloading walking network (center={OSM_CENTER}, dist={OSM_DIST}m) for simulated sampling...")
+    G_sample = ox.graph_from_point(OSM_CENTER, dist=OSM_DIST, network_type='walk')
+    
+    all_nodes = []
+    for node, data in G_sample.nodes(data=True):
+        lat = data.get('y')
+        lon = data.get('x')
+        if lat is None or lon is None:
+            continue
+        if bbox['lat_min'] <= lat <= bbox['lat_max'] and bbox['lon_min'] <= lon <= bbox['lon_max']:
+            all_nodes.append((lat, lon))
+            
+    assert len(all_nodes) >= args.num_simulated, f"Found only {len(all_nodes)} nodes, but {args.num_simulated} requested."
+    
+    random.seed(42)
+    sampled_coords = random.sample(all_nodes, args.num_simulated)
 
     real_coords = load_sensor_coords()
     sim_coords = [
         (f"Simulated_Node_{j}", lat, lon)
-        for j, (lat, lon) in enumerate(SIMULATED_NODE_COORDS[:args.num_simulated])
+        for j, (lat, lon) in enumerate(sampled_coords)
     ]
 
     logger.info(f"Real sensors: {len(real_coords)}, Simulated nodes: {len(sim_coords)}")
