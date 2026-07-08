@@ -292,7 +292,7 @@ def build_model(
     logger.info(f"Resolving adjacent configuration from: {config_path}")
     with open(config_path, "r") as f:
         loaded_config_data = yaml.safe_load(f) or {}
-    model_type = loaded_config_data.get("model_type", "riot_gnn") # TEMPORARY FALLBACK ADDED FOR BACKWARD COMPATIBILITY - PLEASE REVIEW
+    model_type = loaded_config_data.get("model_type", "gnn") # TEMPORARY FALLBACK ADDED FOR BACKWARD COMPATIBILITY - PLEASE REVIEW
     model_cfg = loaded_config_data.get("model", {})
     logger.info(f"Loaded model_type={model_type}, hyperparameters: {model_cfg}")
 
