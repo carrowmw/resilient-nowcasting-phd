@@ -491,7 +491,7 @@ def run_day_inference(
 
             imputed_last_scaled = imputed_features[0, :, -1, 0]
             imputed_last_raw = imputed_last_scaled * traffic_scale + traffic_mean
-            real_mask_last = real_node_mask[:, -1, 0]
+            real_mask_last = raw_item["structural_masks"][:, -1, 0]
 
             gt_index = window_idx + seq_len - 1
             assert 0 <= gt_index < dataset.unscaled_traffic.shape[0], \
