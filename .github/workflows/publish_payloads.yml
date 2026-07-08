@@ -57,7 +57,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
         run: |
-          docker run --rm --network ml-agent-workspace_ml-network \
+          docker run --rm --gpus all --network ml-agent-workspace_ml-network \
             -e WANDB_API_KEY \
             -e DATABASE_URL \
             -e R2_ACCOUNT_ID -e R2_ACCESS_KEY_ID -e R2_SECRET_ACCESS_KEY \

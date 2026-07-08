@@ -994,7 +994,7 @@ def main() -> None:
     np.random.seed(42)
 
     args = parse_args()
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
 
     cfg = load_analysis_config(args.config, args)
