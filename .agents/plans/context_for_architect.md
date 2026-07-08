@@ -1,58 +1,32 @@
-# Context for Architect: Simulated Nodes & Map Toggle
+# Context for Architect: GPU Data Starvation Investigation
 
-## 1. Goal
-1. Update payload generation to dynamically calculate intersection coordinates on the road graph, randomly sampling from the full set using the global seed.
-2. Make the number of simulated nodes configurable (up to 100) via `configs/analysis/analysis.yaml`.
-3. Add a UI toggle for the simulated node layer in the frontend map view.
+## Objective
+Investigate why the GPU is idling between 0% and 100% every cycle (epoch/batch) and determine if data loading can be sped up or pre-loaded.
 
-## 2. Relevant File Paths & Summaries
+## Relevant File Paths
+- `src/dataset.py` (Specifically `RealIoTDataset.__init__` and `__getitem__`)
+- `src/train.py` (Specifically `DataLoader` instantiation and the training loop)
+- `configs/infra.yaml` (Infrastructure configuration)
 
-### `configs/analysis/analysis.yaml`
-- Currently hardcodes 5 coordinates under `export.simulated_node_coords`.
-- **Target:** Remove the hardcoded list and replace with a `num_simulated_nodes` integer (e.g., 50, max 100).
+## High-Level Logic Summary & Findings
 
-### `src/export_ui_payload.py`
-- Line 85+: Reads constants from `analysis.yaml`.
-- Line 786+: `simulated_node_coords = [tuple(c) for c in export_cfg["simulated_node_coords"]]`
-- Currently loops through `simulated_node_coords` to inject them into the payload. 
-- **Target:** Instead of reading coords from config, read `num_simulated_nodes`. Then, use `osmnx` (similar to how `features.py` does it) to download/load the OSM network, extract nodes (intersections), and randomly sample `num_simulated_nodes` using `random.sample` (with the global seed `42`).
+### 1. Data Loading Mechanism
+- **In-Memory Dataset**: `RealIoTDataset` loads the *entire dataset into RAM* during `__init__`. 
+- **Trivial `__getitem__`**: The `__getitem__` method performs extremely fast operations—mostly just slicing in-memory tensors (`self.dynamic_data[idx:...]` and `self.structural_masks[...]`) and permuting them.
+- **Multiprocessing Overhead**: `configs/infra.yaml` configures `num_workers: 16`. When `num_workers > 0`, PyTorch's `DataLoader` relies on Python's `multiprocessing`. Because the data is already in RAM and `__getitem__` is trivial, the inter-process communication (IPC) overhead of shipping sliced tensors across 16 worker processes back to the main process heavily bottlenecks the pipeline. The workers are slowing down the data supply rather than speeding it up.
 
-### `src/features.py` (For Reference)
-- Uses `osmnx`: `ox.graph_from_point(OSM_CENTER, dist=OSM_DIST, network_type='walk')`.
-- Graph nodes have `y` (lat) and `x` (lon) attributes. This logic can be extracted/reused in `export_ui_payload.py` to get the real intersections.
+### 2. GPU Transfer & Pinning
+- **Batch-by-Batch Pinning**: In `src/train.py`, the `DataLoader` is created with `pin_memory=torch.cuda.is_available()`. This means a background thread in the main process must dynamically copy every batch into page-locked (pinned) memory before moving it to the GPU via `.to(device, non_blocking=True)` in the training loop.
+- **No Upfront Pinning**: The underlying tensors in `RealIoTDataset` (`dynamic_data`, `structural_masks`, `unscaled_traffic`) are *not* pinned in RAM during `__init__`.
 
-### `frontend/src/store/useTimeStore.ts` (Implicit)
-- Zustand store where we need to add a boolean state `showSimulatedNodes` (default `true`) and an action `setShowSimulatedNodes`.
+### 3. Training Loop Mechanics
+- The `for batch in train_loader:` loop transfers data to the GPU and subsequently applies dynamic `NaN` masking and structural holdouts on the GPU itself. Thus, the CPU is purely responsible for slicing and assembling the clean batches.
 
-### `frontend/src/components/MapVisualizer.tsx`
-- Line 237+: `const simNodes = payload.nodes.filter((n) => roleOf(n) === "simulated");`
-- Line 238+: Builds `simLayer` using `ScatterplotLayer`.
-- **Target:** Connect to `showSimulatedNodes` from `useTimeStore`. Use `visible: showSimulatedNodes` in the `simLayer` configuration.
+## Potential Bottlenecks (Tripwires)
+1. **IPC Starvation**: `num_workers=16` for a fully in-memory dataset is a classic anti-pattern that creates artificial IPC overhead and starves the GPU.
+2. **Dynamic Pinning Overhead**: The batch-by-batch pinning by the `DataLoader` thread might also be struggling to keep up with the GPU.
 
-### `frontend/src/components/MapOverlay.tsx` or `MapControls.tsx` (Implicit)
-- Needs a UI checkbox/toggle to mutate `showSimulatedNodes`.
-
-## 3. High-Level Logic & ASTs
-
-### Data Pipeline (`export_ui_payload.py`)
-1. In `main()`, read `num_simulated_nodes` from `export_cfg`.
-2. Limit `num_simulated_nodes` to 100.
-3. Import `osmnx` and `features.OSM_CENTER`, `features.OSM_DIST`.
-4. Fetch/load the graph: `G = ox.graph_from_point(OSM_CENTER, dist=OSM_DIST, network_type='walk')`.
-5. Extract node coordinates: `all_nodes = [(data['y'], data['x']) for node, data in G.nodes(data=True)]`.
-6. Sample: `simulated_node_coords = random.sample(all_nodes, num_simulated_nodes)`.
-7. Proceed with the rest of the generation (which already creates 0-inflated mock data for simulated coords).
-
-### Frontend
-1. Add `showSimulatedNodes: boolean` to `useTimeStore`.
-2. Update `MapVisualizer.tsx`'s `simLayer` to have `visible: showSimulatedNodes`.
-3. Add a Checkbox to the Map UI (e.g., in a control panel) to toggle this state.
-
-## 4. Potential Tripwires & Safeguards
-- **Random Seed:** The prompt requires using the "global seed". `export_ui_payload.py` already sets `torch.manual_seed(42)` and `np.random.seed(42)`. We must ensure Python's `random.seed(42)` is also set or used to guarantee deterministic sampling.
-- **OSMnx Download:** OSMnx can be slow. We should ensure the graph is cached or only generated once per payload export. `features.py` caches to `data/external/osm_features_cache.json`, but we need raw coordinates (intersections), not just centralities.
-- **Payload Size:** Up to 100 simulated nodes means the `ui_payload.json` and time series matrices will grow. However, Phase 1 supports 96 timesteps. 100 additional nodes shouldn't break the browser context.
-- **Config:** Update `configs/train/train.yaml` and `configs/analysis/analysis.yaml` to ensure they both use `num_simulated_nodes` instead of the hardcoded `simulated_node_coords` list.
-
-## 5. Defensive Code Alert
-- No defensive code observed in this context. The pipeline relies heavily on assertions and offensive programming.
+## Insights for Architect
+- Evaluate if `num_workers` should be forced to `0` for `RealIoTDataset` to avoid IPC overhead.
+- Evaluate if we can pin the tensors (`self.dynamic_data.pin_memory()`, etc.) directly in `RealIoTDataset.__init__`. If the tensors are already pinned, `num_workers=0` will yield batches that are immediately ready for non-blocking GPU transfer.
+- Consider moving the entire dataset directly to the GPU in `__init__` if VRAM permits, effectively bypassing CPU-GPU transfer during the training loop completely.

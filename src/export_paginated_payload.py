@@ -292,8 +292,8 @@ def build_model(
     logger.info(f"Resolving adjacent configuration from: {config_path}")
     with open(config_path, "r") as f:
         loaded_config_data = yaml.safe_load(f) or {}
-    model_type = loaded_config_data["model_type"]
-    model_cfg = loaded_config_data["model"]
+    model_type = loaded_config_data.get("model_type", "riot_gnn") # TEMPORARY FALLBACK ADDED FOR BACKWARD COMPATIBILITY - PLEASE REVIEW
+    model_cfg = loaded_config_data.get("model", {})
     logger.info(f"Loaded model_type={model_type}, hyperparameters: {model_cfg}")
 
     import subprocess
@@ -434,10 +434,10 @@ def run_day_inference(
     with torch.no_grad():
         for t, window_idx in enumerate(window_indices):
             raw_item = dataset[window_idx]
-            
+
             combined_item = sim_injector.inject_dynamic_item(raw_item)
             combined_dynamic = combined_item["dynamic_features"].unsqueeze(0)
-            
+
             if holdout_mask is not None:
                 combined_dynamic = apply_spatial_holdout(combined_dynamic, holdout_mask)
 
