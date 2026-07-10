@@ -7,7 +7,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--use_mock_data", action="store_true")
     early_args, _ = parser.parse_known_args()
-    
+
     if not early_args.use_mock_data:
         existing_gpus = os.environ.get("CUDA_VISIBLE_DEVICES")
         if not existing_gpus:
@@ -779,10 +779,10 @@ def run_training(
     # W&B Artifact Upload (Phase 1)                                      #
     # ------------------------------------------------------------------ #
     logger.info(f"Uploading model artifact to W&B from {checkpoint_path}")
-    
+
     assert wandb.run is not None, "FATAL: Attempted to upload a model artifact without an active W&B run. Manually uploaded artifacts are strictly forbidden."
     assert os.path.exists(checkpoint_path), f"FATAL: Checkpoint path does not exist: {checkpoint_path}"
-    
+
     artifact = wandb.Artifact(
         name=wandb_collection,
         type="model",
@@ -790,9 +790,14 @@ def run_training(
         metadata=config
     )
     artifact.add_file(checkpoint_path, name="best_model.pt")
-    
+
     if os.path.exists(config_save_path):
         artifact.add_file(config_save_path, name="config.yaml")
+
+    # Upload holdout manifest if it exists (for inductive runs)
+    manifest_path = os.path.join(checkpoint_dir, "holdout_manifest.json")
+    if os.path.exists(manifest_path):
+        artifact.add_file(manifest_path, name="holdout_manifest.json")
 
     wandb.log_artifact(artifact)
     logger.info(f"Model artifact successfully logged to W&B run: {wandb.run.name}")
