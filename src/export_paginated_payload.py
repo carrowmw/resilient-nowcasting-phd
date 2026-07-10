@@ -215,7 +215,11 @@ def load_analysis_config(path: str, args: argparse.Namespace) -> Dict:
 # ---------------------------------------------------------------------------
 
 def resolve_artifacts(args: argparse.Namespace) -> List[str]:
-    """Return the list of fully-qualified W&B artifact refs to process."""
+    """Return the list of fully-qualified W&B artifact refs to process.
+
+    If all_artifacts is True, we only keep the latest version for each unique
+    producer run ID to prevent older, unpatched versions from overwriting newer ones.
+    """
     if args.artifact:
         return [args.artifact]
     if args.all_artifacts:
@@ -224,13 +228,25 @@ def resolve_artifacts(args: argparse.Namespace) -> List[str]:
         collection_path = f"{entity}/{args.query_project}/{args.query_collection}"
         logger.info(f"Discovering all artifacts in collection {collection_path} …")
         collection = api.artifact_collection("model", collection_path)
-        refs = []
+        
+        # Deduplicate to keep only the latest version per producer run ID
+        run_to_latest: Dict[str, Tuple[int, str]] = {}
         for art in collection.artifacts():
-            version = art.name.split(":")[-1]
-            refs.append(f"{collection_path}:{version}")
+            version_str = art.name.split(":")[-1]
+            try:
+                version_int = int(version_str.lstrip("v"))
+            except ValueError:
+                version_int = -1
+            
+            producer = art.logged_by()
+            run_key = producer.id if (producer and producer.id) else art.name
+            if run_key not in run_to_latest or version_int > run_to_latest[run_key][0]:
+                run_to_latest[run_key] = (version_int, version_str)
+                
+        refs = [f"{collection_path}:{version}" for _, version in run_to_latest.values()]
         if not refs:
             raise ValueError(f"No artifacts found in collection {collection_path}")
-        logger.info(f"Resolved {len(refs)} artifacts: {refs}")
+        logger.info(f"Resolved {len(refs)} unique run artifacts: {refs}")
         return refs
     # Interactive single selection (mirrors export_ui_payload behaviour).
     return [select_artifact_from_wandb(project=args.query_project, collection_name=args.query_collection)]

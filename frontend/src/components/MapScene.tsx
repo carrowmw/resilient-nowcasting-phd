@@ -17,6 +17,7 @@ const NodeInspector = dynamic(() => import('./NodeInspector'), { ssr: false });
 const AttentionControls = dynamic(() => import('./AttentionControls'), { ssr: false });
 const ModelSelector = dynamic(() => import('./ModelSelector'), { ssr: false });
 const ModelInfoOverlay = dynamic(() => import('./ModelInfoOverlay'), { ssr: false });
+const MapLegend = dynamic(() => import('./MapLegend'), { ssr: false });
 
 export default function MapScene() {
   return (
@@ -27,6 +28,7 @@ export default function MapScene() {
       <ModelInfoOverlay />
       <TimeSlider />
       <AttentionControls />
+      <MapLegend />
 
       {/* Floating button: navigate to the Analytics dashboard.
           Positioned top-left to avoid conflicting with the NodeInspector (top-right)

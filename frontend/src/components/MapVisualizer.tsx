@@ -230,6 +230,25 @@ function buildLayers(
     },
   });
 
+  // ── Holdout-node halo layer (zero-shot outer target ring) ──────────────────
+  const holdoutHaloLayer = new ScatterplotLayer<NodeEntry>({
+    id: "nodes-holdout-halo",
+    data: holdoutNodes,
+    getPosition: (d) => [d.lon, d.lat],
+    getFillColor: [0, 0, 0, 0],
+    getLineColor: [167, 139, 250, 180], // Violet HOLDOUT_ACCENT with alpha
+    getRadius: (d) =>
+      nodeRadius(d, timestep) * 1.35 * (d.id === hoveredNodeId ? 1.6 : 1.0),
+    radiusUnits: "meters",
+    stroked: true,
+    filled: false,
+    lineWidthMinPixels: 1.5,
+    pickable: false,
+    updateTriggers: {
+      getRadius: [timestep, hoveredNodeId],
+    },
+  });
+
   // ── Simulated-node layer (hollow ring with transparent fill) ──────────────
   // filled: true + getFillColor: [0,0,0,0] creates an invisible solid disk that
   // covers the hollow centre, giving the full circle — not just the stroke — a
@@ -335,7 +354,7 @@ function buildLayers(
     },
   });
 
-  const layers = [realLayer, holdoutLayer, arcLayer, egoArcLayer];
+  const layers = [realLayer, holdoutLayer, holdoutHaloLayer, arcLayer, egoArcLayer];
   if (showSimulatedNodes) {
     layers.push(simLayer);
   }

@@ -94,35 +94,46 @@ def upload_tree(client, bucket: str, runs_dir: str, prefix: str,
     if not files:
         raise SystemExit(f"No files under {runs_dir}")
 
-    n_bytes_in = n_bytes_out = 0
-    expected_keys: set = set()
-    for i, path in enumerate(files, 1):
-        rel = path.relative_to(root).as_posix()
-        key = f"{prefix}/{rel}" if prefix else rel
-        expected_keys.add(key)
-        raw = path.read_bytes()
-        n_bytes_in += len(raw)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        extra = {"ContentType": content_type_for(path), "CacheControl": CACHE_CONTROL}
-        body = raw
-        if gzip_enabled:
-            body = gzip.compress(raw)
-            extra["ContentEncoding"] = "gzip"
-        n_bytes_out += len(body)
+    expected_keys = {
+        (f"{prefix}/{p.relative_to(root).as_posix()}" if prefix else p.relative_to(root).as_posix())
+        for p in files
+    }
 
-        if dry_run:
+    if not dry_run:
+        logger.info(f"Starting parallel upload of {len(files)} files with 32 workers (concurrent disk read + upload)...")
+        
+        def upload_one(path: Path):
+            rel = path.relative_to(root).as_posix()
+            key = f"{prefix}/{rel}" if prefix else rel
+            
+            # Read and compress inside the worker thread to parallelize Docker filesystem latency
+            raw = path.read_bytes()
+            extra = {"ContentType": content_type_for(path), "CacheControl": CACHE_CONTROL}
+            body = raw
+            if gzip_enabled:
+                body = gzip.compress(raw)
+                extra["ContentEncoding"] = "gzip"
+                
+            client.put_object(Bucket=bucket, Key=key, Body=body, **extra)
+
+        uploaded_count = 0
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            futures = [executor.submit(upload_one, p) for p in files]
+            for future in as_completed(futures):
+                future.result() # raises any exceptions encountered
+                uploaded_count += 1
+                if uploaded_count % 500 == 0 or uploaded_count == len(files):
+                    logger.info(f"  uploaded {uploaded_count}/{len(files)} …")
+    else:
+        # dry-run
+        for i, path in enumerate(files, 1):
+            rel = path.relative_to(root).as_posix()
+            key = f"{prefix}/{rel}" if prefix else rel
             if i <= 5 or i == len(files):
-                logger.info(f"[dry-run] would PUT {key}  ({len(raw)}→{len(body)} B)")
-            continue
-        client.put_object(Bucket=bucket, Key=key, Body=body, **extra)
-        if i % 100 == 0 or i == len(files):
-            logger.info(f"  uploaded {i}/{len(files)} …")
+                logger.info(f"[dry-run] would PUT {key}")
 
-    logger.info(
-        f"{'[dry-run] ' if dry_run else ''}Done: {len(files)} objects | "
-        f"{n_bytes_in/1e6:.1f} MB → {n_bytes_out/1e6:.1f} MB "
-        f"({'gzip' if gzip_enabled else 'raw'})"
-    )
     if public_url:
         sample = f"{prefix}/run_registry.json" if prefix else "run_registry.json"
         logger.info(f"Public URL base: {public_url.rstrip('/')}/{sample}")
