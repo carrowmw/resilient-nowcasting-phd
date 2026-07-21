@@ -19,6 +19,7 @@ Usage:
         [--artifact entity/project/model:latest]
 """
 
+from networkx import generators
 import argparse
 
 import json
@@ -487,8 +488,9 @@ def compute_pit_histogram(
             # Prevent perfectly rounded 0.0s from tripping the strictly-positive assert
             safe_mu = max(1e-6, float(mu_val))
             safe_th = max(1e-6, float(th_val))
+            safe_pi = max(1e-6, min(1.0 - 1e-6, float(pi_val)))
 
-            u = _zinb_randomized_pit(float(gt), safe_mu, safe_th, float(pi_val))
+            u = _zinb_randomized_pit(float(gt), safe_mu, safe_th, safe_pi)
             bin_idx = min(int(u * num_bins), num_bins - 1)
             counts[bin_idx] += 1
 
