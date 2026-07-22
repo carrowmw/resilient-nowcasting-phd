@@ -1,0 +1,96 @@
+# Smoke-test variant of quality.yaml: 3 sensors, 2 epochs, tiny stats.
+# Runs end-to-end on CPU in minutes; used by CI and desk checks.
+
+data_source: "parquet"
+
+data:
+  parquet_path: "data/processed/master_dataset_15T.parquet"
+  start_date: "2024-01-01"
+  end_date: "2024-07-01"
+  veh_class: "person"
+  freq: "15min"
+
+quality:
+  window: 24
+  horizons: [8]
+  stride: 1
+  train_frac: 0.7
+  val_frac: 0.15
+  purge_boundaries: true
+  viability:
+    min_windows: {train: 200, val: 40, test: 40}
+
+features:
+  fractional_time: true
+
+interpolation:
+  methods: [none, night_zero]
+  night_hours: [0, 6]
+  spline_order: 3
+  knn_neighbors: 5
+  max_gap_steps: 8
+
+periodogram:
+  min_period_hours: 2.0
+  max_period_hours: 168.0
+  n_freqs: 1000
+  top_k: 3
+
+models:
+  persistence:
+    type: persistence
+  snaive_daily:
+    type: seasonal_naive
+    seasonality_days: 1
+  arima:
+    type: arima
+    order: [1, 0, 1]
+    seasonal_order: [0, 0, 0, 0]
+    trend: "c"
+    min_fit_steps: 96
+    max_eval_history: 672
+  lstm_uv:
+    type: lstm
+    feature_groups: [count]
+    hidden_dim: 16
+    num_layers: 1
+    dropout: 0.1
+    lr: 0.003
+    batch_size: 256
+    epochs: 2
+    patience: 2
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+  lstm_mv:
+    type: lstm
+    feature_groups: [count, half_day, day, week, quarter, year, timestamp]
+    hidden_dim: 16
+    num_layers: 1
+    dropout: 0.1
+    lr: 0.003
+    batch_size: 256
+    epochs: 2
+    patience: 2
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+
+ablation:
+  model: lstm_mv
+  feature_sets:
+    full: [count, half_day, day, week, quarter, year, timestamp]
+    no_day: [count, half_day, week, quarter, year, timestamp]
+
+run:
+  output_dir: "artifacts/quality_smoke"
+  sensors: 3                    # int = first N viable sensors (smoke only)
+  models: [persistence, snaive_daily, arima, lstm_uv, lstm_mv]
+  horizons: [8]
+  interpolation_variants: [none, night_zero]
+  run_ablations: false
+  seed: 42
+  device: null
+
+wandb:
+  enabled: false
+  project: "quality-aware-forecasting"
+  mode: "offline"
