@@ -41,8 +41,11 @@ def get_gpu_status():
                 "util": util,
                 "status": status
             })
-    except (subprocess.SubprocessError, FileNotFoundError):
-        logger.warning("nvidia-smi not available or failed to run. GPU status check bypassed.")
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        raise RuntimeError(
+            "CRITICAL: nvidia-smi failed — CPU fallback must be an explicit user decision "
+            "(pass --use_mock_data or set CUDA_VISIBLE_DEVICES='' before invoking)."
+        ) from e
     return gpus
 
 def select_gpus(interactive=None) -> str:

@@ -1,3 +1,8 @@
+wandb:
+  project: "resilient-iot-v2"
+  sweep_project: "resilient-iot-sweeps-v2"
+  collection: "resilient-iot-model-02_optim"
+
 parameters:
   lr:
     distribution: loguniform

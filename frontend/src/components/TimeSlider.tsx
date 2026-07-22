@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import useTimeStore from '@/store/useTimeStore';
+import DatePaginator from './DatePaginator';
 
 // Each timestep represents 15 minutes; anchor to midnight of the test day.
 function timestepToLabel(t: number): string {
@@ -20,33 +21,37 @@ export default function TimeSlider() {
   const setTimestep = useTimeStore((s) => s.setTimestep);
   const togglePlayback = useTimeStore((s) => s.togglePlayback);
   const incrementTimestep = useTimeStore((s) => s.incrementTimestep);
-  const startDate = useTimeStore((s) => s.startDate);
 
-  // Log every timestep change so the test can be verified in the console
-  useEffect(() => {
-    console.log(`[TimeSlider] currentTimestep=${currentTimestep}  (${timestepToLabel(currentTimestep)})`);
-  }, [currentTimestep]);
-
-  // Playback animation loop
+  // Playback animation loop.
+  // animateRef stores the latest callback so the RAF loop can recurse through
+  // the ref rather than closing over the `animate` identifier, which avoids
+  // both the "ref updated during render" and "variable accessed before
+  // declaration" lint rules.
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number>(0);
+  const animateRef = useRef<(now: number) => void>(() => {});
   const TICK_INTERVAL_MS = 300; // one step every 300 ms
 
+  // Keep animateRef.current in sync with the latest incrementTimestep closure.
   const animate = useCallback(
     (now: number) => {
       if (now - lastTickRef.current >= TICK_INTERVAL_MS) {
         incrementTimestep();
         lastTickRef.current = now;
       }
-      rafRef.current = requestAnimationFrame(animate);
+      rafRef.current = requestAnimationFrame(animateRef.current);
     },
     [incrementTimestep]
   );
 
   useEffect(() => {
+    animateRef.current = animate;
+  }, [animate]);
+
+  useEffect(() => {
     if (isPlaying) {
       lastTickRef.current = performance.now();
-      rafRef.current = requestAnimationFrame(animate);
+      rafRef.current = requestAnimationFrame(animateRef.current);
     } else {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
@@ -74,7 +79,7 @@ export default function TimeSlider() {
     >
       {/* Header row */}
       <div className="flex w-full items-center justify-between text-xs font-mono text-slate-300">
-        <span>{startDate || '—'}</span>
+        <DatePaginator />
         <span className="text-base font-semibold text-white tabular-nums">
           {timestepToLabel(currentTimestep)}
         </span>

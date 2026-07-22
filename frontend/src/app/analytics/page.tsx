@@ -31,8 +31,15 @@ import {
 import type {
   MasterIndex,
   NodeEntry,
+  NodeRole,
   PITBin,
+  UIPayload,
+  AlphaNodeEntry,
+  TripwireEntry,
 } from "@/types/payload";
+import type { SpatialIndex, TemporalPage, RunRegistry } from "@/types/registry";
+import useTimeStore from "@/store/useTimeStore";
+import { registryUrl, spatialUrl, pageUrl } from "@/lib/payloadSource";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,10 +48,11 @@ import type {
 interface NodeRow {
   id: number;
   location_name: string;
+  node_role: NodeRole;
   is_simulated: boolean;
   avg_mu: number;
   max_mu: number;
-  avg_sigma: number;
+  avg_sigma: number | null; // null for models without a ZINB uncertainty head
   semantic_tags: string;
   mae_drop_nan: number | null;
   rmse_drop_nan: number | null;
@@ -54,13 +62,6 @@ interface NodeRow {
 
 // Each chart point has numeric keys for mu and ci bounds per selected node.
 type ChartPoint = Record<string, number>;
-
-// Diagonal data uses the same axis keys as the reliability chart (pi_center / observed_zero_fraction)
-// so that the Line component can resolve them against the configured axes.
-const RELIABILITY_DIAGONAL = [
-  { pi_center: 0, observed_zero_fraction: 0 },
-  { pi_center: 1, observed_zero_fraction: 1 },
-];
 
 // ---------------------------------------------------------------------------
 // Colour palette for multi-node overlay
@@ -78,25 +79,146 @@ const PALETTE = [
 ];
 
 // ---------------------------------------------------------------------------
+// Payload merge (mirrors MapVisualizer.tsx — kept in sync manually)
+// ---------------------------------------------------------------------------
+
+function mergePayload(spatial: SpatialIndex, page: TemporalPage): UIPayload {
+  const m = spatial.metadata;
+  const nodes: NodeEntry[] = spatial.nodes.map((n) => ({
+    id: n.id,
+    location_name: n.location_name,
+    lat: n.lat,
+    lon: n.lon,
+    node_role: n.node_role,
+    is_simulated: n.is_simulated,
+    timeseries: page.node_timeseries[String(n.id)] ?? [],
+    semantic_tags: n.semantic_tags,
+  }));
+  return {
+    metadata: {
+      num_nodes: m.num_nodes,
+      num_real_nodes: m.num_real_nodes,
+      num_simulated_nodes: m.num_simulated_nodes,
+      num_holdout_nodes: m.num_holdout_nodes,
+      holdout_manifest_sha: m.holdout_manifest_sha,
+      timesteps: page.timesteps,
+      seq_len: page.seq_len,
+      veh_class: m.veh_class,
+      dir: m.dir,
+      start_date: page.date,
+      end_date: page.date,
+      wandb_run_id: m.wandb_run_id,
+      git_commit_hash: m.git_commit_hash,
+      hyperparameters: m.hyperparameters,
+    },
+    nodes,
+    edges: page.edge_attention,
+    pit_histogram: page.pit_histogram,
+    zero_inflation_reliability: page.zero_inflation_reliability,
+    global_imputation_burden: page.global_imputation_burden,
+    global_healing_quality: page.global_healing_quality,
+    attention_entropy_series: page.attention_entropy_series,
+    tripwire_audit_trail: page.tripwire_audit_trail,
+    alpha_node_leaderboard: page.alpha_node_leaderboard,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export default function AnalyticsPage() {
   const [masterIndex, setMasterIndex] = useState<MasterIndex | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [filterText, setFilterText] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [activeTab, setActiveTab] = useState(0);
 
+  const activeRunId = useTimeStore((s) => s.activeRunId);
+  const activeDate = useTimeStore((s) => s.activeDate);
+  const runRegistry = useTimeStore((s) => s.runRegistry);
+  const setRunRegistry = useTimeStore((s) => s.setRunRegistry);
+  const setActiveRunId = useTimeStore((s) => s.setActiveRunId);
+  const setAvailableDates = useTimeStore((s) => s.setAvailableDates);
+  const setActiveDate = useTimeStore((s) => s.setActiveDate);
+
+  const [spatialIndex, setSpatialIndex] = useState<SpatialIndex | null>(null);
+
+  // Stage 1 — registry (no-op if already loaded from map page)
   useEffect(() => {
-    fetch("/data/master_index.json")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: MasterIndex | null) => {
-        setMasterIndex(d);
+    if (runRegistry.length > 0) return;
+    const controller = new AbortController();
+    fetch(registryUrl(), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<RunRegistry>;
+      })
+      .then((registry) => {
+        setFetchError(null);
+        setRunRegistry(registry.runs);
+        const def = registry.default_run_id ?? registry.runs[0]?.run_id ?? null;
+        if (def) setActiveRunId(def);
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load run registry: ${err.message}`);
+        setLoading(false);
+      });
+    return () => controller.abort();
+  }, [runRegistry.length, setRunRegistry, setActiveRunId]);
+
+  // Stage 2 — spatial index (re-fetches on run change)
+  // Uses setSpatialIndex (state, not a ref) so Stage 3 re-triggers when spatial
+  // arrives even if activeDate hasn't changed (e.g. navigating from the map page).
+  useEffect(() => {
+    if (!activeRunId) return;
+    const controller = new AbortController();
+    fetch(spatialUrl(activeRunId), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<SpatialIndex>;
+      })
+      .then((spatial) => {
+        setFetchError(null);
+        setSpatialIndex(spatial);
+        const dates = spatial.metadata.available_dates ?? [];
+        setAvailableDates(dates);
+        if (dates.length > 0) setActiveDate(dates[0]);
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load spatial index for ${activeRunId}: ${err.message}`);
+        setLoading(false);
+      });
+    return () => controller.abort();
+  }, [activeRunId, setAvailableDates, setActiveDate]);
+
+  // Stage 3 — page fetch + merge (re-fetches on run, date, or spatial change)
+  useEffect(() => {
+    if (!activeRunId || !activeDate || !spatialIndex) return;
+    // Guard against run-switch race: spatialIndex may still be for the previous run.
+    if (spatialIndex.metadata.run_id !== activeRunId) return;
+    const controller = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    fetch(pageUrl(activeRunId, activeDate), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<TemporalPage>;
+      })
+      .then((page) => {
+        setFetchError(null);
+        setMasterIndex(mergePayload(spatialIndex, page));
         setLoading(false);
       })
-      .catch(() => setLoading(false));
-  }, []);
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load page for ${activeRunId}/${activeDate}: ${err.message}`);
+        setLoading(false);
+      });
+    return () => controller.abort();
+  }, [activeRunId, activeDate, spatialIndex]);
 
   // ---- DataGrid rows (computed aggregates) --------------------------------
 
@@ -104,15 +226,22 @@ export default function AnalyticsPage() {
     if (!masterIndex) return [];
     return masterIndex.nodes.map((node: NodeEntry) => {
       const preds = node.timeseries.map((e) => e.prediction);
-      const sigmas = node.timeseries.map((e) => e.uncertainty);
+      // A baseline reports uncertainty=null; keep avg_sigma null rather than
+      // averaging in fabricated zeros.
+      const sigmas = node.timeseries
+        .map((e) => e.uncertainty)
+        .filter((v): v is number => v != null);
       const n = preds.length || 1;
       const avg_mu = preds.reduce((a, b) => a + b, 0) / n;
       const max_mu = preds.length ? Math.max(...preds) : 0;
-      const avg_sigma = sigmas.reduce((a, b) => a + b, 0) / n;
+      const avg_sigma =
+        sigmas.length > 0 ? sigmas.reduce((a, b) => a + b, 0) / sigmas.length : null;
       const te = node.two_extremes;
       return {
         id: node.id,
         location_name: node.location_name,
+        node_role:
+          node.node_role ?? (node.is_simulated ? "simulated" : "observed"),
         is_simulated: node.is_simulated,
         avg_mu,
         max_mu,
@@ -152,7 +281,9 @@ export default function AnalyticsPage() {
         if (!node) continue;
         const ts = node.timeseries[t];
         if (!ts) continue;
-        const halfCI = 1.96 * ts.uncertainty;
+        // No CI band for models without uncertainty (baselines): collapse to the
+        // point forecast rather than drawing a fabricated interval.
+        const halfCI = ts.uncertainty != null ? 1.96 * ts.uncertainty : 0;
         point[`mu_${id}`] = ts.prediction;
         point[`ci_lower_${id}`] = Math.max(0, ts.prediction - halfCI);
         point[`ci_upper_${id}`] = ts.prediction + halfCI;
@@ -161,9 +292,9 @@ export default function AnalyticsPage() {
     });
   }, [masterIndex, selectedIds]);
 
-  // ---- Reliability chart data (dots + diagonal in one ComposedChart) -------
-  // The diagonal Line uses RELIABILITY_DIAGONAL with its own `data` prop.
-  // The scatter Line uses the reliability bins from the payload.
+  // ---- Reliability chart data (scatter dots) ------------------------------
+  // The ComposedChart binds this data at the top level; the y = x reference
+  // line is drawn presentationally via <ReferenceLine segment={...} />.
 
   const reliabilityData = useMemo(
     () => masterIndex?.zero_inflation_reliability ?? [],
@@ -180,27 +311,31 @@ export default function AnalyticsPage() {
   const columns: GridColDef<NodeRow>[] = [
     { field: "id", headerName: "ID", width: 64, type: "number" },
     { field: "location_name", headerName: "Location", flex: 1, minWidth: 150 },
-    { field: "is_simulated", headerName: "Sim", width: 56, type: "boolean" },
+    { field: "node_role", headerName: "Role", width: 90, type: "string" },
     {
       field: "avg_mu",
       headerName: "Avg μ",
       width: 95,
       type: "number",
-      valueFormatter: (value: number) => value.toFixed(3),
+      valueFormatter: (value: number | null | undefined) =>
+        value == null ? "—" : value.toFixed(3),
     },
     {
       field: "max_mu",
       headerName: "Peak μ",
       width: 95,
       type: "number",
-      valueFormatter: (value: number) => value.toFixed(3),
+      valueFormatter: (value: number | null | undefined) =>
+        value == null ? "—" : value.toFixed(3),
     },
     {
       field: "avg_sigma",
       headerName: "Avg σ",
       width: 95,
       type: "number",
-      valueFormatter: (value: number) => value.toFixed(3),
+      // null for baselines (no uncertainty head) — show N/A, not a fake 0.
+      valueFormatter: (value: number | null) =>
+        value == null ? "N/A" : value.toFixed(3),
     },
     {
       field: "mae_drop_nan",
@@ -269,8 +404,7 @@ export default function AnalyticsPage() {
         }}
       >
         <Alert severity="error">
-          Failed to load master_index.json — check that{" "}
-          <code>export_ui_payload.py</code> has been run.
+          {fetchError ?? "Failed to load payload — check the run registry and R2 bucket."}
         </Alert>
       </Box>
     );
@@ -336,6 +470,39 @@ export default function AnalyticsPage() {
             {masterIndex.metadata.timesteps}T ·{" "}
             {masterIndex.metadata.start_date}
           </Typography>
+
+          {runRegistry.length > 0 && (
+            <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography
+                variant="caption"
+                sx={{ color: "#64748b", fontFamily: "monospace", fontSize: 11 }}
+              >
+                MODEL
+              </Typography>
+              <select
+                value={activeRunId ?? ""}
+                onChange={(e) => setActiveRunId(e.target.value)}
+                aria-label="Select model run"
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  color: "#e2e8f0",
+                  border: "1px solid rgba(148,163,184,0.3)",
+                  borderRadius: 8,
+                  padding: "4px 8px",
+                  fontSize: 13,
+                  fontFamily: "monospace",
+                  cursor: "pointer",
+                  outline: "none",
+                }}
+              >
+                {runRegistry.map((r) => (
+                  <option key={r.run_id} value={r.run_id} style={{ color: "#000" }}>
+                    {r.run_id}
+                  </option>
+                ))}
+              </select>
+            </Box>
+          )}
         </Toolbar>
       </AppBar>
 
@@ -575,7 +742,7 @@ export default function AnalyticsPage() {
               </Typography>
               <Box sx={{ flex: 1, minHeight: 0 }}>
                 <DataGrid
-                  rows={(masterIndex?.alpha_node_leaderboard || []).map((r, i) => ({ id: r.node_id, ...r }))}
+                  rows={(masterIndex?.alpha_node_leaderboard ?? []).map((r: AlphaNodeEntry) => ({ id: r.node_id, ...r }))}
                   columns={[
                     { field: "node_id", headerName: "ID", width: 60 },
                     { field: "location_name", headerName: "Location", flex: 1 },
@@ -616,20 +783,30 @@ export default function AnalyticsPage() {
                 Global Imputation Burden vs. Healing Quality
               </Typography>
               <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart data={(masterIndex?.global_imputation_burden || []).map((b, i) => ({
+                {(() => {
+                  const burden = masterIndex?.global_imputation_burden ?? [];
+                  const healingQ = masterIndex?.global_healing_quality;
+                  const hasHealingQ = Array.isArray(healingQ) && healingQ.length > 0;
+                  const chartData = burden.map((b, i) => ({
                     t: i,
                     burden: b * 100,
-                    mse: masterIndex?.global_healing_quality?.[i] || 0
-                  }))}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                  <XAxis dataKey="t" stroke="#1e293b" tick={{ fill: "#334155" }} />
-                  <YAxis yAxisId="left" stroke="#f87171" tick={{ fill: "#f87171" }} orientation="left" />
-                  <YAxis yAxisId="right" stroke="#60a5fa" tick={{ fill: "#60a5fa" }} orientation="right" />
-                  <Tooltip contentStyle={{ background: "rgba(10,10,10,0.9)", borderColor: "#334155" }} />
-                  <Legend />
-                  <Area yAxisId="left" type="step" dataKey="burden" fill="#f87171" stroke="#ef4444" fillOpacity={0.2} name="% Sensors Offline" />
-                  <Line yAxisId="right" type="monotone" dataKey="mse" stroke="#60a5fa" dot={false} strokeWidth={2} name="Global Imputation MSE" />
-                </ComposedChart>
+                    ...(hasHealingQ ? { mse: healingQ[i] } : {}),
+                  }));
+                  return (
+                    <ComposedChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                      <XAxis dataKey="t" stroke="#1e293b" tick={{ fill: "#334155" }} />
+                      <YAxis yAxisId="left" stroke="#f87171" tick={{ fill: "#f87171" }} orientation="left" />
+                      <YAxis yAxisId="right" stroke="#60a5fa" tick={{ fill: "#60a5fa" }} orientation="right" />
+                      <Tooltip contentStyle={{ background: "rgba(10,10,10,0.9)", borderColor: "#334155" }} />
+                      <Legend />
+                      <Area yAxisId="left" type="step" dataKey="burden" fill="#f87171" stroke="#ef4444" fillOpacity={0.2} name="% Sensors Offline" />
+                      {hasHealingQ && (
+                        <Line yAxisId="right" type="monotone" dataKey="mse" stroke="#60a5fa" dot={false} strokeWidth={2} name="Global Imputation MSE" />
+                      )}
+                    </ComposedChart>
+                  );
+                })()}
               </ResponsiveContainer>
             </Box>
             <Box sx={{ flex: 1, minWidth: 300, display: "flex", flexDirection: "column" }}>
@@ -638,7 +815,7 @@ export default function AnalyticsPage() {
               </Typography>
               <Box sx={{ flex: 1, minHeight: 0 }}>
                 <DataGrid
-                  rows={(masterIndex?.tripwire_audit_trail || []).map((r, i) => ({ id: i, ...r }))}
+                  rows={(masterIndex?.tripwire_audit_trail ?? []).map((r: TripwireEntry, i) => ({ id: i, ...r }))}
                   columns={[
                     { field: "timestep", headerName: "Time", width: 60 },
                     { field: "node_id", headerName: "Node ID", width: 80 },
@@ -805,13 +982,14 @@ export default function AnalyticsPage() {
                   {hasReliability ? (
                     <ResponsiveContainer width="100%" height={280}>
                       {/*
-                       * ComposedChart with two Line series:
-                       *   1. Scatter dots (stroke=none, large dots) — observed zero fractions
-                       *   2. Dashed diagonal (y = x) — perfect calibration reference
-                       * Both use the same axis keys (pi_center / observed_zero_fraction) so
-                       * the diagonal data also uses those key names for correct axis resolution.
+                       * ComposedChart bound to a single, unified data array
+                       * (reliabilityData). The scatter dots are the only
+                       * interactive series; the dashed y = x perfect-calibration
+                       * reference is drawn with a presentational <ReferenceLine>
+                       * so it does not register as hoverable data points.
                        */}
                       <ComposedChart
+                        data={reliabilityData}
                         margin={{ top: 8, right: 16, left: -4, bottom: 28 }}
                       >
                         <CartesianGrid
@@ -868,23 +1046,30 @@ export default function AnalyticsPage() {
                             fontSize: "0.72rem",
                           }}
                         />
-                        {/* y = x diagonal — same axis keys, two endpoint data points */}
-                        <Line
-                          data={RELIABILITY_DIAGONAL}
-                          type="linear"
-                          dataKey="observed_zero_fraction"
+                        {/*
+                         * y = x perfect-calibration reference. Purely
+                         * presentational — drawn between two axis coordinates
+                         * so it never registers as interactive data points,
+                         * which avoids tooltip misalignment and phantom
+                         * highlights at x = 0 / x = 1.
+                         */}
+                        <ReferenceLine
+                          segment={[
+                            { x: 0, y: 0 },
+                            { x: 1, y: 1 },
+                          ]}
                           stroke="#f59e0b"
                           strokeDasharray="6 3"
                           strokeWidth={1.5}
-                          dot={false}
-                          activeDot={false}
-                          name="Perfect calibration (y = x)"
-                          isAnimationActive={false}
-                          legendType="plainline"
+                          label={{
+                            value: "Perfect calibration (y = x)",
+                            position: "insideTopLeft",
+                            fill: "#f59e0b",
+                            fontSize: 9,
+                          }}
                         />
                         {/* Observed scatter — dots only, no connecting line */}
                         <Line
-                          data={reliabilityData}
                           type="monotone"
                           dataKey="observed_zero_fraction"
                           stroke="none"

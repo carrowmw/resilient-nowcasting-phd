@@ -1,0 +1,5 @@
+osm:
+  # WGS-84 centre point used for OSMnx walking-network graph download.
+  center: [54.978, -1.610]
+  # Radius in metres around the centre point to include in the graph.
+  dist: 5000

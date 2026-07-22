@@ -1,0 +1,100 @@
+name: Build and Publish Payloads to R2
+
+on:
+  workflow_dispatch: # Manual trigger
+    inputs:
+      artifact_ref:
+        description: "W&B artifact ref (e.g., entity/project/name:v0)"
+        required: false
+      all_artifacts:
+        description: "Process all artifacts in collection"
+        type: boolean
+        default: false
+
+jobs:
+  build-and-upload:
+    runs-on: [self-hosted, gpu, payload-builder] # Target GPU server runner
+    env:
+      PAYLOAD_DIR: artifacts/payload_staging/runs
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Link host data directory
+        run: |
+          if [ -d "/data" ]; then
+            for dir in /data/*; do
+              if [ -d "$dir" ] && [ "$(basename "$dir")" != "external" ]; then
+                ln -sf "$dir" "./data/$(basename "$dir")"
+              fi
+            done
+            echo "Successfully linked /data subdirectories into ./data/"
+          else
+            echo "FATAL: No /data volume found. The self-hosted runner must have /data mounted." >&2
+            exit 1
+          fi
+
+
+
+
+      - name: Build CI Payload Runner
+        run: |
+          cp Dockerfile.gpu Dockerfile.ci
+          echo "COPY . ." >> Dockerfile.ci
+          docker build -t ci-payload-runner -f Dockerfile.ci .
+
+      - name: Export and Upload Payloads
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          ARTIFACT_REF: ${{ github.event.inputs.artifact_ref }}
+          ALL_ARTIFACTS: ${{ github.event.inputs.all_artifacts }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+        run: |
+          docker run --rm --gpus all --network ml-agent-workspace_ml-network \
+            -e WANDB_API_KEY \
+            -e DATABASE_URL \
+            -e R2_ACCOUNT_ID -e R2_ACCESS_KEY_ID -e R2_SECRET_ACCESS_KEY \
+            -e R2_BUCKET_NAME -e R2_PUBLIC_URL \
+            -e PAYLOAD_DIR \
+            -e GOOGLE_PLACES_API_KEY \
+            -e ARTIFACT_REF \
+            -e ALL_ARTIFACTS \
+            -v /data:/data:ro \
+            ci-payload-runner bash -c '
+              set -euo pipefail
+              mkdir -p "$PAYLOAD_DIR"
+              rm -rf "$PAYLOAD_DIR"/*
+
+              ARGS="--config configs/analysis/analysis.yaml --output_dir $PAYLOAD_DIR"
+              if [ "$ALL_ARTIFACTS" = "true" ]; then
+                ARGS="$ARGS --all_artifacts"
+              elif [ -n "$ARTIFACT_REF" ]; then
+                ARGS="$ARGS --artifact $ARTIFACT_REF"
+              fi
+
+              echo "Exporting payloads..."
+              python src/export_paginated_payload.py $ARGS
+
+              echo "Uploading to R2..."
+              python scripts/upload_to_r2.py --runs-dir "$PAYLOAD_DIR" --prefix runs
+            '
+
+      - name: Trigger Run Registry Rebuild
+        env:
+          CLOUDFLARE_WORKER_URL: ${{ secrets.CLOUDFLARE_WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          curl -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${CLOUDFLARE_WORKER_URL}/rebuild"
+
+      - name: Clean up local payloads
+        if: always()
+        run: |
+          rm -rf "$PAYLOAD_DIR"/*
+          echo "Payloads published to R2 and local artifacts cleaned up"

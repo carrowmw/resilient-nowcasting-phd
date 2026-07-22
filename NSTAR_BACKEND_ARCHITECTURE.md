@@ -28,6 +28,9 @@ The pipeline (`ResilientIoTPipeline`) consists of three primary modules sharing 
 
 - **Imputation Decoder:** An MLP (e.g., Linear -> GELU -> Dropout -> Linear) applied across the entire sequence to reconstruct the masked historical data.
 - **Uncertainty-Aware Forecasting Decoder:** An MLP taking the final time step's embedding. Outputs three parameters representing a Zero-Inflated Negative Binomial (ZINB) distribution: $\mu$ (mean), $\theta$ (dispersion), and $\pi$ (zero-inflation probability).
+- **Spatial Kriging Decoder (Component 2):** An MLP (mirroring the imputation head's capacity) that reconstructs the full time series for *spatially held-out* nodes from their latent embeddings — embeddings shaped purely by message passing from observable neighbours under IGNNK-style node masking. Active when `w_kriging > 0`.
+
+> **Edge-Enriched Spatial Attention (Component 1).** The `GATv2Conv` layers consume a 10-dimensional `edge_attr` (`edge_dim=10`): 9 physical OSM walking-network features (shortest-path & euclidean distance, directness, and a 6-way road-type composition) precomputed in `data/external/edge_features_cache.json`, plus 1 learned similarity dimension from the graph learner. With no cache the encoder falls back to learned-only attention (`edge_dim=1`). See `docs/model/spatial_estimation_architecture.md` §3.
 
 ### 2. Data Pipeline Specifications
 
@@ -35,9 +38,20 @@ The PyTorch Dataset must yield a dictionary for each batch. Target variables mus
 
 ### 3. Joint Training & Loss Logic
 
-The model must be trained simultaneously on all tasks. Total Loss = $(w_{forecast} \times \mathcal{L}_{ZINB\_NLL}) + (w_{impute} \times \mathcal{L}_{impute\_MSE})$.
+The model is trained simultaneously on all tasks. The **unified objective** (Phases 1–3) is:
+
+$$\mathcal{L} = (w_{impute} \times \mathcal{L}_{impute}) + (w_{forecast} \times \mathcal{L}_{ZINB\_NLL}) + (w_{kriging} \times \mathcal{L}_{kriging})$$
+
+Both reconstruction terms use **channel-specific** treatment so that quiet low-count nodes are weighted on par with high-variance city-centre nodes:
+
+- $\mathcal{L}_{impute}$ — **TRUE MSLE** on the *raw* traffic counts (channel 0) **plus** MSE on the *scaled* weather channels (1–2), over temporally masked positions.
+- $\mathcal{L}_{kriging}$ — the same channel split, but over the *spatially held-out* nodes (active when $w_{kriging} > 0$).
+- $\mathcal{L}_{ZINB\_NLL}$ — ZINB negative log-likelihood on raw counts (forecasting).
+
+**TRUE MSLE, not pseudo-MSLE.** MSLE is defined only on non-negative counts, but the encoder consumes `StandardScaler`-normalized features (signed floats). Rather than clamp the scaled values — which discards ~40–50% of the distribution (the "pseudo-MSLE" debt) — the traffic channel is **inverse-transformed back to raw counts** using scaler statistics (`traffic_mean`, `traffic_std`) registered as `nn.Module` buffers (device-safe; moved to GPU with the model), then clamped to the count domain and passed to `log1p`. Weather channels stay continuous and use MSE on the scaled features. See the ADR [`docs/adr/0001-eliminate-pseudo-msle.md`](docs/adr/0001-eliminate-pseudo-msle.md) and `docs/model/spatial_estimation_architecture.md` §5.
 
 - **ZINB Tripwires:** Apply `F.softplus` to $\mu$ and $\theta$ raw logits, plus an `eps=1e-6` buffer to mathematically guarantee they never equal zero.
+- **Loss Tripwires:** every term (`loss_impute_traffic`, `loss_impute_weather`, `loss_forecast`, `loss_kriging`, `total_loss`) is guarded by `CRITICAL:` NaN/Inf assertions in `compute_loss` — divergence fails fast rather than propagating silently.
 
 ### 4. Model Development & Ablation Strategy
 

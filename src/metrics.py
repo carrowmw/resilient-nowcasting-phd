@@ -25,6 +25,23 @@ def calculate_metrics(
         Dict with keys: rmse (float), mae (float), impute_mse (float),
         zero_true_count (int), zero_correct_count (int).
     """
+    assert target_forecast.dim() == 2, \
+        f"CRITICAL: target_forecast must be [B, N], got {tuple(target_forecast.shape)}"
+    assert mu.dim() == 2, \
+        f"CRITICAL: mu must be [B, N], got {tuple(mu.shape)}"
+    assert pi.dim() == 2, \
+        f"CRITICAL: pi must be [B, N], got {tuple(pi.shape)}"
+    assert imputed_features.dim() == 4, \
+        f"CRITICAL: imputed_features must be [B, N, T, D], got {tuple(imputed_features.shape)}"
+    assert target_impute.dim() == 4, \
+        f"CRITICAL: target_impute must be [B, N, T, D], got {tuple(target_impute.shape)}"
+    assert node_mask.dim() == 4, \
+        f"CRITICAL: node_mask must be [B, N, T, D], got {tuple(node_mask.shape)}"
+    assert target_forecast.shape == mu.shape == pi.shape, \
+        f"CRITICAL: forecast shape mismatch: target={tuple(target_forecast.shape)}, mu={tuple(mu.shape)}, pi={tuple(pi.shape)}"
+    assert imputed_features.shape == target_impute.shape == node_mask.shape, \
+        f"CRITICAL: imputation shape mismatch: imputed={tuple(imputed_features.shape)}, target={tuple(target_impute.shape)}, mask={tuple(node_mask.shape)}"
+
     # 1. RMSE and MAE (Forecasting)
     # mu is predicted mean count
     mse_forecast = torch.mean((target_forecast - mu)**2)

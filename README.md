@@ -52,6 +52,32 @@ docker compose run --rm gpu-runner python src/train.py \
   --end_date "2023-04-02"
 ```
 
+## Unified Architecture Configuration
+
+The training config (`configs/train/train.yaml`, mirrored at `epochs: 1` in
+`configs/train/train_test.yaml`) exposes the knobs for the three unified-architecture layers. All
+three are **active by default** in the production config.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `data.spatial_holdout_prob` | `0.2` | Fraction of nodes spatially held out each step for the kriging head to reconstruct (IGNNK-style). `0.0` disables spatial holdout. |
+| `loss.w_kriging` | `0.5` | Weight of the spatial-kriging reconstruction loss in the joint objective. `0.0` bypasses the kriging head entirely (no compute, no gradient). |
+| `loss.w_impute` | `1.0` | Weight of the imputation loss (traffic MSLE + weather MSE). |
+| `loss.w_forecast` | `1.0` | Weight of the ZINB forecasting NLL. |
+| `model.edge_features_cache_path` | `data/external/edge_features_cache.json` | Path to the precomputed OSM edge-feature cache feeding the GATv2 `edge_attr` (9 physical + 1 learned → `edge_dim=10`). Empty/omitted → learned-only attention (`edge_dim=1`). |
+
+**Loss note.** The traffic channel of both the imputation and kriging losses uses **TRUE MSLE on raw
+counts** — the prediction is inverse-transformed from the `StandardScaler` domain back to raw counts
+(via registered `traffic_mean`/`traffic_std` buffers) before `log1p`, rather than a clamped
+"pseudo-MSLE" on scaled features. Weather channels use MSE on scaled values. Rationale and trade-offs:
+[`docs/adr/0001-eliminate-pseudo-msle.md`](docs/adr/0001-eliminate-pseudo-msle.md).
+
+Run a config directly (database mode):
+
+```Bash
+docker compose exec agent-workspace python src/train.py --use-database --config configs/train/train.yaml
+```
+
 ## Hyperparameter Tuning (Optuna)
 
 The tuning entry point is `src/tune.py`. It launches an Optuna study and logs trial metrics to Weights & Biases through `WeightsAndBiasesCallback`.

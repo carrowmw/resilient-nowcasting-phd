@@ -1,0 +1,42 @@
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    jq \
+    libicu-dev \
+    libssl-dev \
+    ca-certificates \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI and Docker Compose Plugin so the runner can talk to the mounted docker.sock
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set runner to allow running as root (inside Docker)
+ENV RUNNER_ALLOW_RUNASROOT=1
+
+WORKDIR /actions-runner
+
+# Download and extract the GitHub Actions runner
+RUN curl -o actions-runner-linux-x64-2.335.1.tar.gz -L \
+    https://github.com/actions/runner/releases/download/v2.335.1/actions-runner-linux-x64-2.335.1.tar.gz \
+    && tar xzf ./actions-runner-linux-x64-2.335.1.tar.gz \
+    && rm actions-runner-linux-x64-2.335.1.tar.gz
+
+# Install runner dependencies
+RUN ./bin/installdependencies.sh
+
+# Copy startup script
+COPY scripts/start-runner.sh /actions-runner/start-runner.sh
+RUN chmod +x /actions-runner/start-runner.sh
+
+ENTRYPOINT ["/actions-runner/start-runner.sh"]

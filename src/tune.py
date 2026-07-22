@@ -14,6 +14,7 @@ from optuna.integration.wandb import WeightsAndBiasesCallback
 from logger import setup_logger
 from train import load_config, run_training
 from dataset import RealIoTDataset
+from db_connector import create_connector
 
 
 def set_nested_value(d: dict, keys: list, value):
@@ -24,20 +25,17 @@ def set_nested_value(d: dict, keys: list, value):
 
 def get_git_metadata():
     """Retrieves current Git commit hash and branch name."""
-    try:
-        # Check if repository is dirty
-        status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
-        if status and os.environ.get("SKIP_GIT_CHECK") != "true":
-            print("\n[!] ERROR: Repository is dirty (uncommitted changes).")
-            print("To ensure 'Artifact Twinning' traceability, you must commit your changes before running a sweep.")
-            print("Dirty files:\n" + status)
-            exit(1)
+    # Check if repository is dirty
+    status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+    if status and os.environ.get("SKIP_GIT_CHECK") != "true":
+        print("\n[!] ERROR: Repository is dirty (uncommitted changes).")
+        print("To ensure 'Artifact Twinning' traceability, you must commit your changes before running a sweep.")
+        print("Dirty files:\n" + status)
+        exit(1)
 
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
-        return commit, branch
-    except subprocess.CalledProcessError:
-        return "unknown", "unknown"
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+    return commit, branch
 
 def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool, full_dataset=None):
     """
@@ -52,6 +50,12 @@ def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool, f
         merges them into a fresh copy of the base config dict.
         """
         config = copy.deepcopy(base_config)
+
+        # Merge sweep-specific wandb override config if present
+        if "wandb" in sweep_config:
+            if "wandb" not in config:
+                config["wandb"] = {}
+            config["wandb"].update(sweep_config["wandb"])
 
         for param_name, param_config in sweep_config.get("parameters", {}).items():
             dist = param_config.get("distribution")
@@ -108,25 +112,20 @@ def make_objective(base_config: dict, sweep_config: dict, use_mock_data: bool, f
         import gc
         try:
             val_loss = run_training(
-                config=config, 
-                init_wandb=False, 
-                use_mock_data=use_mock_data, 
+                config=config,
+                init_wandb=False,
+                use_mock_data=use_mock_data,
                 study_name=trial.study.study_name,
                 full_dataset=full_dataset,
                 trial_number=trial.number
             )
         except torch.cuda.OutOfMemoryError:
             logger.warning(f"Trial {trial.number} failed with CUDA OutOfMemoryError. Pruning trial.")
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             raise optuna.TrialPruned()
-        except Exception as e:
-            logger.error(f"Trial {trial.number} failed with error: {e}")
+        finally:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            raise
 
         logger.info(f"Trial {trial.number} finished with val_loss: {val_loss}")
         
@@ -299,19 +298,52 @@ if __name__ == "__main__":
 
         # Resolve interactive inputs first
         if storage is None or study_name is None or config_path is None or sweep_config_path is None:
-            storage, study_name, config_path, sweep_config_path = interactive_setup(
-                storage, study_name, config_path, sweep_config_path
-            )
+            import sys
+            if sys.stdin.isatty():
+                storage, study_name, config_path, sweep_config_path = interactive_setup(
+                    storage, study_name, config_path, sweep_config_path
+                )
+            else:
+                if storage is None:
+                    raise ValueError("CRITICAL: --storage is required in non-interactive mode (e.g. sqlite:///optuna.db)")
+                if config_path is None:
+                    raise ValueError("CRITICAL: --config is required in non-interactive mode")
+                if sweep_config_path is None:
+                    raise ValueError("CRITICAL: --sweep-config is required in non-interactive mode")
+                if study_name is None:
+                    import os
+                    config_name = os.path.basename(sweep_config_path).replace("_sweep.yaml", "").replace(".yaml", "").replace(".yml", "")
+                    study_name = f"sweep_{config_name}"
+
+        # Load configurations early to check for overrides
+        base_cfg = {}
+        if config_path:
+            try:
+                base_cfg = load_config(config_path)
+            except (OSError, KeyError) as e:
+                logger.warning(f"Could not load config from {config_path}: {e}")
+
+        sweep_cfg = {}
+        if sweep_config_path:
+            try:
+                sweep_cfg = load_config(sweep_config_path)
+            except (OSError, KeyError) as e:
+                logger.warning(f"Could not load sweep config from {sweep_config_path}: {e}")
+
+        # Resolve W&B sweep project name: sweep config may override, else fall back to base config.
+        if "wandb" in sweep_cfg and "sweep_project" in sweep_cfg["wandb"]:
+            sweep_project = sweep_cfg["wandb"]["sweep_project"]
+        else:
+            sweep_project = base_cfg["wandb"]["sweep_project"]
 
         if study_name is None:
-            logger.info("Initializing a temporary WandB run to generate a stable study name...")
-            wandb_run = wandb.init(
-                project="resilient-iot-sweeps",
-                reinit=True
-            )
-            study_name = wandb_run.name
-            wandb_run.finish()
-            logger.info(f"Generated stable study name: '{study_name}'")
+            if sweep_config_path:
+                import os
+                config_name = os.path.basename(sweep_config_path).replace("_sweep.yaml", "").replace(".yaml", "").replace(".yml", "")
+                study_name = f"sweep_{config_name}"
+            else:
+                study_name = "sweep_default"
+            logger.info(f"Auto-generated stable study name: '{study_name}'")
 
         import math
         trials_per_worker = math.ceil(cli_args.n_trials / len(gpu_list))
@@ -353,7 +385,7 @@ if __name__ == "__main__":
                 logger.info(f"Best validation loss: {study.best_value}")
             else:
                 logger.warning("No trials completed successfully.")
-        except Exception as e:
+        except (ValueError, optuna.exceptions.InvalidStateError) as e:
             logger.error(f"Error loading final study results: {e}")
 
         sys.exit(0)
@@ -368,9 +400,22 @@ if __name__ == "__main__":
 
     # Trigger interactive setup for any values not explicitly provided via CLI flags
     if storage is None or study_name is None or config_path is None or sweep_config_path is None:
-        storage, study_name, config_path, sweep_config_path = interactive_setup(
-            storage, study_name, config_path, sweep_config_path
-        )
+        import sys
+        if sys.stdin.isatty():
+            storage, study_name, config_path, sweep_config_path = interactive_setup(
+                storage, study_name, config_path, sweep_config_path
+            )
+        else:
+            if storage is None:
+                storage = "sqlite:///optuna.db"
+            if config_path is None:
+                config_path = "configs/train/train.yaml"
+            if sweep_config_path is None:
+                sweep_config_path = "configs/sweeps/sweep.yaml"
+            if study_name is None:
+                import os
+                config_name = os.path.basename(sweep_config_path).replace("_sweep.yaml", "").replace(".yaml", "").replace(".yml", "")
+                study_name = f"sweep_{config_name}"
 
     # Dynamically load the chosen configuration files
     base_config = load_config(config_path)
@@ -378,22 +423,33 @@ if __name__ == "__main__":
     sweep_config = load_config(sweep_config_path)
     logger.info(f"Sweep config loaded from: {sweep_config_path}")
 
+    # Resolve W&B sweep project name: sweep config may override, else fall back to base config.
+    if "wandb" in sweep_config and "sweep_project" in sweep_config["wandb"]:
+        sweep_project = sweep_config["wandb"]["sweep_project"]
+    else:
+        sweep_project = base_config["wandb"]["sweep_project"]
+
+    if study_name is None:
+        if sweep_config_path:
+            import os
+            config_name = os.path.basename(sweep_config_path).replace("_sweep.yaml", "").replace(".yaml", "").replace(".yml", "")
+            study_name = f"sweep_{config_name}"
+        else:
+            study_name = "sweep_default"
+        logger.info(f"Auto-generated stable study name: '{study_name}'")
+
     logger.info("Initializing WandB run...")
     run_name = study_name
     if cli_args.worker_id:
         run_name = f"{study_name}_{cli_args.worker_id}"
 
     wandb_run = wandb.init(
-        project="resilient-iot-sweeps",
+        project=sweep_project,
         name=run_name,
         reinit=True
     )
 
-    if study_name is None:
-        study_name = wandb_run.name
-        logger.info(f"Aligned Optuna study name with auto-generated WandB run name: '{study_name}'")
-    else:
-        logger.info(f"Aligned WandB run name with specified study name: '{study_name}'")
+    logger.info(f"Aligned WandB run name with specified study name: '{study_name}'")
 
     logger.info(f"Using storage: {storage}")
     logger.info(f"Using study name: {study_name}")
@@ -402,7 +458,7 @@ if __name__ == "__main__":
     wandbc = WeightsAndBiasesCallback(
         metric_name="val_loss_total",
         wandb_kwargs={
-            "project": "resilient-iot-sweeps",
+            "project": sweep_project,
             "name": run_name,
             "reinit": True
         },
@@ -419,14 +475,13 @@ if __name__ == "__main__":
     full_dataset = None
     if not cli_args.use_mock_data:
         data_cfg = base_config["data"]
-        parquet_path = "data/processed/master_dataset_15T.parquet"
         logger.info(f"Worker level: Pre-loading RealIoTDataset once...")
+        connector = create_connector(base_config)
         full_dataset = RealIoTDataset(
-            parquet_path,
+            connector,
             data_cfg["start_date"],
             data_cfg["end_date"],
             seq_len=data_cfg["seq_len"],
-            mask_prob=data_cfg.get("mask_prob", 0.15),
             target_veh_class=data_cfg["target_veh_class"],
             target_dir=data_cfg["target_dir"],
         )

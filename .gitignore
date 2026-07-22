@@ -1,14 +1,15 @@
-/data/
+/data/*
+!/data/external/
 wandb/
 models/
 digest.txt
 node_modules/
-dist/
 build/
 logs/
 .next/
 .pytest_cache/
 
+src/__pycache__/
 __pycache__/
 .DS_Store
 .vscode/
@@ -28,3 +29,18 @@ venv/
 
 # Tmp files
 *.tmp*
+
+# Generated paginated UI payloads — served from Cloudflare R2 (Phase 3), not git
+/frontend/public/data/runs/
+/frontend/public/data/master_index.json
+
+# W&B artifact downloads (model checkpoints fetched at export time)
+/artifacts/
+
+# Scratch / debris files (do not commit)
+r2_temp.json
+registry_temp.json
+dummy.txt
+run.log
+frontend/frontend/
+frontend/frontend_runtime_errors.log

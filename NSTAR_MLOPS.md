@@ -39,7 +39,8 @@ We utilize a Centralized Configuration pattern. **No hyperparameters should be h
 
 ## 3. Weights & Biases (W&B) Logging Standards
 
-- `train.py` must initialize `wandb.init(project="resilient-iot", config=config_dict)` using the full nested YAML dictionary.
+- W&B project, sweep project, and artifact collection settings are config-driven and managed via the centralized YAML config files (e.g., `configs/train/train.yaml`).
+- `train.py` initializes `wandb.init(project=wandb_project, config=config)` using the configured project name (defaulting to `resilient-iot-v2` for production runs and `resilient-iot-v2-test` for test runs) and logs the full nested config dictionary.
 - Required tracked metrics: `train_loss_total`, `train_loss_forecast`, `train_loss_impute`, `val_loss_total`, and human-readable metrics (`val_rmse`, `val_mae`, `val_zero_acc`).
 - `val_zero_acc` must be aggregated by keeping a running tally of true zero counts vs. predicted zero counts across the entire epoch to avoid batch-averaging skew.
 

@@ -1,79 +1,38 @@
-# Architect Plan: Spatial Kriging & Edge Enrichment
+# Architectural Design: Configurable Simulated Nodes & Map Toggle
 
-## 1. Objective and Scope
-Implement the Spatial Estimation Architecture proposed in `docs/spatial_estimation_architecture.md` using the Decoupled Branching Strategy. The goal is to evaluate spatial kriging, a scale-invariant loss function (MSLE), and edge feature enrichment, ensuring strict separation of infrastructure (`feat/` branches) and hypothesis testing (`exp/` branches).
+## 1. Overview
+The current system hardcodes five simulated node coordinates in `configs/analysis/analysis.yaml`. To support scale-testing and robust zero-shot topological inference visualizations, we must dynamically sample up to 100 simulated nodes directly from the physical road graph intersections, ensuring mathematical reproducibility via a global seed. A frontend toggle will allow the user to isolate physical sensor observations from synthetic simulations in the map view.
 
-## 2. Global Constraints & North Star Adherence
-- **Strict Container Isolation:** The Implementer must run all validation and execution strictly inside the Docker container (`docker compose exec cpu-runner <command>`). Do NOT run local environments. 
-- **Offensive Programming:** Fail fast. Add explicit shape assertions (e.g., `assert tensor.shape == [B, N, T, D]`) and NaN tripwires.
-- **The Experiment Ledger:** Upon completing the testing for EACH branch, the Implementer MUST append a row to `EXPERIMENTS.md` with the date, branch name, prompt goal, and testing outcome.
-- **Desk Check Mandate:** Before writing loss logic (especially MSLE), trace extreme/edge-case values to guarantee theoretical correctness and scale-invariance.
+## 2. Alignment with North Stars
+- **NSTAR_FRONTEND_ARCHITECTURE.md (Decoupled Systems):** The simulated layer toggle must be managed by the centralized `useTimeStore` (Zustand), maintaining a reactive data flow to the `MapVisualizer`'s Deck.gl layers without triggering full React DOM re-renders during playback.
+- **NSTAR_MLOPS.md (Reproducibility):** The selection of intersection coordinates must be strictly deterministic. We will enforce the global Python `random.seed(42)` immediately before sampling the `osmnx` graph nodes.
+- **NSTAR_BACKEND_ARCHITECTURE.md (Offensive Programming):** We must validate that the configured `num_simulated_nodes` is within bounds (0 to 100). If the OSMnx graph fails to load or lacks sufficient nodes, the system must fail fast with a `RuntimeError`, avoiding silent degradation.
 
-## 3. Execution Plan (Branch-by-Branch)
+## 3. High-Level Step-by-Step Architecture
 
-The Implementer will execute the following phases in order. 
+### Phase 1: Configuration Updates
+1. **Remove Hardcoded Coords:** In `configs/analysis/analysis.yaml` (and `configs/train/train.yaml` if applicable), remove `simulated_node_coords`.
+2. **Introduce Parameter:** Add `num_simulated_nodes: 50` (or another default) under the `export` block.
 
-### Phase 1: `feat/osm-edge-enrichment`
-1. **Branch Checkout:** Create and checkout `feat/osm-edge-enrichment` from `main`.
-2. **Implementation:** 
-   - Add `compute_pairwise_edge_features()` to `src/features.py`.
-   - Write `scripts/cache_edge_features.py` to pre-compute Dijkstra shortest paths and OSMnx road type compositions.
-3. **Dummy Data Test:** Run the script against a mock sub-graph of 5 sensors. Assert that physical distance and road-type fractions are properly outputted to a dummy JSON file.
-4. **Conclusion:** Commit, update `EXPERIMENTS.md`, and prompt the user to merge into `main`.
+### Phase 2: Dynamic Sampling (Backend)
+1. **OSMnx Graph Extraction:** In `src/export_ui_payload.py`, rather than iterating over a config list, invoke `osmnx` to load the walking network within the target bounding box or using the `features.py`'s `OSM_CENTER` and `OSM_DIST`.
+2. **Deterministic Sampling:**
+   - Extract the `(lat, lon)` coordinates of all nodes in the OSM graph.
+   - Enforce `random.seed(42)`.
+   - Use `random.sample()` to select `num_simulated_nodes` coordinates.
+3. **Tripwires:** Assert that `num_simulated_nodes <= 100` and `num_simulated_nodes <= len(graph_nodes)`. Crash immediately if bounds are violated.
 
-### Phase 2: `feat/kriging-infrastructure`
-1. **Branch Checkout:** Create and checkout `feat/kriging-infrastructure` from `main`.
-2. **Implementation:**
-   - Add `SpatialKrigingDecoder` in `src/decoders.py`.
-   - Add `scale_invariant_mse(pred, target)` (MSLE) to `src/decoders.py` and metric helpers to `src/metrics.py`.
-   - Add default inactive config parameters to `configs/train/train.yaml` (`w_kriging: 0.0`, `spatial_holdout_prob: 0.0`).
-3. **Dummy Data Test (Desk Check):** Pass synthetic tensor data (zeros, large integers, NaNs) through `scale_invariant_mse`. Print exact outputs to guarantee no division-by-zero or shape mismatch. Run a 1-epoch dry-run on dummy tensors to ensure the pipeline functions seamlessly when kriging is set to `0.0`.
-4. **Conclusion:** Commit, update `EXPERIMENTS.md`, and prompt the user to merge into `main`.
+### Phase 3: Frontend Interactive Toggle
+1. **State Management (`useTimeStore.ts`):** 
+   - Add `showSimulatedNodes` (boolean, default `true`).
+   - Add `setShowSimulatedNodes(visible: boolean)` action.
+2. **Deck.gl Integration (`MapVisualizer.tsx`):**
+   - Bind the `visible` property of `simLayer` (for `nodes-simulated`) to `showSimulatedNodes`.
+   - Ensure the visibility toggle updates the GPU-side layer without recreating the data array or causing React thrashing.
+3. **UI Controls:** Add a checkbox or toggle switch to the map control panel (e.g., `ModelInfoOverlay` or a dedicated control overlay) to manipulate `showSimulatedNodes`.
 
-### Phase 3: `exp/scale-invariant-loss`
-1. **Branch Checkout:** Create and checkout `exp/scale-invariant-loss` from `main`.
-2. **Implementation:**
-   - Update `compute_loss()` in `src/decoders.py` to replace standard MSE with MSLE on the *unscaled* traffic channel.
-3. **Dummy Data Test:** Feed a batch of extreme outliers through the loss function. Prove that a predicted count of 5 vs target of 0 yields a similar relative penalty to 50 vs 0, preventing high-variance node domination.
-4. **Conclusion:** Do NOT merge. Keep as an archive, update `EXPERIMENTS.md`.
-
-### Phase 4: `exp/spatial-kriging-head`
-1. **Branch Checkout:** Create and checkout `exp/spatial-kriging-head` from `main`.
-2. **Implementation:**
-   - Modify `src/dataset.py` to inject dynamic `spatial_holdout_mask` (~15% nodes masked to 0).
-   - In `src/pipeline.py`, prevent held-out nodes from sending GAT messages.
-   - Configure a fixed validation holdout in `src/train.py` and activate $w_k > 0$.
-3. **Dummy Data Test:** Pass a batch with a known dummy spatial mask. Assert that the masked nodes' dynamic features are exactly zeroed out, but static features remain intact.
-4. **Conclusion:** Do NOT merge. Keep as an archive, update `EXPERIMENTS.md`.
-
-### Phase 5: `exp/enriched-gat-kriging`
-1. **Branch Checkout:** Create and checkout `exp/enriched-gat-kriging` from `main`.
-2. **Implementation:**
-   - In `src/graph_learner.py`, load the cached JSON from Phase 1 and build the `[E, 10]` `edge_attr` tensor.
-   - In `src/encoder.py`, update `GATv2Conv` to utilize `edge_dim=10`.
-3. **Dummy Data Test:** Inject a synthetic `edge_attr` tensor with extreme values (e.g., directness = 0.0). Run a forward pass to assert that attention coefficients react properly to edge variations and shapes align.
-4. **Conclusion:** Do NOT merge. Keep as an archive, update `EXPERIMENTS.md`.
-
-## 4. User's Guide: W&B Experiment Comparison Strategy
-
-To compare these branches empirically, the user should execute the following protocol:
-
-1. **The Baseline (`main`):** 
-   - Ensure the latest code is on `main`.
-   - Create `configs/train_baseline.yaml`.
-   - Run: `docker compose exec gpu-runner python src/train.py --config configs/train_baseline.yaml --tags "baseline"`.
-
-2. **The Loss Experiment (`exp/scale-invariant-loss`):**
-   - Checkout branch. Duplicate config to `configs/train_msle.yaml`.
-   - Run: `docker compose exec gpu-runner python src/train.py --config configs/train_msle.yaml --tags "msle-only"`.
-   - **W&B Contrast:** Plot `val_rmse` and `val_mae`. Observe if MSLE converges faster or achieves better relative error across low-count nodes.
-
-3. **The Spatial Kriging Experiment (`exp/spatial-kriging-head`):**
-   - Checkout branch. Create `configs/train_kriging.yaml` (set `w_kriging: 0.5`, `spatial_holdout_prob: 0.15`).
-   - Run: `docker compose exec gpu-runner python src/train.py --config configs/train_kriging.yaml --tags "kriging-base"`.
-   - **W&B Contrast:** Look at the new custom metric `val_kriging_loss`. Compare the overall validation loss to the baseline.
-
-4. **The Enriched Edge Experiment (`exp/enriched-gat-kriging`):**
-   - Checkout branch. Create `configs/train_kriging_edges.yaml`.
-   - Run: `docker compose exec gpu-runner python src/train.py --config configs/train_kriging_edges.yaml --tags "kriging-enriched"`.
-   - **W&B Contrast:** Group runs by the "Tags" in W&B. Plot `val_kriging_loss` for "kriging-base" vs "kriging-enriched". If the enriched graph provides a strong spatial signal, the kriging loss on held-out validation nodes will dramatically drop compared to the un-enriched model.
+## 4. Desk Check Mandate
+**Required Desk Check:** Before execution, verify that:
+1. `random.sample` correctly yields deterministic arrays across multiple runs.
+2. `export_ui_payload.py` cleanly builds the ego-graph for the randomly sampled simulated nodes without crashing, especially since they lack physical traffic data.
+3. Ensure no `NaN` coordinates are emitted into the payload.

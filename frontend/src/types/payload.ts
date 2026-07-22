@@ -4,16 +4,27 @@
 // Shared primitives
 // ---------------------------------------------------------------------------
 
+/**
+ * Node display taxonomy (matches export_ui_payload.py node_role):
+ *   observed  — normal sensor: prediction + ground truth
+ *   holdout   — real sensor masked throughout training: genuine zero-shot
+ *               prediction WITH ground truth available for comparison
+ *   simulated — zero-baseline synthetic node: prediction, no ground truth
+ */
+export type NodeRole = "observed" | "holdout" | "simulated";
+
 export interface TimestepEntry {
   t: number;
-  prediction: number; // μ (ZINB mean)
-  uncertainty: number; // σ (std_dev)
+  prediction: number; // μ (point forecast)
+  uncertainty: number | null; // σ (std_dev); null for models without a ZINB head (baselines)
 }
 
 export interface PayloadMetadata {
   num_nodes: number;
   num_real_nodes: number;
   num_simulated_nodes: number;
+  num_holdout_nodes?: number;            // inductive zero-shot nodes; absent in pre-harness payloads
+  holdout_manifest_sha?: string | null;  // cross-model comparability key; null when no holdout
   timesteps: number;
   seq_len: number;
   veh_class: string;
@@ -23,7 +34,7 @@ export interface PayloadMetadata {
   // --- ARTIFACT TWINNING ---
   wandb_run_id?: string;
   git_commit_hash?: string;
-  hyperparameters?: any;
+  hyperparameters?: Record<string, unknown>;
 }
 
 export interface EdgeEntry {
@@ -66,23 +77,46 @@ export interface NodeEntry {
   location_name: string;
   lat: number;
   lon: number;
+  node_role?: NodeRole;       // absent in pre-harness payloads → derive from is_simulated
   is_simulated: boolean;
   timeseries: TimestepEntry[];
   semantic_tags?: string[];   // flattened POI/land-use tags; absent in pre-sharding payloads
   two_extremes?: TwoExtremes; // absent in payloads generated before Iteration 4
+  // Legacy master_index.json fields — present in monolithic payloads, moved to
+  // NodeDetailPayload in the paginated split format.
+  ground_truth_series?: (number | null)[];
+  imputed_series?: number[];
+  mask_series?: boolean[];
+}
+
+/** One entry in the per-inference tripwire audit trail produced by export_paginated_payload.py. */
+export interface TripwireEntry {
+  timestep: number;
+  node_id?: number;
+  event_type?: string;
+  [key: string]: unknown;
+}
+
+/** One entry in the alpha-node influence leaderboard (graph models only). */
+export interface AlphaNodeEntry {
+  node_id: number;
+  total_outgoing_attention: number;
+  location_name: string;
 }
 
 export interface MasterIndex {
   metadata: PayloadMetadata;
   nodes: NodeEntry[];
   edges: EdgeEntry[];
-  pit_histogram?: PITBin[];                          // absent in pre-Iteration-4 payloads
-  zero_inflation_reliability?: ZeroInflationBin[];   // absent in pre-Iteration-4 payloads
+  // null (not just absent) for models without the corresponding capability:
+  // a baseline reports N/A ZINB calibration and no attention leaderboard.
+  pit_histogram?: PITBin[] | null;                          // null for models with no ZINB head
+  zero_inflation_reliability?: ZeroInflationBin[] | null;   // null for models with no zero-inflation head
   global_imputation_burden?: number[];
   global_healing_quality?: number[];
-  attention_entropy_series?: number[];
-  tripwire_audit_trail?: Record<string, any>[];
-  alpha_node_leaderboard?: Record<string, any>[];
+  attention_entropy_series?: number[];                      // empty for graph-less baselines
+  tripwire_audit_trail?: TripwireEntry[];
+  alpha_node_leaderboard?: AlphaNodeEntry[] | null;         // null for graph-less baselines
 }
 
 // Backward-compat alias used by MapVisualizer / NodeInspector
@@ -95,10 +129,10 @@ export type UIPayload = MasterIndex;
 export interface ZINBEntry {
   t: number;
   mu: number;
-  theta: number;      // dispersion parameter
-  std_dev: number;
-  pi: number;         // zero-inflation probability ∈ (0,1) — absent in pre-Iteration-4b payloads
-  is_missing: boolean; // true = this timestep was artificially masked before imputation
+  theta: number | null;   // dispersion; null for models without a ZINB uncertainty head
+  std_dev: number | null;  // σ; null for models without a ZINB uncertainty head
+  pi: number | null;       // zero-inflation probability ∈ (0,1); null for models without the head
+  is_missing: boolean;     // true = this timestep was artificially masked before imputation
 }
 
 /** One directed GAT attention edge in the localized ego-graph. */
@@ -124,12 +158,13 @@ export interface NodeDetailPayload {
   location_name: string;
   lat: number;
   lon: number;
+  node_role?: NodeRole;             // absent in pre-harness payloads → derive from is_simulated
   is_simulated: boolean;
-  zinb_series: ZINBEntry[];
+  zinb_series: ZINBEntry[];         // theta/std_dev/pi are null for graph-less/ZINB-less baselines
   ground_truth_series: (number | null)[];
   imputed_series: number[];
   mask_series: boolean[];
-  edges_1hop: HopEdge[];
+  edges_1hop: HopEdge[];            // empty for graph-less baselines
   two_extremes?: TwoExtremes;       // absent in payloads generated before Iteration 4
-  ego_graph_edges?: AttentionEdge[]; // absent in payloads generated before Iteration 4b
+  ego_graph_edges?: AttentionEdge[]; // empty/absent for graph-less baselines
 }

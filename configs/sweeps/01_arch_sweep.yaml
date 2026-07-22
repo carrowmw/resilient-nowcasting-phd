@@ -1,3 +1,8 @@
+wandb:
+  project: "resilient-iot-v2"
+  sweep_project: "resilient-iot-sweeps-v2"
+  collection: "resilient-iot-model-01_arch"
+
 parameters:
   num_layers:
     values: [2, 3, 4, 6]

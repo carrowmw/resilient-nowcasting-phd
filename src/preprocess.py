@@ -3,9 +3,6 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List
 
-# Standard random seed initialization
-np.random.seed(42)
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -52,7 +49,9 @@ class PreprocessingPipeline:
         
         # We'll build the continuous grid for each group explicitly
         resampled_list = []
-        unique_groups = df[groups].drop_duplicates().dropna(subset=groups)
+        assert not df[groups].isna().any().any(), \
+            f"CRITICAL: NaN in group key columns {groups} — upstream data must not have null group identifiers"
+        unique_groups = df[groups].drop_duplicates()
         
         for _, row in unique_groups.iterrows():
             logger.info(f"DEBUG: Processing group: {row.to_dict()}")
@@ -101,17 +100,9 @@ class PreprocessingPipeline:
         assert not df.empty, "Dataframe is empty before imputation."
         assert 'dt' in df.columns and 'value' in df.columns, "Missing 'dt' or 'value' columns."
         
-        # Priority 1: Structural Missingness (Zero-Priority)
-        # Using a simple contextual heuristic: If it's late night (00:00 to 04:59), assume missing means 0 traffic.
-        hour = df['dt'].dt.hour
-        is_night = (hour >= 0) & (hour < 5)
-        
-        structural_zero_mask = df['value'].isna() & is_night
-        df.loc[structural_zero_mask, 'value'] = 0.0
-        
-        # Priority 2: True Gaps
-        # All other NaN values remain as NaN to maintain missingness awareness.
         # Explicitly DO NOT use .fillna(method='ffill') or .dropna()
+        # All NaN values (both day and night gaps) remain as NaN to maintain missingness awareness.
+        # These are handled downstream via explicit MNAR masks in the DataLoader.
         
         logger.info(f"Imputation complete. Remaining explicit NaNs: {df['value'].isna().sum()}")
         return df

@@ -1,0 +1,171 @@
+graph TD
+    subgraph Logical Data Pipeline
+        subgraph Data Ingestion
+            SENSORS[traffic_sensors.json: lat, lon, r=250m]
+            PLACES[Google Places API]
+            DYN_READINGS[Dynamic Time-Series Readings]
+            TARGETS[Target Variables: Raw Vehicle Counts]
+        end
+
+        subgraph Feature Engineering
+            STATIC_FEAT[Static Features: POI, Commercial Density]
+            NOTE_LEAK[Note: Coordinates excluded to prevent spatial leakage] -.-> STATIC_FEAT
+        end
+
+        subgraph "Edge Feature Cache (Phase 1)"
+            EDGE_CACHE["edge_features_cache.json"]
+            OSM_WALK["OSM Walking Network"]
+            OSM_WALK --> EDGE_CACHE
+            EDGE_KEYS["9 features per directed pair"]
+            NOTE_EDGE["shortest_path_distance, euclidean_distance, directness,<br/>6 road-type fractions"] -.-> EDGE_KEYS
+            EDGE_KEYS -.-> EDGE_CACHE
+        end
+
+        subgraph Preprocessing
+            SCALER_STATIC[Standard Scaler: Static]
+            MASKING[Artificial Masking]
+            SCALER_DYN[Standard Scaler: Dynamic]
+        end
+
+        subgraph "Model Integration (Spatial Holdout)"
+            LOADER[PyTorch Dataset Loader]
+            HOLDOUT_MASK["make_spatial_holdout_mask(N, p=0.15)"]
+            APPLY_HOLDOUT["apply_spatial_holdout: zero held-out dynamic features"]
+            BATCH["Batch Dict + spatial_holdout_mask"]
+        end
+
+        SENSORS --> PLACES
+        PLACES --> STATIC_FEAT
+        STATIC_FEAT --> SCALER_STATIC
+        SCALER_STATIC --> LOADER
+
+        DYN_READINGS --> MASKING
+        MASKING --> SCALER_DYN
+        SCALER_DYN --> LOADER
+
+        TARGETS --> LOADER
+        LOADER --> HOLDOUT_MASK
+        HOLDOUT_MASK --> APPLY_HOLDOUT
+        APPLY_HOLDOUT --> BATCH
+    end
+
+    subgraph ResilientIoTPipeline Model
+        BATCH --> GL_IN[Static Features]
+        BATCH --> ENC_IN[Masked Dynamic Features]
+
+        subgraph "Dynamic Graph Learner (Enriched)"
+            GL_IN --> GL_PROJ[Linear Projection]
+            GL_PROJ --> GL_SIM[Pairwise Similarity Adjacency]
+            GL_SIM --> GL_SPARSE[ReLU & Sparsity Threshold]
+            GL_SPARSE --> GL_EI[edge_index & edge_weight]
+
+            subgraph "Edge-Feature Enrichment (Phase 5)"
+                EDGE_TABLE["Registered Buffer: edge_feature_table N×N×9"]
+                EDGE_CACHE --> EDGE_TABLE
+                EDGE_TABLE --> EDGE_GATHER["Gather physical features for surviving edges"]
+                GL_EI --> EDGE_GATHER
+                EDGE_GATHER --> EDGE_NORM["Min-Max Normalise distance channels to 0-1"]
+                EDGE_NORM --> EDGE_CAT["Concatenate: 9 physical ⊕ 1 learned similarity"]
+                GL_EI -->|edge_weight| EDGE_CAT
+                EDGE_CAT --> EDGE_ATTR["edge_attr: E × 10"]
+            end
+        end
+
+        subgraph "Strict Topology Masking (Union)"
+            GL_EI --> TOPO_FILTER[Drop outgoing edges from masked nodes]
+            EDGE_ATTR --> TOPO_FILTER
+            BATCH -->|spatial_holdout_mask| TOPO_FILTER
+            BATCH -->|simulated_nodes_mask| TOPO_FILTER
+            TOPO_FILTER --> FILTERED[Filtered edge_index, edge_weight, edge_attr]
+        end
+
+        subgraph "Masked Spatiotemporal Encoder (edge_dim=10)"
+            ENC_IN --> ENC_SPATIAL["Spatial: GATv2Conv(edge_dim=10)"]
+            FILTERED --> ENC_SPATIAL
+            NOTE_GAT["GATv2 learns Θ_e edge projection over all 10 channels"] -.-> ENC_SPATIAL
+            ENC_SPATIAL --> ENC_FLAT[Flatten Spatial Output]
+            ENC_FLAT --> ENC_TEMP[Temporal: TransformerEncoder]
+            ENC_TEMP --> LATENT[Latent Embeddings]
+        end
+
+        subgraph Decoupled Decoders
+            LATENT --> DEC_IMP[Imputation Decoder MLP]
+            LATENT --> DEC_FOR[Forecasting Decoder MLP]
+
+            DEC_IMP --> OUT_IMP[Reconstructed Masked Data]
+            DEC_FOR --> OUT_ZINB[ZINB Parameters: mu, theta, pi]
+        end
+
+        subgraph "Spatial Kriging Decoder"
+            LATENT --> KRIG_SELECT["Select held-out nodes"]
+            KRIG_SELECT --> KRIG_MLP["Kriging Head MLP: H → 2H → GELU → D"]
+            KRIG_MLP --> KRIG_OUT["Reconstructed held-out series"]
+        end
+    end
+
+    subgraph "Loss & Optimization (Three-Term)"
+        LOSS_IMP[MSE Imputation Loss]
+        LOSS_FORE[ZINB NLL Loss]
+        LOSS_KRIG[Kriging Loss: MSLE traffic + MSE weather]
+
+        JOINT_LOSS["Joint Loss = w_imp × L_imp + w_fore × L_fore + w_krig × L_krig"]
+        TRAIN[train.py: Orchestrator]
+        TUNE[tune.py: Optuna sweeps]
+        WANDB[Weights & Biases]
+
+        OUT_IMP --> LOSS_IMP
+        OUT_ZINB --> LOSS_FORE
+        KRIG_OUT --> LOSS_KRIG
+        LOSS_IMP --> JOINT_LOSS
+        LOSS_FORE --> JOINT_LOSS
+        LOSS_KRIG --> JOINT_LOSS
+        TRAIN -->|optimizer.step| GL_PROJ
+        TRAIN -->|optimizer.step| ENC_SPATIAL
+        TRAIN -->|optimizer.step| DEC_IMP
+        TRAIN -->|optimizer.step| DEC_FOR
+        TRAIN -->|optimizer.step| KRIG_MLP
+        TUNE -->|config override| TRAIN
+        TRAIN -->|log metrics| WANDB
+    end
+
+    subgraph Static Data Bridge
+        HOLDOUT_VIS[Visual Holdout Set]
+        EXPORTER[export_ui_payload.py]
+        INDEX_JSON[master_index.json / ui_payload.json]
+        NODE_SHARDS[nodes/node_*.json details]
+        META[Artifact Twinning: git hash, W&B run ID, YAML config]
+
+        HOLDOUT_VIS --> EXPORTER
+        TRAIN -->|trained model checkpoint| EXPORTER
+        EXPORTER --> META
+        EXPORTER --> INDEX_JSON
+        EXPORTER --> NODE_SHARDS
+    end
+
+    subgraph Frontend Geospatial Twin
+        NEXTJS[Next.js App]
+        ZUSTAND[Zustand Store: useTimeStore]
+        DECKGL[Deck.gl over MapLibre GL JS]
+        SCATTER_REAL[nodes-real: ScatterplotLayer]
+        SCATTER_SIM[nodes-simulated: ScatterplotLayer]
+        ARC_GLOBAL[topology-layer: ArcLayer]
+        ARC_EGO[ego-graph-layer: ArcLayer]
+        MAP[MapVisualizer]
+        INSPECTOR[NodeInspector]
+        CONTROLS[AttentionControls]
+        SLIDER[TimeSlider]
+
+        INDEX_JSON --> NEXTJS
+        NODE_SHARDS --> NEXTJS
+        NEXTJS --> ZUSTAND
+        NEXTJS --> MAP
+        NEXTJS --> INSPECTOR
+        NEXTJS --> CONTROLS
+        NEXTJS --> SLIDER
+        ZUSTAND -->|timestep & threshold filtering| DECKGL
+        MAP --> DECKGL
+        DECKGL --> SCATTER_REAL
+        DECKGL --> SCATTER_SIM
+        DECKGL --> ARC_GLOBAL
+        DECKGL --> ARC_EGO
+    end

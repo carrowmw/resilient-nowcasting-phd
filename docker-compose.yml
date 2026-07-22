@@ -5,12 +5,18 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     container_name: my-ml-agent
+
+    env_file:
+      - .env
     volumes:
       - .:/workspace
-    # Notice we don't even need the 'environment:' block anymore!
-    # Compose passes the .env file automatically.
+      - ~/.config/gcloud:/root/.config/gcloud  # Required for ADC authentication
     stdin_open: true
     tty: true
+    networks:
+      - ml-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Isolated Frontend Environment
   frontend-dev:
@@ -18,10 +24,14 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     container_name: nextjs-frontend
+    env_file:
+      - .env
     volumes:
       - ./frontend:/workspace/frontend
-      # ANONYMOUS VOLUME: Prevents node_modules from syncing back to the host
+      - ./workers:/workspace/workers
+      # ANONYMOUS VOLUMES: Prevents node_modules from syncing back to the host
       - /workspace/frontend/node_modules
+      - /workspace/workers/run-registry-builder/node_modules
       - /workspace/frontend/.next
     ports:
       - "3000:3000"
@@ -35,12 +45,14 @@ services:
       context: .
       dockerfile: Dockerfile.gpu
     container_name: gpu-executor
+    env_file:
+      - .env
     volumes:
       - .:/workspace
-    # We explicitly pass the WANDB_API_KEY from the server's .env file
-    environment:
-      - WANDB_API_KEY=${WANDB_API_KEY}
-      - GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}
+    networks:
+      - ml-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # This block maps the physical server GPUs into the container
     deploy:
       resources:
@@ -56,9 +68,64 @@ services:
       context: .
       dockerfile: Dockerfile.cpu
     container_name: cpu-executor
+    env_file:
+      - .env
     volumes:
       - .:/workspace
-    # We explicitly pass the WANDB_API_KEY from the server's .env file
+    networks:
+      - ml-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # TimescaleDB for training database (Phase 2)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: ml-timescaledb
     environment:
-      - WANDB_API_KEY=${WANDB_API_KEY}
-      - GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - ml-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-riotuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Self-Hosted GitHub Actions Runner Container (Phase 3 CDN publishing)
+  github-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    container_name: github-runner
+    volumes:
+      # Mount host's data directory read-only into container's root /data
+      - ./data:/data:ro
+      # Docker socket — runner spawns gpu-runner containers for workflow steps
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME:-gpu-docker-runner}
+      - RUNNER_LABELS=${RUNNER_LABELS:-self-hosted,gpu,linux,payload-builder}
+    networks:
+      - ml-network
+    restart: unless-stopped
+
+
+volumes:
+  timescaledb_data:
+    driver: local
+
+networks:
+  ml-network:
+    external: true
+    name: ml-agent-workspace_ml-network

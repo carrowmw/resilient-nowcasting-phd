@@ -1,287 +1,154 @@
-# Implementation Plan: Static Spatial Features Pipeline Expansion (5 → 15 Dimensions)
+# Generic Evaluation Harness & Cross-Model Standardization
 
-**Date**: 2026-06-09  
-**Based on**: `architect_plan.md` + `context_for_architect.md`  
-**Target output**: `data/processed/master_dataset_15T.parquet` with 15 static feature columns, no NaNs
+This plan builds a single evaluation harness shared by **three consumers** — `train.py` (train/val loops), and the two payload exporters (`export_ui_payload.py`, `export_paginated_payload.py`) — so that every model produces a standardized, reproducible set of results, and so that spatially held-out nodes flow through to the frontend as a first-class node category.
 
----
+## User Review Required
+> [!IMPORTANT]
+> **Dummy values must never become numbers.** The original idea (baselines emit `dispersion=1`, `P(zero)=0`) crashes inference today — `export_paginated_payload.py:478` asserts `pi > 0` strictly — and worse, dummy-derived metrics and uncertainty bands would render on the frontend as if real. This plan replaces "dummy values" with two honest alternatives per capability: a **genuine naive attempt** (real, deliberately bad numbers) or a **null** (metric reported as `N/A`). Dummy tensors exist only internally to satisfy shape contracts and are never scored or exported.
 
-## Pre-flight Checks (Before Writing Code)
-
-### ENV-1: osmnx / geopandas not installed
-```bash
-pip install osmnx geopandas
-```
-Must complete successfully before any OSMnx code runs.
-
-### ENV-2: GOOGLE_PLACES_API_KEY not set
-The environment variable `GOOGLE_PLACES_API_KEY` is currently unset. The standalone pagination test and `process_all.py` will both raise `ValueError` without it. The user must export this key before Phase 5 and Phase 6. **The implementation plan does not block on this** — all code is written first; the API calls happen last.
+> [!IMPORTANT]
+> **Three node roles reach the frontend.** `observed` (normal sensors), `holdout` (real sensors masked throughout training — genuine zero-shot predictions *with* ground truth available for display), and `simulated` (zero-baseline synthetic nodes — predictions with *no* ground truth). This requires a payload schema change and coordinated frontend work.
 
 ---
 
-## Phase 1: Rewrite `src/features.py`
+## 0. The Contracts
 
-**Goal**: Replace the 5-feature, non-paginated loader with a 15-feature, paginated loader.
+### 0.1 Contract In — the batch schema
+The harness guarantees the batch dict contains exactly these **data** keys (matching `custom_collate_real`, `dataset.py:277-287`):
+`static_features [N, S]`, `dynamic_features [B, N, T, D]`, `target_impute [B, N, T, D]`, `target_forecast [B, N]`, `node_mask [B, N, T, D]`, `location_ids`, and optionally `spatial_holdout_mask [N]` and `simulated_nodes_mask [N]`.
 
-### 1.1 New constants / imports
-- Add `import math`, `import time`
-- Add `NEWCASTLE_CENTRE = (54.9738, -1.6131)` for Haversine distance
-- Add `OSM_CACHE_PATH = 'data/external/osm_features_cache.json'`
-- Keep existing imports (`logging`, `pandas`, `requests`, `json`, `os`, `numpy`, `random`)
+Loss weights (`w_impute`, `w_forecast`, `w_kriging`) are **removed from the batch** at the harness boundary — they are hyperparameters, not data. The RIoT wrapper (§0.3) re-injects them into the batch it hands to the unmodified `ResilientIoTPipeline.forward()`, absorbing the impedance mismatch so `pipeline.py` needs no signature change.
 
-### 1.2 New helper: `_haversine_distance(lat1, lon1, lat2, lon2) -> float`
-- Returns distance in **metres** between two WGS-84 points.
-- Pure Python, no external dependency.
-
-### 1.3 New helper: `_shannon_entropy(counts: list[int]) -> float`
-- Normalised Shannon entropy in [0, 1] across N categories.
-- `H = -sum(p * log2(p)) / log2(N)` where `N = len(counts)`.
-- Returns 0.0 if total is 0 or if only one non-zero category.
-- Handles edge: if N == 1, return 0.0 (no diversity possible).
-
-### 1.4 Retained helper: `_nearby_search_count(lat, lon, place_types, radius) -> int`
-- Same logic as current `get_count()` but extracted as a method.
-- Used for low-count features: nightlife, education, recreation, school_zone, bus_stops, parking.
-- Still crashes hard (raises `RuntimeError`) on 403/429.
-- Returns raw count (no `min(..., 50)` cap — let the data speak).
-
-### 1.5 New helper: `_text_search_paginated(lat, lon, text_query, included_type, radius) -> int`
-- Uses `POST https://places.googleapis.com/v1/places:searchText`
-- Headers: `X-Goog-Api-Key`, `X-Goog-FieldMask: places.id`
-- Body:
-  ```json
-  {
-    "textQuery": "<text_query>",
-    "includedType": "<included_type>",
-    "locationBias": { "circle": { "center": { "latitude": ..., "longitude": ... }, "radius": 500.0 } },
-    "maxResultCount": 20
-  }
-  ```
-- Follows `nextPageToken` for up to **3 pages** (max 60 results).
-- `time.sleep(2.0)` between page requests (API requirement).
-- Crashes hard (raises `RuntimeError`) on 403/429 on any page.
-- Returns **total accumulated count** across all pages (no artificial cap).
-
-### 1.6 New method: `_build_osm_cache(sensors_data: list) -> dict`
-- Checks if `data/external/osm_features_cache.json` already exists and is fully populated for all locations; if so, loads and returns it.
-- If not: downloads Newcastle walking network via:
-  ```python
-  G = ox.graph_from_point((54.978, -1.610), dist=5000, network_type='walk')
-  ```
-- Computes on the full graph (not per-node):
-  - `betweenness = nx.betweenness_centrality(G, normalized=True)`
-  - `closeness = nx.closeness_centrality(G)`
-  - `degree = nx.degree_centrality(G)`
-- For each sensor: find nearest OSM node via `ox.nearest_nodes(G, lon, lat)`, then look up its centrality values.
-- Saves result as `{ location_name: { betweenness_centrality, closeness_centrality, degree_centrality } }` to `data/external/osm_features_cache.json`.
-- Returns the dict.
-
-**Shape invariant assertion**: After mapping, every sensor in `sensors_data` must have all three OSM features. Raise `RuntimeError` on any missing.
-
-### 1.7 Updated method: `_fetch_location_data(lat, lon) -> dict`
-
-Issues the following API calls in order (with `time.sleep(0.1)` between each):
-
-| Call | Method | Type(s) | Radius | Output key |
-|------|--------|---------|--------|------------|
-| 1 | Text Search paginated | `transit_station` | 500m | `transit_count` |
-| 2 | Text Search paginated | `store` | 500m | `retail_count` |
-| 3 | Text Search paginated (restaurant) + Nearby Search (cafe) | mixed | 500m | `food_drink_count` (sum) |
-| 4 | Nearby Search | `bar`, `night_club` | 500m | `nightlife_count` |
-| 5 | Nearby Search | `school`, `university` | 500m | `education_count` |
-| 6 | Nearby Search | `park`, `tourist_attraction`, `museum` | 500m | `recreation_count` |
-| 7 | Nearby Search | `school` | 250m | `is_school_zone` (bool: count > 0) |
-| 8 | Nearby Search | `bus_station` | 300m | `nearby_bus_stops` |
-| 9 | Nearby Search | `parking` | 500m | `nearby_parking` |
-
-Derived (no API call):
-- `total_poi_count` = sum of `transit_count` + `retail_count` + `food_drink_count` + `nightlife_count` + `education_count` + `recreation_count`
-- `landuse_entropy` = `_shannon_entropy([transit_count, retail_count, food_drink_count, nightlife_count, education_count, recreation_count])`
-- `dist_to_city_centre` = `_haversine_distance(lat, lon, *NEWCASTLE_CENTRE)`
-
-Returns 12 Google/derived features (OSM 3 merged in `join_features`).
-
-**Note on `food_drink_count`**: Text Search `includedType` accepts only one type. So we make two calls: Text Search for `restaurant` and Nearby Search for `cafe`, then sum them. The combined result can exceed 20 for busy nodes.
-
-### 1.8 Updated method: `join_features(df) -> pd.DataFrame`
-
-```
-required_keys = [
-    'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-    'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-    'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-    'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking'
-]
-```
-
-Steps:
-1. Build/load OSM cache via `_build_osm_cache(sensors_data)`.
-2. For each unique location: if cache entry is missing or `required_keys` not all present → call `_fetch_location_data()` + merge in OSM features → save cache.
-3. Build `metadata_df` from merged Google + OSM cache.
-4. Left-merge with `df` on `location`.
-5. Assert all 15 columns exist and have no NaNs.
-
-**Crash on shape mismatch**: `assert len(df) == original_len` (already present, retained).
-
----
-
-## Phase 2: Update `src/dataset.py`
-
-### 2.1 Update `pd.read_parquet()` columns list (lines 43–47)
-Replace old 5 static feature names with all 15 new names:
+### 0.2 Contract Out — predictions, not internals
+#### [NEW] `src/harness/contract.py`
 ```python
-columns=[
-    'dt', 'location', 'value', 'Humidity', 'Solar Radiation',
-    'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-    'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-    'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-    'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking',
-    'veh_class', 'dir'
-]
+class Predictions(NamedTuple):
+    mu: torch.Tensor                        # [B, N] point forecast (all models)
+    theta: Optional[torch.Tensor]           # [B, N] dispersion — None if no uncertainty
+    pi: Optional[torch.Tensor]              # [B, N] zero-inflation prob — None if unsupported
+    imputed: Optional[torch.Tensor]         # [B, N, T, D] reconstruction — None if unsupported
+    kriging_pred: Optional[torch.Tensor]    # [B, K, T, D] holdout reconstruction — None if unsupported
+    edge_index: Optional[torch.Tensor]      # graph models only
+    attention: Optional[torch.Tensor]       # graph models only
+    tripwires: list                         # always present, may be empty
+
+class Losses(NamedTuple):
+    total: torch.Tensor                     # backprop target — always a device tensor
+    impute: torch.Tensor                    # zero TENSOR (never a float) when unsupported
+    forecast: torch.Tensor
+    kriging: torch.Tensor
 ```
+Absence is expressed as `None` in `Predictions`, and as a **device-placed zero tensor** in `Losses` (the train loop calls `.item()` on every component — `train.py:437-439`).
 
-### 2.2 Update `agg_funcs` dict (lines 66–75)
-Add all 15 new static feature names with `'first'` aggregation; remove old 5 names.
-
-### 2.3 Update `stat_cols` list (lines 130–136)
+### 0.3 The ModelAdapter protocol
+#### [NEW] `src/harness/adapters.py`
+Every model participates through a thin wrapper — this is where model-specific wrangling lives, keeping the harness and exporters model-agnostic:
 ```python
-stat_cols = [
-    'transit_count', 'retail_count', 'food_drink_count', 'nightlife_count',
-    'education_count', 'recreation_count', 'total_poi_count', 'landuse_entropy',
-    'is_school_zone', 'betweenness_centrality', 'closeness_centrality',
-    'dist_to_city_centre', 'degree_centrality', 'nearby_bus_stops', 'nearby_parking'
-]
+class ModelAdapter(ABC):
+    capabilities: Capabilities   # frozen dataclass of bools:
+                                 # uncertainty, zero_inflation, imputation, kriging, graph
+    def step(self, batch, weights, loss_node_mask=None) -> (Losses, Predictions): ...
+    def predict(self, batch: dict) -> Predictions: ...   # inference-only (exporters)
 ```
+(`step()` produces losses and predictions in a single forward — separate
+`predict()`/`loss()` calls would double the compute for the RIoT pipeline.)
+- **`RIoTAdapter`**: wraps `ResilientIoTPipeline` unchanged. `predict()` calls `forward(batch, return_analysis=True)` semantics; `loss()` calls the existing forward and repacks the 10-tuple. All capabilities `True`.
+- **`RecurrentBaselineAdapter`** (LSTM/GRU): see §1.
+- Loss functions legitimately differ per model (ZINB NLL vs MSE). Therefore `val_loss` is **per-model only** (used for early stopping / checkpointing within a run) and is explicitly excluded from cross-model comparison — cross-model comparison happens exclusively through the metrics manifest (§4).
 
-### 2.4 Update boolean cast (line 138)
-`is_school_zone` column name is unchanged, so the `.astype(float).fillna(0.0)` line needs no change.
-
-**Result**: `dataset.static_feat_dim` will automatically be 15 — no other downstream changes needed.
-
----
-
-## Phase 3: Clean up `src/preprocess.py`
-
-### 3.1 Remove `enrich_static_features()` method (lines 171–196)
-This method uses an obsolete mock schema (`highway_proximity`, `commercial_density`, `school_zone` as NaN/False) and is never called by `process_all.py`. It is dead code and will be removed entirely.
-
----
-
-## Phase 4: Cache Migration
-
-### 4.1 Clear `data/external/places_cache.json`
-Write an empty JSON object `{}` to the cache file. The new `required_keys` check will trigger a full re-fetch for all 94 locations on next run.
-
-**Do NOT delete the file** — preserve the path so `_load_cache()` doesn't fail.
-
-### 4.2 Create `data/external/osm_features_cache.json`
-Write an empty JSON object `{}`. The `_build_osm_cache()` method will populate it on first run.
-
----
-
-## Phase 5: Standalone Pagination Test (`tests/test_text_search_pagination.py`)
-
-**Purpose**: Verify that `_text_search_paginated()` yields counts > 20 for central nodes *before* running the expensive 89-sensor loop.
-
-**Test structure**:
-1. Skip with clear message if `GOOGLE_PLACES_API_KEY` is not set.
-2. Instantiate `StaticFeatureLoader` with a temp cache path.
-3. For `NclQuaysideUnderHighLevelBridge` (lat=54.9675, lon=-1.6097):
-   - Call `_text_search_paginated()` for `transit_station`, `store`, `restaurant`
-   - Print page-by-page counts
-   - **Assert at least one of transit/retail/restaurant > 20** (verifying pagination is actually fetching pages 2 and 3)
-4. Compare vs. Nearby Search count for same types (should be ≤ 20)
-5. Print a summary table: feature | nearby_count | text_search_count | pages_used
-
-**Crash contract**: The test raises `AssertionError` (not silently passes) if:
-- Any 403/429 is encountered
-- All text search counts are ≤ 20 (pagination may have failed silently)
-
----
-
-## Phase 6: Run `process_all.py` (User-triggered)
-
-```bash
-export GOOGLE_PLACES_API_KEY=<your_key>
-cd /workspace && python src/process_all.py
+### 0.4 Capability-gated metrics
+#### [NEW] `src/harness/evaluate.py`
+One function, used verbatim by the val loop and the exporters:
+```python
+def evaluate(adapter, batch, holdout_mask) -> dict
 ```
-
-Expected duration: ~15–20 minutes (89 real sensors × ~9 API calls × up to 3 pages, with 0.1s delays + 2.0s between pages, + OSMnx network download ~1–2 min).
-
----
-
-## Phase 7: Verification Script (`tests/verify_parquet_15features.py`)
-
-After `process_all.py` completes:
-
-1. Load `data/processed/master_dataset_15T.parquet`.
-2. **Assert** all 15 feature columns are present.
-3. **Assert** no NaN values in any of the 15 columns.
-4. Print `df[stat_cols].describe()`.
-5. **Assert** no feature column has > 50% identical values (the saturation check).
-6. Spot-check: Print Quayside row vs. a suburban sensor (e.g., `NclSaltersHollywood`).
+- Computes each metric **only if the adapter's capability supports it**; otherwise emits `None` (serialized as `null` in the manifest, rendered as "N/A" downstream, logged to W&B as absent — never as `0.0`).
+  - `rmse`/`mae`: always (from `mu`).
+  - `zero_acc`: gated on `zero_inflation` — a baseline with dummy `pi` must show `null`, not a fabricated 0%.
+  - `impute_mse`: gated on `imputation`.
+  - `kriging_msle/rmse/mae`: gated on `kriging` (a *naive* kriging head — §1 — counts as capable: real numbers, honestly bad).
+- The existing ZINB tripwire assertions in the exporters (`mu > 0`, `0 < pi < 1`, attention NaN checks) move here and fire **only when the corresponding capability is claimed**. This is the change that stops dummy values from crashing inference.
 
 ---
 
-## Phase 8: Update `EXPERIMENTS.md`
+## 1. Simple Baselines (LSTM / GRU)
 
-Add a new row to the experiment ledger documenting:
-- Date, branch, goal, outcome
-- Feature expansion: 5 → 15 static features
-- API strategy change: Nearby Search (capped at 20) → Text Search paginated (up to 60) + OSMnx
-- Expected impact: Reduced RMSE on high-volume nodes (Barras Bridge, Quayside) after retrain
+#### [NEW] `src/baselines.py`
+`LSTMForecaster` / `GRUForecaster`: per-node recurrent encoders over `dynamic_features`, ignoring all spatial structure.
+- **Forecast head** → `mu [B, N]`. Trained with MSE against `target_forecast`.
+- **Reconstruction head** (small linear head over per-timestep hidden states) → `imputed [B, N, T, D]`, trained with masked MSE. This makes the imputation and kriging attempts **genuine**: `kriging_pred` is `imputed` sliced at the holdout mask. Because the harness blanked those nodes' inputs, the reconstruction is honestly terrible — which is the ablation story we want, backed by real numbers instead of fabricated ones.
+- `theta = None`, `pi = None`, `edge_index = None`, `attention = None`. **No dummy `theta=1`/`pi=0`** — those produced fabricated ZINB variance (`mu + mu²` uncertainty bands on the frontend) and tripwire crashes.
+- Capabilities: `uncertainty=False, zero_inflation=False, imputation=True (naive), kriging=True (naive), graph=False`.
+- `Losses`: `forecast` = MSE, `impute` = masked reconstruction MSE, `kriging` = zero tensor (the reconstruction loss already covers it), `total` = weighted sum — all device tensors.
+
+#### [MODIFY] `src/train.py`
+- `model_type: gnn | lstm | gru` selects the adapter; the train/val loops talk **only** to the adapter + `evaluate()`. The val-loop metric block (`train.py:446-501`) is replaced by the shared `evaluate()` call.
+
+#### [MODIFY] `configs/train/train_lstm.yaml`
+- `spatial_holdout_prob: 0.0` and `w_kriging: 0.0` (currently 0.2 / 0.5 — this would blank 20% of the LSTM's *inputs* per batch and corrupt the baseline). Transductive kriging pressure is a GNN-training concern; inductive evaluation is governed by `eval_mode` (§2), not this knob.
 
 ---
 
-## Execution Order
+## 2. Inductive Spatial Holdout (Task 3)
 
+IGNNK-style fixed holdout; the disjoint `allowed_locations` approach stays abandoned (it crashes `encoder.py:87` and breaks scaler propagation).
+
+#### [MODIFY] `src/train.py` + [NEW] `src/harness/holdout.py`
+- `eval_mode: temporal | inductive` config flag (explicit, not "a mechanism").
+- **`temporal`** (default): current behavior, unchanged.
+- **`inductive`**:
+  - All nodes stay in every batch (`num_nodes`, scaler stats, and edge caches all remain valid).
+  - A **fixed, seeded** holdout mask (~20% of nodes) is generated once per run and applied via `apply_spatial_holdout` to **train and val** inputs.
+  - **No target leakage — the zero-shot guarantee.** In inductive mode, *every* training loss term (forecast, impute, kriging) is masked to exclude holdout nodes; their ground truth is used at **evaluation time only**. Without this, `compute_loss` fits the model against holdout targets each step and Task 3's claim is void. Implemented as a `loss_node_mask` the adapters must respect (`compute_loss` gains an optional node-mask argument; the baseline losses apply it directly).
+  - The GNN's kriging **training** signal comes from per-batch re-rolled holdouts drawn *only from the visible ~80%* (the existing `train.py:412-422` re-roll, restricted). The fixed 20% is scored but never trained on. In `temporal` mode the re-roll behavior is unchanged.
+  - **Holdout manifest**: the resolved held-out `location_ids` (not just the seed — node ordering could drift) are written to `<checkpoint_dir>/holdout_manifest.json` alongside the existing co-located `config.yaml`. This file is the bridge to inference (§3) and to cross-model comparability: comparing two models requires *identical* manifests, which the harness asserts when loading.
+
+---
+
+## 3. Frontend Pathway — Holdout Nodes in the Payload
+
+#### [MODIFY] `src/export_ui_payload.py`, `src/export_paginated_payload.py`
+- Load `holdout_manifest.json` from the checkpoint directory of the model being served. At inference, holdout nodes' dynamic features are blanked exactly as in training, so their displayed predictions are genuine zero-shot reconstructions.
+- Replace `is_simulated: bool` in node metadata with `node_role: "observed" | "holdout" | "simulated"` (keep `is_simulated` temporarily for backward compatibility, derived from `node_role`).
+  - `observed`: prediction + ground truth, normal display.
+  - `holdout`: prediction + ground truth — the frontend can show predicted-vs-actual on nodes the model provably never trained on.
+  - `simulated`: prediction, `ground_truth_series: null` (unchanged).
+- Holdout nodes keep their graph edges (they are real sensors with real static features) — only `simulated` nodes get the outgoing-edge drop via `simulated_nodes_mask`. This mirrors training exactly.
+- Payload fields backed by capabilities become **nullable**: `uncertainty`, `theta_data`, `pi_data`, and the whole graph/attention section are `null` for baseline-generated payloads. The per-timestep tripwire assertions are replaced by the capability-gated checks in `evaluate()`.
+- **[COORDINATE] `frontend/`**: render `node_role: holdout` distinctly; handle `null` uncertainty/graph sections. This is a cross-repo change and should be sequenced after the payload schema is frozen.
+
+---
+
+## 4. Reproducibility — the Results Manifest
+
+#### [NEW] emitted by the harness at the end of every val epoch and every export run
+`<checkpoint_dir>/results.json`:
+```json
+{
+  "model_type": "lstm",
+  "eval_mode": "inductive",
+  "seed": 42,
+  "holdout_manifest_sha": "…",
+  "config_sha": "…",
+  "metrics": { "rmse": 12.3, "mae": 8.1, "zero_acc": null, "impute_mse": 0.041,
+               "kriging_msle": 2.9, "kriging_rmse": 44.0, "kriging_mae": 31.2 }
+}
 ```
-Phase 0: pip install osmnx geopandas          [run now, env setup]
-Phase 1: Rewrite src/features.py               [code]
-Phase 2: Update src/dataset.py                 [code]
-Phase 3: Clean src/preprocess.py               [code]
-Phase 4: Clear/create cache files              [file ops]
-Phase 5: Write tests/test_text_search_pagination.py  [code]
-─── AWAIT API KEY ───
-Phase 5b: python tests/test_text_search_pagination.py  [requires API key]
-Phase 6: python src/process_all.py             [requires API key, ~15 min]
-Phase 7: python tests/verify_parquet_15features.py    [post-run verification]
-Phase 8: Update EXPERIMENTS.md                 [ledger]
-```
+- `null` means "model cannot produce this," never 0. Cross-model tables are a join over these files keyed on `holdout_manifest_sha` — identical hash ⇒ identical evaluation conditions ⇒ comparable rows. W&B logging mirrors this payload.
 
 ---
 
-## Files Changed
+## Verification Plan
 
-| File | Change |
-|------|--------|
-| `src/features.py` | Full rewrite: 15-feature schema, Text Search pagination, OSMnx, Shannon entropy |
-| `src/dataset.py` | Update `columns`, `agg_funcs`, `stat_cols` lists |
-| `src/preprocess.py` | Remove dead `enrich_static_features()` method |
-| `data/external/places_cache.json` | Reset to `{}` (triggers full re-fetch) |
-| `data/external/osm_features_cache.json` | Create as `{}` (new file) |
-| `tests/test_text_search_pagination.py` | New pagination test |
-| `tests/verify_parquet_15features.py` | New post-run verification script |
-| `EXPERIMENTS.md` | Add experiment entry |
+### Automated Tests
+- `RIoTAdapter` and `RecurrentBaselineAdapter` both return `Predictions`/`Losses` with harness-consumable shapes and device tensors (no floats) — the contract test, shared via a fixture, not duplicated per model.
+- `evaluate()` returns `null` (not 0.0) for capability-gated metrics on a baseline adapter, and full metrics for the RIoT adapter.
+- Inductive loss masking: with `eval_mode: inductive`, assert zero gradient flows from holdout-node targets (finite-difference or `grad` inspection on a tiny mock batch) — this is the test that protects the zero-shot claim.
+- Holdout manifest round-trip: train writes it, exporter loads it, node roles in the payload match.
+- Capability-gated tripwires: baseline predictions with `pi=None` pass through `evaluate()` without assertion errors.
 
-## Files NOT Changed (auto-adapt)
-
-| File | Why |
-|------|-----|
-| `src/pipeline.py` | Reads `static_feat_dim` from dataset — auto-adapts |
-| `src/graph_learner.py` | Reads `static_feat_dim` as constructor arg — auto-adapts |
-| `src/train.py` | Reads `static_feat_dim` from dataset — auto-adapts |
-| `src/tune.py` | Reads `static_feat_dim` from dataset — auto-adapts |
-| `src/process_all.py` | `join_features()` interface unchanged — no edit needed |
-
----
-
-## Risks & Mitigations
-
-| Risk | Mitigation |
-|------|-----------|
-| Text Search `includedType` rejects multi-type queries | Split into separate calls; sum results (as planned for `food_drink_count`) |
-| OSMnx download fails (network) | Crash with clear error; retry manually; result cached so only runs once |
-| `nextPageToken` missing on page 1 despite >20 results | Log a warning but continue; count will be ≤ 20 for that type only |
-| 15-col dataset breaks existing checkpoint | Expected and documented — full retrain required after this change |
-| `api_key` is None at runtime | `ValueError` raised in `__init__` (already present); plan notes API key requirement |
+### Manual Verification
+1. **Baseline transductive**: run `train_lstm.yaml` end-to-end; `results.json` shows real `rmse`/`mae`/`impute_mse`, `zero_acc: null`; no `.item()` or tripwire crashes.
+2. **Inductive comparability**: run GNN and LSTM with `eval_mode: inductive`, same seed; assert identical `holdout_manifest_sha`; confirm LSTM `kriging_rmse` ≫ GNN `kriging_rmse` (the honest ablation number).
+3. **GNN inductive**: trains without triggering the `encoder.py:87` num_nodes assertion; W&B shows kriging metrics on the fixed holdout only.
+4. **Payload**: export from a GNN checkpoint with a holdout manifest; verify nodes carry all three `node_role` values, holdout nodes have both prediction and ground truth, and a baseline-generated payload has `null` uncertainty/graph sections without crashing the exporter.

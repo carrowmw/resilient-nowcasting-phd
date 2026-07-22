@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+
+    <title>Resilient Spatiotemporal Forecasting — WCCI 2026</title>
+    <meta name="description" content="A Digital Twin Paradigm for Imperfect Urban Sensor Networks. PhD Presentation at WCCI Conference, Maastricht." />
+
+    <!-- Reveal.js Core Styles -->
+    <link rel="stylesheet" href="./dist/reset.css" />
+    <link rel="stylesheet" href="./dist/reveal.css" />
+
+    <!-- Base white theme (provides variables we override) -->
+    <link rel="stylesheet" href="./dist/theme/white.css" id="theme" />
+
+    <!-- WCCI Custom Overrides -->
+    <link rel="stylesheet" href="./theme/wcci-custom.css" />
+
+    <!-- Syntax highlighting (high contrast for projector) -->
+    <link rel="stylesheet" href="./dist/plugin/highlight/monokai.css" />
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+
+        <!-- ═══════════════════════════════════════════════════════════
+             TITLE SLIDE
+             ═══════════════════════════════════════════════════════════ -->
+        <section class="title-slide" data-state="title">
+          <div class="conference-badge">WCCI 2026 · Maastricht</div>
+          <h1>
+            <span class="accent">Resilient</span> Spatiotemporal<br/>Forecasting
+          </h1>
+          <p class="subtitle" style="font-size: 0.6em; margin-top: 0.3em;">
+            A Digital Twin Paradigm for Imperfect Urban Sensor Networks
+          </p>
+          <p class="author">Carrow Morris-Wiltshire</p>
+          <p class="affiliation">Newcastle University · Urban Observatory</p>
+
+          <aside class="notes">
+            Today, I will be presenting my thesis on resilient spatiotemporal forecasting
+            for urban Internet of Things (IoT) sensor networks. While many of you are
+            deeply familiar with advanced AI architectures, applying these models to the
+            messy, incomplete reality of physical urban environments introduces unique
+            systemic challenges. We will focus heavily on the problem space, the data
+            reality, and the engineering novelty required to bridge the gap between
+            theoretical AI and operational situational awareness.
+          </aside>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             AGENDA SLIDE
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+          <h2>Agenda</h2>
+          <div class="agenda-list">
+            <div class="agenda-item fragment fade-up">
+              <span class="num">01</span>
+              <span class="label">The Problem & Data Reality — Sensing paradoxes and missingness</span>
+            </div>
+            <div class="agenda-item fragment fade-up">
+              <span class="num">02</span>
+              <span class="label">Intrinsic Resilience — Bypassing traditional imputation</span>
+            </div>
+            <div class="agenda-item fragment fade-up">
+              <span class="num">03</span>
+              <span class="label">RIoT Architecture — Joint spatial-temporal learning</span>
+            </div>
+            <div class="agenda-item fragment fade-up">
+              <span class="num">04</span>
+              <span class="label">Spatial Estimation — Edge-enriched kriging</span>
+            </div>
+            <div class="agenda-item fragment fade-up">
+              <span class="num">05</span>
+              <span class="label">Uncertainty & MLOps — Building operational trust</span>
+            </div>
+          </div>
+
+          <aside class="notes">
+            - Section 1: The physical reality of the Newcastle Urban Observatory dataset
+            - Section 2: Why traditional imputation fails in this context
+            - Section 3: Design of the Resilient Graph Neural Network (RIoT) pipeline
+            - Section 4: Novel spatial kriging methodologies for missing nodes
+            - Section 5: Validation through MLOps scaling and uncertainty quantification
+
+            [Press SPACE to reveal each agenda item: 1→2→3→4→5]
+          </aside>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             SECTION 1: THE URBAN SENSING PARADOX
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+
+          <!-- Section Divider -->
+          <section class="section-divider">
+            <div class="section-number">01</div>
+            <h2>The Urban Sensing Paradox</h2>
+            <p class="section-subtitle">Abundant data, limited intelligence</p>
+            <aside class="notes">
+              - Section 1: The Urban Sensing Paradox
+              - Paradox: Abundant data from IoT networks yet severe limitations in extracting intelligence
+              - Root cause: Data quality issues (missingness, gaps, failures)
+
+              [No fragments - section divider]
+            </aside>
+          </section>
+
+          <!-- 1.1 Abundant Data, Limited Intelligence -->
+          <section>
+            <h2>Abundant Data, Limited Intelligence</h2>
+            <ul>
+              <li class="fragment fade-up">
+                <i class="bx bx-network-chart" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+                Urban networks function as <strong>complex adaptive systems</strong>
+              </li>
+              <li class="fragment fade-up">
+                <i class="bx bx-chip" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+                Increasing spatial coverage relies on <strong>low-cost, high-variance</strong> sensing
+              </li>
+              <li class="fragment fade-up">
+                <i class="bx bx-error-circle" style="color: var(--wcci-red); margin-right: 0.3em;"></i>
+                Result: Intermittent connectivity, gaps, and outright failures
+              </li>
+              <li class="fragment fade-up">
+                <i class="bx bx-bolt-circle" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+                The <strong>Rapid Deployment Problem:</strong> Pre-processing pipelines fail at the edge
+              </li>
+            </ul>
+
+            <aside class="notes">
+              - Urban networks function as complex adaptive systems requiring digital twins for situational awareness
+              - Low-cost sensors provide high spatial coverage but introduce severe data quality issues
+              - Result: Intermittent connectivity, missing records, delays, and outright failures
+              - The Rapid Deployment Problem: Edge networks fail when disconnected from centralized servers; traditional imputation pre-processing is too brittle
+
+              [Fragments: 1. Complex systems → 2. Low-cost sensors → 3. Failures → 4. Rapid Deployment Problem]
+            </aside>
+          </section>
+
+          <!-- 1.2 The Newcastle Observatory Dataset -->
+          <section>
+            <h2>The Newcastle Observatory Dataset</h2>
+
+            <div class="columns-60-40">
+              <div>
+                <ul>
+                  <li class="fragment fade-up">
+                    <strong>Source:</strong> Pedestrian monitoring stations (2018–2026)
+                  </li>
+                  <li class="fragment fade-up">
+                    <strong>Heterogeneity:</strong> Zero sensors maintain 100% completeness
+                  </li>
+                  <li class="fragment fade-up">
+                    <strong>Ambiguity:</strong> Zero explicit "0" counts in the data
+                  </li>
+                  <li class="fragment fade-up" style="color: var(--wcci-orange-dark); font-weight: 600;">
+                    Result: <strong>Total Null-Zero Conflation</strong>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <div class="stat-grid" style="grid-template-columns: 1fr;">
+                  <div class="stat-card fragment scale-up">
+                    <div class="stat-value">0%</div>
+                    <div class="stat-label">Sensors with full completeness</div>
+                  </div>
+                  <div class="stat-card fragment scale-up">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Explicit zero counts in archive</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p class="text-muted" style="font-size: 0.45em; margin-top: 1.5em; font-style: italic; color: var(--wcci-fg-subtle);">
+              Reference: James et al. (2022). "Realizing Smart City Infrastructure at Scale, in the Wild: A Case Study”
+              <em>Frontiers in Sustainable Cities</em>, 4.
+              DOI: <a href="https://doi.org/10.3389/frsc.2022.767942">10.3389/frsc.2022.767942</a>"
+            </p>
+
+            <aside class="notes">
+              - Source: Newcastle Urban Observatory pedestrian count data (2018–2026, usable from 2022)
+              - Heterogeneity: Zero sensors maintain 100% completeness over the full archive period
+              - Ambiguity: Dataset contains strictly positive values only—no explicit "0" counts
+              - Result: Total Null-Zero Conflation—missing record could mean genuine zero-activity OR complete sensor outage
+
+              [Fragments: 1. Source → 2. Heterogeneity → 3. Ambiguity → 4. Result + stat cards (5-6)]
+            </aside>
+          </section>
+
+          <!-- 1.2b Edge Object Detection Video (Fullscreen background) -->
+          <section data-background-video="./videos/computer_vision.mp4" data-background-video-loop data-background-video-muted>
+            <div style="background-color: rgba(255, 255, 255, 0.95); padding: 1.5em; border-radius: 12px; border: 1px solid var(--wcci-border); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15); display: inline-block; position: absolute; bottom: 50px; left: 50px; text-align: left; max-width: 500px;">
+              <h3 style="color: var(--wcci-orange); margin: 0 0 0.5em 0; font-size: 1.1em; font-weight: 700;">Edge Object Detection</h3>
+              <p style="color: var(--wcci-fg-muted); margin: 0; font-size: 0.6em; line-height: 1.5;">
+                Pedestrian counts are generated at the edge via computer vision models on camera streams. Edge computation is vulnerable to environmental noise, transmission delays, and power failures, producing the missingness patterns.
+              </p>
+            </div>
+            <aside class="notes">
+              - Edge object detection: Cameras perform real-time tracking, converting pixels to discrete counts
+              - Vulnerability: Edge computation is subject to environmental noise, network disconnects, power failures
+              - Result: The missingness patterns we observe in the dataset are byproducts of edge infrastructure fragility
+            </aside>
+          </section>
+          <!-- 1.2b Edge Object Detection Video (Fullscreen background) -->
+          <section data-background-video="./videos/computer_vision.mp4" data-background-video-loop data-background-video-muted>
+            <div style="background-color: rgba(255, 255, 255, 0.95); padding: 1.5em; border-radius: 12px; border: 1px solid var(--wcci-border); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15); display: inline-block; position: absolute; bottom: 50px; left: 50px; text-align: left; max-width: 500px;">
+              <img src="./figures/wireless_schematic.svg" alt="Wireless Schematic" style="max-height: 500px; width: auto; display: block; margin: 0 auto;" />
+            </div>
+            <aside class="notes">
+              - Edge object detection: Cameras perform real-time tracking, converting pixels to discrete counts
+              - Vulnerability: Edge computation is subject to environmental noise, network disconnects, power failures
+              - Result: The missingness patterns we observe in the dataset are byproducts of edge infrastructure fragility
+            </aside>
+          </section>
+
+          <!-- 1.3 Missingness Heatmap Figure -->
+          <section data-background-iframe="./figures/missingness-heatmap.html" data-background-interactive>
+            <aside class="notes">
+              - Coverage: Every 15-minute observation window across all sensors over a single day
+              - Green cells: Data was present
+              - Orange cells: Null-zero conflation—cannot distinguish genuine zero-activity from sensor failure
+              - Black cells: Confirmed outages
+              - Red brackets: Systemic, non-random outage events including city-wide network failure where ALL sensors go offline
+              - Key insight: Data loss is NOT independent; it clusters spatially and temporally
+            </aside>
+          </section>
+
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             SECTION 2: INTRINSIC RESILIENCE
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+
+          <!-- Section Divider -->
+          <section class="section-divider">
+            <div class="section-number">02</div>
+            <h2>Intrinsic Resilience</h2>
+            <p class="section-subtitle">Treating missing data as a learnable signal</p>
+            <aside class="notes">
+              Section 2 introduces our core innovation: building intrinsic resilience into
+              the model by treating missing data as an informative signal rather than a
+              pre-processing problem to be solved separately.
+
+              [No fragments - section divider]
+            </aside>
+          </section>
+
+          <!-- 2.1 The Failure of Imputation -->
+          <section>
+            <h2>The Failure of Imputation</h2>
+            <ul>
+              <li class="fragment fade-up">
+                Traditional pipelines <strong>separate</strong> imputation and forecasting
+              </li>
+              <li class="fragment fade-up">
+                Distorts true spatio-temporal dynamics during <strong>massive outages</strong>
+              </li>
+              <li class="fragment fade-up">
+                Imputed zeros are misinterpreted as <strong>genuine spatial correlations</strong>
+              </li>
+              <li class="fragment fade-up" style="color: var(--wcci-orange-dark); font-weight: 600;">
+                We must treat missing data as an <strong>informative operational state</strong>
+              </li>
+            </ul>
+
+            <blockquote class="fragment fade-up" style="margin-top: 1em;">
+              <i class="bx bx-info-circle" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+              Our framework abandons sequential imputation — it generates intrinsic
+              resilience through <strong>Masked Auto-Encoding</strong>.
+            </blockquote>
+
+            <aside class="notes">
+              - Traditional pipelines: k-NN or mean substitution treat recovery as isolated pre-processing
+              - Massive outages: Local statistical assumptions break down during non-random data loss
+              - Fabricated relationships: Imputed zeros cause GNN to learn spurious correlations between failed nodes
+              - Our approach: Treat missing data as informative operational state via Masked Auto-Encoding
+
+              [Fragments: 1. Separate imputation → 2. Massive outages → 3. Misinterpretation → 4. Informative state → 5. Our framework blockquote]
+            </aside>
+          </section>
+
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             SECTION 3: THE RIoT PIPELINE ARCHITECTURE
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+
+          <!-- Section Divider -->
+          <section class="section-divider">
+            <div class="section-number">03</div>
+            <h2>The RIoT Pipeline</h2>
+            <p class="section-subtitle">Resilient IoT: Joint spatial-temporal learning</p>
+            <aside class="notes">
+              - Section 3: The Resilient IoT (RIoT) pipeline architecture
+              - Three core modules: Dynamic Graph Learner, Masked Spatiotemporal Encoder, Triple Decoders
+              - Focus: Joint spatial-temporal learning for multi-task forecasting
+
+              [No fragments - section divider]
+            </aside>
+          </section>
+
+          <!-- 3.0b Data Processing Pipeline Diagram -->
+          <section class="top-left-layout" data-background-image="./figures/data_pipeline.svg" data-background-size="1280px" data-background-position="center">
+            <h3>Data Processing Pipeline</h3>
+
+            <aside class="notes">
+              - Raw telemetry: Feeds from Newcastle Urban Observatory
+              - Processing steps: Validation, normalization, structural parsing
+              - Output: Aligned timestamps mapped onto coordinate space with dynamic inputs and static covariates
+
+              [No fragments - static background diagram]
+            </aside>
+          </section>
+
+          <!-- 3.1 Pipeline Overview -->
+          <section>
+            <h2>Resilient IoT Pipeline (RIoT)</h2>
+
+            <div class="pipeline" style="margin-top: 1.5em;">
+              <div class="pipeline-step fragment fade-up">
+                <span class="step-icon"><i class="bx bx-git-branch"></i></span>
+                Dynamic Graph<br/>Learner
+              </div>
+              <span class="pipeline-arrow fragment">→</span>
+              <div class="pipeline-step active fragment fade-up">
+                <span class="step-icon"><i class="bx bx-layer"></i></span>
+                Masked ST<br/>Encoder
+              </div>
+              <span class="pipeline-arrow fragment">→</span>
+              <div class="pipeline-step fragment fade-up">
+                <span class="step-icon"><i class="bx bx-transfer"></i></span>
+                Triple<br/>Decoders
+              </div>
+            </div>
+
+            <ul style="margin-top: 1.5em;">
+              <li class="fragment fade-up">
+                <strong>Dynamic Graph Learner:</strong> Infers topology on-the-fly
+              </li>
+              <li class="fragment fade-up">
+                <strong>Masked ST Encoder:</strong> Combines GATv2Conv + Transformers
+              </li>
+              <li class="fragment fade-up">
+                <strong>Triple Decoders:</strong> Multi-task spatial & temporal learning
+              </li>
+              <li class="fragment fade-up">
+                <strong>Constraint:</strong> Strict univariate processing per run
+              </li>
+            </ul>
+
+            <aside class="notes">
+              - Dynamic Graph Learner: Infers topology from static features → adaptive adjacency matrix
+              - Masked ST Encoder: GATv2Conv for spatial + Transformer for temporal processing
+              - Triple Decoders: Multi-task learning for imputation, forecasting, and spatial kriging
+              - Strict univariate constraint: Prevents gradient interference across vehicle classes
+
+              [Fragments: 1. Dynamic Graph → 2. Arrow → 3. Masked ST Encoder → 4. Arrow → 5. Triple Decoders → 6-9. Bullet points]
+            </aside>
+          </section>
+
+          <!-- 3.1b RIoT Model Architecture Diagram -->
+          <section class="top-left-layout" data-background-image="./figures/riot_architecture.svg" data-background-size="720px" data-background-position="center">
+            <h3>RIoT Model Architecture</h3>
+            <aside class="notes">
+              - Complete RIoT architecture: All three modules visualized
+              - Module 1: Dynamic Graph Learner
+              - Module 2: Masked Spatiotemporal Encoder
+              - Module 3: Triple Decoders
+              - Flow: Input features → graph convolution → temporal attention → multi-task outputs
+
+              [No fragments - static background diagram]
+            </aside>
+          </section>
+
+          <!-- 3.1c RIoT Training & Optimization Diagram -->
+          <section class="top-left-layout" data-background-image="./figures/riot_architecture_training.svg" data-background-size="720px" data-background-position="center">
+            <h3>RIoT Training & Optimization</h3>
+            <aside class="notes">
+              - Training workflow: Multi-task loss computation, gradient flow, optimizer configuration
+              - Three decoder heads: Each contributes separate loss terms
+              - Loss combination: Terms are weighted and combined for joint optimization
+
+              [No fragments - static background diagram]
+            </aside>
+          </section>
+          <section class="top-left-layout" data-background-image="./figures/v2_riot_train.svg" data-background-size="1480px" data-background-position="center">
+            <h3>RIoT Training & Optimization</h3>
+            <aside class="notes">
+              - Detailed training architecture: Complete forward and backward pass through all modules
+              - Key element: Masking strategy applied during training for spatial kriging decoder
+              - Flow: From input features → graph convolution → temporal attention → multi-task outputs
+
+              [No fragments - static background diagram]
+            </aside>
+          </section>
+
+          <!-- 3.2 Dynamic Topology Inference -->
+          <section>
+            <h2>Dynamic Topology Inference</h2>
+            <ul>
+              <li class="fragment fade-up">
+                Sensor graphs lack explicit, reliable routing topologies
+              </li>
+              <li class="fragment fade-up">
+                <code>DynamicGraphLearner</code> uses static environmental covariates
+              </li>
+              <li class="fragment fade-up">
+                Applies <strong>ReLU</strong> and sparsity thresholds to dense adjacency matrices
+              </li>
+            </ul>
+
+            <blockquote class="fragment fade-up" style="margin-top: 1em;">
+              <i class="bx bx-shield-x" style="color: var(--wcci-red); margin-right: 0.3em;"></i>
+              <strong>Constraint:</strong> Raw spatial coordinates are explicitly
+              <strong>discarded</strong> to prevent trivial spatial leakage.
+            </blockquote>
+
+            <aside class="notes">
+              - Problem: Urban networks lack explicit routing topologies
+              - Solution: DynamicGraphLearner infers structure from static covariates (POI density, etc.)
+              - Process: Multi-head GAT learns dense adjacency → ReLU + sparsity threshold → sparse edge indices
+              - Critical constraint: Raw spatial coordinates deliberately discarded to prevent trivial leakage
+
+              [Fragments: 1. Lack topologies → 2. Uses covariates → 3. ReLU threshold → 4. Constraint blockquote]
+            </aside>
+          </section>
+
+          <!-- 3.3 Dynamic Topology Graph Figure -->
+          <section data-background-iframe="./figures/topology-graph.html" data-background-interactive>
+            <aside class="notes">
+              - Left graph: Naive k-nearest-neighbor (4 nearest by Euclidean distance)
+              - Right graph: Learned adjacency (4 strongest GAT attention edges per node)
+              - Visual encoding: Node color = attention centrality, edge thickness = attention weight
+              - Key finding: ~85% of learned edges are non-local (not spatial neighbors)
+              - Insight: GAT discovers functional relationships that raw distance cannot capture
+            </aside>
+          </section>
+
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             SECTION 4: SPATIAL ESTIMATION & KRIGING
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+
+          <!-- Section Divider -->
+          <section class="section-divider">
+            <div class="section-number">04</div>
+            <h2>Spatial Estimation & Kriging</h2>
+            <p class="section-subtitle">Bridging spatial gaps with physical edge features</p>
+            <aside class="notes">
+              - Section 4: Spatial estimation and kriging
+              - Challenge: Reconstruct data for entirely unknown locations
+              - Solution: Edge-enriched features + dedicated kriging decoder
+
+              [No fragments - section divider]
+            </aside>
+          </section>
+
+          <!-- 4.1 The Spatial Holdout Problem -->
+          <section>
+            <h2>The Spatial Holdout Problem</h2>
+            <ul>
+              <li class="fragment fade-up">
+                Baseline models learn temporal self-repair at <strong>known</strong> locations
+              </li>
+              <li class="fragment fade-up">
+                Cannot reconstruct data for entirely <strong>unknown</strong>, simulated nodes
+              </li>
+              <li class="fragment fade-up">
+                Solution: <strong>IGNNK-style</strong> node masking during training
+              </li>
+              <li class="fragment fade-up">
+                Validated via a dedicated <strong>Spatial Kriging Decoder</strong>
+              </li>
+            </ul>
+
+            <p class="text-muted" style="font-size: 0.45em; margin-top: 1.5em; font-style: italic; color: var(--wcci-fg-subtle);">
+              Reference: Wu et al. (2021). "Inductive Graph Neural Networks for Spatiotemporal Kriging."
+              <em>AAAI Conference on Artificial Intelligence</em>, 35(5).
+            </p>
+
+            <aside class="notes">
+              - Baseline limitation: Learns temporal self-repair at known locations but fails at spatial kriging for unknown nodes
+              - Failure mode: Simulated nodes produce bland, mean-regressed forecasts
+              - IGNNK-style solution: Randomly sample ~15% nodes per batch, mask their dynamic features with zeros
+              - Dedicated kriging decoder: Trained to reconstruct full time series from graph context alone
+
+              [Fragments: 1. Baseline models → 2. Cannot reconstruct unknown → 3. IGNNK solution → 4. Kriging decoder]
+            </aside>
+          </section>
+
+          <!-- 4.2 Edge Feature Enrichment -->
+          <section>
+            <h2>Edge Feature Enrichment</h2>
+
+            <div class="columns">
+              <div>
+                <h3 style="color: var(--wcci-fg-muted); font-size: 0.7em; text-transform: uppercase; letter-spacing: 0.05em;">Before</h3>
+                <ul>
+                  <li class="fragment fade-up">
+                    Scalar feature similarity weights
+                  </li>
+                  <li class="fragment fade-up" style="color: var(--wcci-red);">
+                    Cannot differentiate 50m vs 5km
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <h3 style="color: var(--wcci-orange); font-size: 0.7em; text-transform: uppercase; letter-spacing: 0.05em;">After</h3>
+                <ul>
+                  <li class="fragment fade-up">
+                    Multi-dimensional <code>[E, edge_dim]</code> tensor
+                  </li>
+                  <li class="fragment fade-up">
+                    Shortest path distance + Euclidean directness
+                  </li>
+                  <li class="fragment fade-up">
+                    OSMnx road type composition
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <aside class="notes">
+              - Before: 1D similarity score couldn't differentiate 50m vs 5km distances with similar POI profiles
+              - After: Multi-dimensional edge attribute tensor [E, edge_dim]
+              - Features: Network distance (walking graph), path directness, road type composition (OSMnx)
+              - Impact: GATv2Conv understands physical reality of connections, not just feature similarity
+
+              [Fragments: Left column "Before" - 1-2, Right column "After" - 3-5]
+            </aside>
+          </section>
+
+          <!-- 4.2b Digital Twin Frontend Architecture Diagram -->
+          <!-- <section class="top-left-layout" data-background-image="figures/frontend.svg" data-background-size="720px" data-background-position="center">
+            <h3>Digital Twin Frontend Architecture</h3>
+            <aside class="notes">
+              Our digital twin frontend architecture uses a decoupled state management approach. We decouple the rapid global Zustand clock from the standard React render cycle, driving the MapLibre and Deck.gl layers directly on the GPU to ensure seamless 60 FPS interactions.
+            </aside>
+          </section> -->
+
+          <!-- 4.3 Spatial Kriging Reconstruction (real data snapshot) -->
+          <section data-background-iframe="./figures/kriging-map.html" data-background-interactive>
+            <aside class="notes">
+              - Snapshot: Real Newcastle network from held-out evaluation (run dark-brook-37)
+              - Markers: Real sensors colored by predicted count
+              - Orange dashed links: Learned graph context for simulated nodes
+              - Simulated nodes: Carry no observations—predictions from attention-weighted neighborhood only
+              - Validation: Demonstrates spatial kriging capability
+            </aside>
+          </section>
+
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             SECTION 5: UNCERTAINTY & SCALING VERIFICATION
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+
+          <!-- Section Divider -->
+          <section class="section-divider">
+            <div class="section-number">05</div>
+            <h2>Uncertainty & Scaling</h2>
+            <p class="section-subtitle">Building operational trust through probabilistic forecasting</p>
+            <aside class="notes">
+              - Section 5: Uncertainty quantification and validation
+              - Focus: Probabilistic forecasting with ZINB loss
+              - Goal: Building operational trust through proper calibration
+
+              [No fragments - section divider]
+            </aside>
+          </section>
+
+          <!-- 5.1 Zero-Inflated Negative Binomial -->
+          <section>
+            <h2>Zero-Inflated Negative Binomial</h2>
+            <ul>
+              <li class="fragment fade-up">
+                Predicts parameters: $\mu$ (mean), $\theta$ (dispersion), $\pi$ (dropout)
+              </li>
+              <li class="fragment fade-up">
+                Separates <strong>genuine inactivity</strong> from <strong>operational outages</strong>
+              </li>
+              <li class="fragment fade-up">
+                Target variables strictly remain as <strong>raw, unscaled counts</strong>
+              </li>
+            </ul>
+
+            <div class="math-block fragment fade-up">
+              $P(y) = \pi \cdot \mathbb{1}_{[y=0]} + (1 - \pi) \cdot \text{NB}(y \mid \mu, \theta)$
+            </div>
+
+            <aside class="notes">
+              - ZINB predicts: μ (mean), θ (dispersion), π (dropout probability)
+              - Separates genuine environmental zeros from technical dropouts
+              - Raw counts requirement: Target variables remain unscaled to preserve ZINB NLL domain
+              - Feature normalization: Dynamic/static features use StandardScaler to prevent gradient starvation
+
+              [Fragments: 1. Predicts parameters → 2. Separates inactivity vs outages → 3. Raw counts → 4. Math equation]
+            </aside>
+          </section>
+
+          <!-- 5.2 Model Predictions & Uncertainty -->
+          <section data-background-iframe="./figures/zinb-confidence.html" data-background-interactive>
+            <aside class="notes">
+              - Orange line: Predicted mean (μ)
+              - Orange shaded region: 95% confidence interval from dispersion (θ)
+              - Purple shading (bottom): Dropout probability (π)
+              - Black dots: Observed counts; Red ticks: Missing data
+              - Red vertical region: Simulated outage where π spikes
+              - Demonstration: ZINB separates genuine zeros from technical failures
+            </aside>
+          </section>
+
+          <!-- 5.4a PIT Diagram — Underdispersed -->
+          <section data-background-iframe="./figures/pit-underdispersed.html" data-background-interactive>
+            <aside class="notes">
+              - Before MLSE calibration: Underdispersed model showing overconfidence
+              - PIT histogram: Pronounced peak at 0.5 instead of uniform spread
+              - Dashed line: Ideal uniform distribution
+              - Diagnosis: Uncertainty bands too narrow, underestimating true variance
+
+              [No fragments on this slide - static visualization]
+            </aside>
+          </section>
+
+          <!-- 5.4b PIT Diagram — Well-Calibrated -->
+          <section data-background-iframe="./figures/pit-calibrated.html" data-background-interactive>
+            <aside class="notes">
+              - After MLSE calibration: Nearly uniform PIT distribution
+              - Histogram bars: Relatively even across bins (approaching ideal dashed line)
+              - Improvement: MLSE significantly improved uncertainty estimates
+              - Operational trust: Honest, reliable prediction intervals operators can trust
+
+              [No fragments on this slide - static visualization]
+            </aside>
+          </section>
+
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             SECTION 6: MLOPS & RIGOROUS ENGINEERING
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+
+          <!-- Section Divider -->
+          <section class="section-divider">
+            <div class="section-number">06</div>
+            <h2>The "Digital Twin"</h2>
+            <p class="section-subtitle">Building a scalable, interactive visualization layer</p>
+            <aside class="notes">
+              - Section 6: The "Digital Twin" (in quotes - not a true real-time twin)
+              - Focus: Scalable MLOps infrastructure + interactive visualization dashboard
+              - Goal: Reproducible research with accessible model exploration
+
+              [No fragments - section divider]
+            </aside>
+          </section>
+
+          <!-- 6.1 Built for Scale -->
+          <section>
+            <h2>Built for Scale</h2>
+
+            <ul>
+              <li class="fragment fade-up">
+                <strong>Containerized Pipeline:</strong> Dockerized execution ensures reproducibility and isolation
+              </li>
+              <li class="fragment fade-up">
+                <strong>Experiment Tracking:</strong> W&B integration for model versioning and traceability
+              </li>
+              <li class="fragment fade-up">
+                <strong>Artifact Twinning:</strong> Every output links back to exact model state via Git + Run IDs
+              </li>
+            </ul>
+
+            <blockquote class="fragment fade-up" style="margin-top: 1em;">
+              <i class="bx bx-code-block" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+              This system was designed with scalability in mind — from strict environment isolation to comprehensive experiment tracking.
+            </blockquote>
+
+            <aside class="notes">
+              - Containerized pipeline: Docker ensures reproducible execution and environment isolation
+              - Experiment tracking: W&B integration for model versioning and metrics
+              - Artifact twinning: Git commit hash + Run ID links every output to exact model state
+              - Core principle: Scalability designed in from the start
+
+              [Fragments: 1-3. Three key scalability points → 4. Blockquote]
+            </aside>
+          </section>
+
+          <!-- 6.2 Live Digital Twin Demo -->
+          <section data-background-iframe="https://ml-agent-workspace.vercel.app/" data-background-interactive>
+            <aside class="notes">
+              - Live demo: Deployed Next.js "digital twin" with real model payloads
+              - Features to demonstrate: Model selection, time slider, node inspection, attention overlays
+              - Interactive visualization: Explore predictions, uncertainty, and learned graph topology
+            </aside>
+          </section>
+
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             SECTION 7: CONCLUSION
+             ═══════════════════════════════════════════════════════════ -->
+        <section>
+
+          <!-- Section Divider -->
+          <section class="section-divider">
+            <div class="section-number">07</div>
+            <h2>Conclusion</h2>
+            <p class="section-subtitle">Achieving AI-Readiness at the edge</p>
+            <aside class="notes">
+              - Final section: Summary of key contributions and achievements
+              - Focus: How this work achieves AI-Readiness at the edge
+
+              [No fragments - section divider]
+              research, demonstrating how we've achieved AI-Readiness for edge deployment
+              in urban sensor networks.
+
+              [No fragments - section divider]
+            </aside>
+          </section>
+
+          <!-- 7.1 Summary -->
+          <section>
+            <h2>Achieving AI-Readiness at the Edge</h2>
+
+            <div class="stat-grid" style="grid-template-columns: repeat(2, 1fr); margin-top: 1em;">
+              <div class="stat-card fragment fade-up">
+                <div class="stat-value" style="font-size: 1.2em;">
+                  <i class="bx bx-shield-quarter" style="color: var(--wcci-orange);"></i>
+                </div>
+                <div class="stat-label" style="font-size: 0.6em; color: var(--wcci-fg); font-weight: 500; text-transform: none;">
+                  Intrinsic resilience against massive missing data
+                </div>
+              </div>
+              <div class="stat-card fragment fade-up">
+                <div class="stat-value" style="font-size: 1.2em;">
+                  <i class="bx bx-map-alt" style="color: var(--wcci-orange);"></i>
+                </div>
+                <div class="stat-label" style="font-size: 0.6em; color: var(--wcci-fg); font-weight: 500; text-transform: none;">
+                  Physical edge-enriched spatial kriging
+                </div>
+              </div>
+              <div class="stat-card fragment fade-up">
+                <div class="stat-value" style="font-size: 1.2em;">
+                  <i class="bx bx-bar-chart-alt-2" style="color: var(--wcci-orange);"></i>
+                </div>
+                <div class="stat-label" style="font-size: 0.6em; color: var(--wcci-fg); font-weight: 500; text-transform: none;">
+                  Explicit uncertainty quantification
+                </div>
+              </div>
+              <div class="stat-card fragment fade-up">
+                <div class="stat-value" style="font-size: 1.2em;">
+                  <i class="bx bxl-docker" style="color: var(--wcci-orange);"></i>
+                </div>
+                <div class="stat-label" style="font-size: 0.6em; color: var(--wcci-fg); font-weight: 500; text-transform: none;">
+                  Scalable, isolated MLOps pipeline
+                </div>
+              </div>
+            </div>
+
+            <aside class="notes">
+              - Achievement 1: Intrinsic resilience against massive missing data via Masked Auto-Encoding
+              - Achievement 2: Physical edge-enriched spatial kriging with road network features
+              - Achievement 3: Explicit uncertainty quantification through ZINB probabilistic forecasting
+              - Achievement 4: Scalable, isolated MLOps pipeline for reproducible research
+              - Impact: Transitions AI from fragile oracle to resilient, AI-Ready decision-support tool
+
+              [Fragments: 1-4. Four key achievement cards]
+            </aside>
+          </section>
+
+          <!-- 7.2 Future Directions -->
+          <section>
+            <h2>Future Directions</h2>
+            <p class="text-muted" style="font-size: 0.6em; margin-bottom: 0.8em;">
+              <i class="bx bx-target-lock" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+              Disentangling Aleatoric vs. Epistemic Uncertainty
+            </p>
+
+            <ul style="margin-top: 1em;">
+              <li class="fragment fade-up" style="margin-bottom: 0.5em;">
+                <strong>Current State (Aleatoric):</strong> ZINB formulation ($\mu, \theta, \pi$) quantifies inherent data noise and physical zero-inflation.
+              </li>
+              <li class="fragment fade-up" style="margin-bottom: 0.5em;">
+                <strong>Next Frontier (Epistemic):</strong> Measuring <em>model ignorance</em> for out-of-distribution events.
+              </li>
+              <li class="fragment fade-up">
+                <strong>Proposed Methods:</strong>
+                <ul>
+                  <li><span style="color: var(--wcci-orange);">Deep Ensembles &amp; MC Dropout:</span> Generating predictive distributions to capture model variance.</li>
+                  <li><span style="color: var(--wcci-orange);">Conformal Prediction:</span> Providing distribution-free marginal coverage guarantees.</li>
+                </ul>
+              </li>
+            </ul>
+
+            <aside class="notes">
+              - Current State: ZINB successfully models aleatoric uncertainty (inherent noise and structural zeros)
+              - Next Frontier: Quantify epistemic uncertainty (model's ignorance for out-of-distribution scenarios)
+              - Deep Ensembles & MC Dropout: Generate predictive distributions to capture model variance
+              - Conformal Prediction: Provide distribution-free marginal coverage guarantees
+              - Impact: Digital twin could explicitly signal when it is "guessing"
+
+              [Fragments: 1. Current State → 2. Next Frontier → 3. Proposed Methods with sub-bullets]
+            </aside>
+          </section>
+
+          <!-- Thank You -->
+          <section class="section-divider">
+            <h2 style="font-size: 2em; border-bottom: none;">Thank You</h2>
+            <p class="section-subtitle" style="font-size: 0.65em; margin-top: 0.6em; color: var(--wcci-fg-muted);">
+              <i class="bx bx-envelope" style="color: var(--wcci-orange); margin-right: 0.3em;"></i>
+              Questions & Discussion
+            </p>
+            <p style="font-size: 0.5em; color: var(--wcci-fg-subtle); margin-top: 1.5em;">
+              Newcastle University · Urban Observatory
+            </p>
+            <aside class="notes">
+              - Thank you for your attention
+              - Open for questions on: research methodology, results, future directions
+
+              [No fragments - final slide]
+            </aside>
+          </section>
+
+        </section>
+
+      </div><!-- /.slides -->
+    </div><!-- /.reveal -->
+
+    <!-- Reveal.js Core -->
+    <script src="./dist/reveal.js"></script>
+
+    <!-- Plugins -->
+    <script src="./dist/plugin/notes.js"></script>
+    <script src="./dist/plugin/markdown.js"></script>
+    <script src="./dist/plugin/highlight.js"></script>
+    <script src="./dist/plugin/math.js"></script>
+
+    <script>
+      Reveal.initialize({
+        // Navigation
+        hash: true,
+        slideNumber: 'c/t',
+        history: true,
+
+        // Display
+        width: 1920,
+        height: 1080,
+        margin: 0.06,
+        center: true,
+
+        // Transitions
+        transition: 'slide',
+        transitionSpeed: 'default',
+        backgroundTransition: 'fade',
+
+        // Behavior
+        autoAnimateEasing: 'ease-out',
+        autoAnimateDuration: 0.6,
+
+        // Plugins
+        plugins: [RevealMarkdown, RevealHighlight, RevealNotes, RevealMath.MathJax3],
+
+        // MathJax Configuration
+        mathjax3: {
+          mathjax: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js',
+          tex: {
+            inlineMath: [['$', '$'], ['\\(', '\\)']],
+            displayMath: [['$$', '$$'], ['\\[', '\\]']],
+          },
+          options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'],
+          },
+        },
+      });
+    </script>
+  </body>
+</html>

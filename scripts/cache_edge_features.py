@@ -32,6 +32,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import networkx as nx
 import osmnx as ox
 
+import yaml
+
 from src.features import (
     compute_pairwise_edge_features,
     EDGE_FEATURE_CACHE_PATH,
@@ -42,10 +44,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 SENSORS_PATH = 'data/traffic_sensors.json'
-# Mirror the OSMnx graph parameters used in src/features.py::_build_osm_cache.
-GRAPH_CENTER = (54.978, -1.610)
-GRAPH_DIST = 5000
 MOCK_OUTPUT_PATH = 'data/external/edge_features_mock.json'
+
+def _load_geo_config():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "geo.yaml")
+    with open(path) as f:
+        return yaml.safe_load(f)["osm"]
+
+_GEO = _load_geo_config()
+GRAPH_CENTER = tuple(_GEO["center"])
+GRAPH_DIST = int(_GEO["dist"])
 
 
 def load_sensor_coords(limit: int = None) -> list:

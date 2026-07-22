@@ -1,0 +1,89 @@
+# ============================================================================
+# Ablation Baseline: The LSTM Inductive Test
+# ============================================================================
+
+wandb:
+  # The Weights & Biases project name for standard training runs.
+  project: "resilient-iot-v2"
+  # The Weights & Biases project name used when running hyperparameter sweeps.
+  sweep_project: "resilient-iot-sweeps-v2"
+  # The collection namespace for model artifacts to group checkpoints together.
+  collection: "lstm-baseline-inductive"
+
+data:
+  # Start date of the traffic data to load.
+  start_date: "2023-04-02"
+  # End date of the traffic data to load.
+  end_date: "2026-04-02"
+  # Number of historical timesteps (15-min intervals) fed to the model (12 = 3 hours).
+  seq_len: 12
+  # Specific vehicle class to predict (e.g., 'person', 'car', 'all').
+  target_veh_class: "person"
+  # Traffic direction to predict (e.g., 'all', 'inbound', 'outbound').
+  target_dir: "all"
+  # Probability of artificially masking a sequence value during training for the imputation task.
+  mask_prob: 0.15
+  # Fraction of nodes artificially masked per batch to train the spatial kriging head.
+  # Set to 0.0 for LSTM since baseline must not train on holdout inputs.
+  spatial_holdout_prob: 0.0
+  # Fraction of nodes permanently held out for zero-shot generalization testing (inductive mode).
+  inductive_holdout_frac: 0.2
+
+model:
+  # Total number of physical sensor nodes in the graph.
+  num_nodes: 81
+  # Number of static metadata features per node (e.g., POIs, school zones).
+  static_feat_dim: 15
+  # Number of time-varying features per timestep.
+  time_series_dim: 3
+  # Dimensionality of the learned node embeddings.
+  embedding_dim: 16
+  # Internal hidden state size for the neural network layers (GNN, LSTM, etc.).
+  hidden_dim: 32
+  # Graph edge pruning threshold; removes edges with attention weights below this value.
+  sparsity_threshold: 0.5
+  # Number of Graph Attention (GAT) or LSTM layers.
+  num_layers: 2
+  # Number of attention heads for the GATv2 layers.
+  num_heads: 4
+  # Dropout probability for regularization during training.
+  dropout: 0.1
+  # Size of the feedforward network (defaults to hidden_dim * 4 if null).
+  dim_feedforward: null
+  # Epsilon value added to the ZINB dispersion parameter for numerical stability.
+  zinb_eps: 1.0e-6
+
+training:
+  # Total number of training epochs.
+  epochs: 100
+  # Number of graph snapshots per batch.
+  batch_size: 32
+  # Learning rate for the Adam optimizer.
+  lr: 0.0003
+  # Maximum norm for gradient clipping to prevent exploding gradients.
+  grad_clip_max_norm: 1.0
+  # Number of epochs to wait without improvement before stopping training.
+  early_stop_patience: 10
+  # Minimum required improvement in the monitored metric to reset the patience counter.
+  early_stop_min_delta: 0.001
+
+loss:
+  # Weight of the point-forecast error (predicting future steps) in the total loss.
+  w_forecast: 1.0
+  # Weight of the historical sequence reconstruction error (imputation) in the total loss.
+  w_impute: 1.0
+  # Weight of the spatial kriging error (reconstructing unseen nodes) in the total loss.
+  w_kriging: 0.0
+
+# The underlying model architecture to instantiate: 'gnn' (RIoT), 'lstm', or 'gru'.
+model_type: lstm
+# Evaluation paradigm: 'temporal' (all nodes seen) or 'inductive' (strict fixed spatial holdout).
+eval_mode: inductive
+
+# Fraction of the dataset used for training (remainder is validation).
+train_split: 0.8
+
+# Disable bf16 autocast by default; set true only on hardware with bf16 support.
+# When true, adapter.step() runs under torch.autocast(dtype=bfloat16); compute_loss
+# and MSE heads are kept in FP32 via an explicit autocast(enabled=False) guard.
+amp: false

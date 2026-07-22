@@ -19,16 +19,22 @@ def test_decoupled_decoders_and_loss():
 
     imputed_features, mu, theta, pi, _ = model(latent_embeddings)
 
-    loss, loss_impute, loss_forecast = compute_loss(
+    # PHASE 1/2: compute_loss requires scaler buffers and returns 4 values
+    # (total, impute, forecast, kriging). With w_kriging=0 the kriging term is 0.
+    loss, loss_impute, loss_forecast, loss_kriging = compute_loss(
         imputed_features=imputed_features,
         target_impute=target_impute,
         mu=mu,
         theta=theta,
         pi=pi,
-        target_forecast=target_forecast
+        target_forecast=target_forecast,
+        traffic_mean=torch.tensor(0.0),
+        traffic_std=torch.tensor(1.0),
     )
 
     assert not torch.isnan(loss).any()
+    # Kriging path is bypassed when w_kriging defaults to 0.0
+    assert loss_kriging.item() == 0.0
 
     loss.backward()
 

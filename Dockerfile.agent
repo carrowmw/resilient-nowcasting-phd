@@ -4,39 +4,51 @@ FROM python:3.11-slim
 # Prevent interactive prompts during apt installations
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Install system dependencies (Adding curl and gnupg for Node.js)
+# 1. Install system dependencies (Including apt-transport-https for Google Cloud)
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     build-essential \
     unzip \
     gnupg \
+    apt-transport-https \
+    ca-certificates \
+    postgresql-client \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 2. Install Node.js (Required for Gemini)
+# 2. Install Google Cloud CLI
+RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    apt-get update && apt-get install -y google-cloud-cli && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 3. Install Node.js (Required for Gemini)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 3. Install the Agents
+# 4. Install the Agents
 # Install Gemini via npm
 RUN npm install -g @google/gemini-cli
-# Install Claude via native binary
+
+# Install Claude via native binary script
 RUN curl -fsSL https://claude.ai/install.sh | bash \
     && CLAUDE_BIN="$(find /root/.local/share/claude/versions -maxdepth 1 -type f | sort | tail -n 1)" \
     && test -n "$CLAUDE_BIN" \
     && ln -sf "$CLAUDE_BIN" /usr/local/bin/claude \
     && chmod +x /usr/local/bin/claude
-# Install extensions
-RUN gemini extensions install https://github.com/wandb/wandb-mcp-server
-ENV WANDB_API_KEY=${WANDB_API_KEY}
-RUN claude mcp add --transport http wandb https://mcp.withwandb.com/mcp --header "Authorization: Bearer ${WANDB_API_KEY}"
 
+# 5. Install extensions
+RUN gemini extensions install --consent https://github.com/wandb/wandb-mcp-server
 
-# 4. Set up the working directory inside the container
+# Note: MCP setup commands below require the environment variables to be active during runtime.
+# If these configure steps need to happen during image build, ensure the variables are present,
+# otherwise you can run the 'claude mcp add' setup step inside your container's entrypoint/bash.
+
+# 6. Set up the working directory inside the container
 WORKDIR /workspace
 
-# 5. Copy your ML requirements and install them
+# 7. Copy your ML requirements and install them
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

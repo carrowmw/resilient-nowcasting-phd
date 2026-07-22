@@ -1,0 +1,772 @@
+{
+  "NclConventRdOrdCtANPR": {
+    "betweenness_centrality": 0.0005436708627735484,
+    "closeness_centrality": 0.013233820544924321,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclPercyStEldonSqANPR": {
+    "betweenness_centrality": 0.0012895872169047262,
+    "closeness_centrality": 0.01619897056488865,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclSaltersHollywood": {
+    "betweenness_centrality": 0.03676248099512985,
+    "closeness_centrality": 0.012025913436569129,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclCastleFarm": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.013345934938370193,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclHaldaneOsborne": {
+    "betweenness_centrality": 0.06273511931898124,
+    "closeness_centrality": 0.015984734380485373,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclArgyleTrafalgar": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015938766829899916,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclStMarysPlCollegeStANPR": {
+    "betweenness_centrality": 0.004202514695159884,
+    "closeness_centrality": 0.016682310231088113,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclTynebridgeNorthEast": {
+    "betweenness_centrality": 0.00012507289516833968,
+    "closeness_centrality": 0.014992100336786763,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclJohnDobsonStNorthumberlandRdNorth": {
+    "betweenness_centrality": 0.01681649673672791,
+    "closeness_centrality": 0.01695314763741403,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclMowbrayStStratfordRdANPR": {
+    "betweenness_centrality": 0.000396937455799387,
+    "closeness_centrality": 0.015269769993342352,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclSandyfordRdHuttonTerANPR": {
+    "betweenness_centrality": 0.005269088766527835,
+    "closeness_centrality": 0.01579158611835858,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclQueenVictoriaRdPercyBuilding": {
+    "betweenness_centrality": 0.00011807595227918272,
+    "closeness_centrality": 0.015280094469919287,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclCedarRdGowlandAveWest": {
+    "betweenness_centrality": 0.012318273794330821,
+    "closeness_centrality": 0.013452770553538858,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclGreyStTheatreSouth": {
+    "betweenness_centrality": 0.0028287829313287404,
+    "closeness_centrality": 0.017031160447648637,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclHeatonRdFalmouthRd": {
+    "betweenness_centrality": 0.06230001465536086,
+    "closeness_centrality": 0.01477597233932395,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclHeatonParkViewWest": {
+    "betweenness_centrality": 0.0019512556123770935,
+    "closeness_centrality": 0.014933321107841183,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclHeatonParkRdBolingbrokeSt": {
+    "betweenness_centrality": 0.0018738760837911067,
+    "closeness_centrality": 0.014981604680402605,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclJohnDobsonStNorthumberlandRdSouth": {
+    "betweenness_centrality": 0.01681649673672791,
+    "closeness_centrality": 0.01695314763741403,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclHeatonParkRdWandsworthRd": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.014357181727099965,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclHeatonHallRdCardiganTer": {
+    "betweenness_centrality": 0.0002703516030109184,
+    "closeness_centrality": 0.014473762353605688,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclKingswayQueensway": {
+    "betweenness_centrality": 0.0014336526423092395,
+    "closeness_centrality": 0.013912954909392887,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclStoneyhurstRectory": {
+    "betweenness_centrality": 0.0032108292330001414,
+    "closeness_centrality": 0.014038449504721546,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclCypressAveGreenway": {
+    "betweenness_centrality": 0.00240546800749799,
+    "closeness_centrality": 0.014393337154447952,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclCedarRdLindenAveRndbtWest": {
+    "betweenness_centrality": 0.0028326296598728345,
+    "closeness_centrality": 0.012908585146515262,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclQuaysideUnderHighLevelBridge": {
+    "betweenness_centrality": 9.243511929987729e-05,
+    "closeness_centrality": 0.014737762580022058,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclJohnDobsonStRidleyPl": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01618547263529461,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclCedarRdGowlandAveEast": {
+    "betweenness_centrality": 0.010665818192460591,
+    "closeness_centrality": 0.013293437846428537,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclKingswayQueenswayANPR": {
+    "betweenness_centrality": 0.0014336526423092395,
+    "closeness_centrality": 0.013912954909392887,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclHeatonParkViewHeatonParkRd": {
+    "betweenness_centrality": 0.0019512556123770935,
+    "closeness_centrality": 0.014933321107841183,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclCedarRdLindenAveRndbtEast": {
+    "betweenness_centrality": 0.0028326296598728345,
+    "closeness_centrality": 0.012908585146515262,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclQueenVictoriaRdBedsonBuilding": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015579957430603975,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclCedarRdLindenAveRndbtWestSouthCrossing": {
+    "betweenness_centrality": 0.0028326296598728345,
+    "closeness_centrality": 0.012908585146515262,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclCedarRdGowlandAveWestSouthFootpath": {
+    "betweenness_centrality": 0.012318273794330821,
+    "closeness_centrality": 0.013452770553538858,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclQuaysideTrinityChare": {
+    "betweenness_centrality": 0.0006879598154806264,
+    "closeness_centrality": 0.015533457047074959,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclSideStCrownPosadaNorth": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015394270274053093,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclSideStCrownPosadaSouth": {
+    "betweenness_centrality": 0.0007042861383265009,
+    "closeness_centrality": 0.015634951843462176,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclQuaysideWesleySquare": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.0156203169251455,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclPilgrimStMarketLn": {
+    "betweenness_centrality": 0.00016231025719697916,
+    "closeness_centrality": 0.0170562509881005,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclSwingBridgeWest": {
+    "betweenness_centrality": 0.007264982743021812,
+    "closeness_centrality": 0.015634403441082537,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclNorthumberlandStSavilleRowEast": {
+    "betweenness_centrality": 0.18760538313369748,
+    "closeness_centrality": 0.017245618723989158,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclNorthumberlandStSavilleRowWest": {
+    "betweenness_centrality": 0.18760538313369748,
+    "closeness_centrality": 0.017245618723989158,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclNorthumberlandStMonumentMall": {
+    "betweenness_centrality": 0.18921124504907397,
+    "closeness_centrality": 0.017310257078472554,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclNorthumberlandStThePearl": {
+    "betweenness_centrality": 0.19952453019589825,
+    "closeness_centrality": 0.01742305793285056,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclKingsRdTheArches": {
+    "betweenness_centrality": 0.0007799462089332003,
+    "closeness_centrality": 0.015602503696129772,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclEllisonPl": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015851632166890416,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclOuseburnRdANPR": {
+    "betweenness_centrality": 0.016980977656146146,
+    "closeness_centrality": 0.014900052736932434,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclNorhamRdCoquetAveANPR": {
+    "betweenness_centrality": 0.00015377480592787876,
+    "closeness_centrality": 0.0109030588171681,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclArmstrongBrgJesmondParkW": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.013684115705023205,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclOsborneHaldane": {
+    "betweenness_centrality": 0.08317959229482644,
+    "closeness_centrality": 0.01612593039706462,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclGrosvenorAveJesmondDeneRd": {
+    "betweenness_centrality": 5.326075938387828e-05,
+    "closeness_centrality": 0.01415448511577087,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclGrosvenorAveOsborneRd": {
+    "betweenness_centrality": 0.0006111229759078606,
+    "closeness_centrality": 0.014960545073301195,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclGrosvenorRdJesmondDeneRd": {
+    "betweenness_centrality": 0.0008247896202862635,
+    "closeness_centrality": 0.014341366519369481,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclGrosvenorRdOsborneRd": {
+    "betweenness_centrality": 0.0006111229759078606,
+    "closeness_centrality": 0.014960545073301195,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclJesmondDeneRdBentonBank": {
+    "betweenness_centrality": 0.0010099646329244036,
+    "closeness_centrality": 0.014793478222896091,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclNinthAveSecondAve": {
+    "betweenness_centrality": 0.00017290952153634943,
+    "closeness_centrality": 0.013883959346507985,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclTenthAveSecondAve": {
+    "betweenness_centrality": 0.00025085525369062105,
+    "closeness_centrality": 0.014037117393660838,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclRavenswoodRdWest": {
+    "betweenness_centrality": 0.0006479216479595896,
+    "closeness_centrality": 0.013180040852057193,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclRavenswoodRdStanmoreRd": {
+    "betweenness_centrality": 0.00033758620606672425,
+    "closeness_centrality": 0.013025989301892952,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclForsythRdBrentwoodAve": {
+    "betweenness_centrality": 0.007576929347233333,
+    "closeness_centrality": 0.015924224084237246,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclShieldsRdRobinsonStNorth": {
+    "betweenness_centrality": 0.0015740886652570608,
+    "closeness_centrality": 0.01423969822398899,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclShieldsRdMatthewStSouth": {
+    "betweenness_centrality": 0.0003758886123752057,
+    "closeness_centrality": 0.014245476695298354,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclShieldsRdRobinsonStSouth": {
+    "betweenness_centrality": 0.0023828832334750333,
+    "closeness_centrality": 0.014185282162581357,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclShieldsRdEdwinStNorth": {
+    "betweenness_centrality": 0.0002306310497551146,
+    "closeness_centrality": 0.014165766565930655,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclHeatonParkRdHeatonGrove": {
+    "betweenness_centrality": 0.05913218888904973,
+    "closeness_centrality": 0.015248757853722478,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclHeatonRdGuildfordPl": {
+    "betweenness_centrality": 0.06653542669285058,
+    "closeness_centrality": 0.014805012271954913,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclShieldsRdCliffordStSouth": {
+    "betweenness_centrality": 0.0015357892361437797,
+    "closeness_centrality": 0.014857803504715323,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclShieldsRdCliffordStNorth": {
+    "betweenness_centrality": 0.0015357892361437797,
+    "closeness_centrality": 0.014857803504715323,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclUrbanScienceBuildingSquareNorth": {
+    "betweenness_centrality": 7.345876399344633e-05,
+    "closeness_centrality": 0.014167620905312482,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclUrbanScienceBuildingSquareMid": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.013772556851029853,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclUrbanScienceBuildingSquareSouth": {
+    "betweenness_centrality": 0.0014529192062031052,
+    "closeness_centrality": 0.01435736427340531,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclTownMoorCrossroads": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.014540753255315642,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclShieldsRdRabySt": {
+    "betweenness_centrality": 0.00608747172351251,
+    "closeness_centrality": 0.014360523059457805,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclShieldsRdSquareEast": {
+    "betweenness_centrality": 0.0011884360420992429,
+    "closeness_centrality": 0.014212670657145123,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclShieldsRdSquareWest": {
+    "betweenness_centrality": 0.0011884360420992429,
+    "closeness_centrality": 0.014212670657145123,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclAdelaideTerNicholSt": {
+    "betweenness_centrality": 0.0008094583764962761,
+    "closeness_centrality": 0.01193092488969283,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclAdelaideTerGeraldSt": {
+    "betweenness_centrality": 0.0018798669077489177,
+    "closeness_centrality": 0.012069286167777186,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclAdelaideTerBeechSt": {
+    "betweenness_centrality": 0.0007640810379562197,
+    "closeness_centrality": 0.011899321539155955,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclAdelaideTerMariaSt": {
+    "betweenness_centrality": 0.0018375357209292787,
+    "closeness_centrality": 0.012039461970106054,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclSandyfordRdJesmondRdSouthbound": {
+    "betweenness_centrality": 0.0001165823570565565,
+    "closeness_centrality": 0.015290971258336436,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclJesmondRdAllSaintsCemetery": {
+    "betweenness_centrality": 0.0001144710638192864,
+    "closeness_centrality": 0.015281934917795767,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclSandyfordRdJesmondRdNorthbound": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015048763216977436,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclJesmondRdAllSaintsCemeteryNorth": {
+    "betweenness_centrality": 0.0001144710638192864,
+    "closeness_centrality": 0.015281934917795767,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclJesmondRdAllSaintsCemeterySouth": {
+    "betweenness_centrality": 7.170217554673549e-05,
+    "closeness_centrality": 0.015396292273221014,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclRedHallDrMartelloGardensZebra": {
+    "betweenness_centrality": 0.031457117826328276,
+    "closeness_centrality": 0.013106539186524825,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclCoastRdRedHallDrNorthCrossing": {
+    "betweenness_centrality": 0.007847235366504,
+    "closeness_centrality": 0.013375818812854622,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclCoastRdRedHallDr": {
+    "betweenness_centrality": 0.007847235366504,
+    "closeness_centrality": 0.013375818812854622,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclRedHallDrMartelloGardens": {
+    "betweenness_centrality": 0.031457117826328276,
+    "closeness_centrality": 0.013106539186524825,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclCedarRdConventRd": {
+    "betweenness_centrality": 0.0028326296598728345,
+    "closeness_centrality": 0.012908585146515262,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclStephensonRdHeatonRdNewtonRdSE1": {
+    "betweenness_centrality": 0.00023900575185136785,
+    "closeness_centrality": 0.014054979381798312,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclStephensonRdHeatonRdNewtonRdSE2": {
+    "betweenness_centrality": 0.06031583967924845,
+    "closeness_centrality": 0.014254732010533252,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclStephensonRdHeatonRdNewtonRdSW1": {
+    "betweenness_centrality": 0.06031583967924845,
+    "closeness_centrality": 0.014254732010533252,
+    "degree_centrality": 0.00029519423780847797
+  },
+  "NclStephensonRdHeatonRdNewtonRdSW2": {
+    "betweenness_centrality": 0.0017324907691327522,
+    "closeness_centrality": 0.014208688540061028,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclStephensonRdHeatonRdNewtonRdNE1": {
+    "betweenness_centrality": 0.0830499937804389,
+    "closeness_centrality": 0.01403837387592723,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclStephensonRdHeatonRdNewtonRdNE2": {
+    "betweenness_centrality": 0.002468645786719797,
+    "closeness_centrality": 0.013863799506115443,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "NclStephensonRdHeatonRdNewtonRdNE3": {
+    "betweenness_centrality": 0.003978313666000348,
+    "closeness_centrality": 0.013987706046763599,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclJesmondRdAkensideTerrace": {
+    "betweenness_centrality": 0.006409938336312611,
+    "closeness_centrality": 0.015767448290114346,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclStephensonRdHeatonRdNewtonRdNE4": {
+    "betweenness_centrality": 0.0830499937804389,
+    "closeness_centrality": 0.01403837387592723,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclSideMilburnHouse": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015327868704108245,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclBarrasBridgeCivicCentre": {
+    "betweenness_centrality": 0.002548197677960817,
+    "closeness_centrality": 0.0169512558820998,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclQuaysideMarinersWharfHadriansWallPath": {
+    "betweenness_centrality": 0.03845865702345834,
+    "closeness_centrality": 0.015549992150641581,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclHeberSt": {
+    "betweenness_centrality": 0.00044799278810565065,
+    "closeness_centrality": 0.013984934284101901,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclFalconarStLoversLn": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015996365921828598,
+    "degree_centrality": 5.90388475616956e-05
+  },
+  "NclStephensonRdHeatonRdNewtonRdSE3": {
+    "betweenness_centrality": 0.0001066971334167481,
+    "closeness_centrality": 0.013790913531998046,
+    "degree_centrality": 0.00017711654268508679
+  },
+  "NclStephensonRdHeatonRdNewtonRd": {
+    "betweenness_centrality": 0.09907889365047641,
+    "closeness_centrality": 0.014318810367062172,
+    "degree_centrality": 0.0002361553902467824
+  },
+  "Simulated_Node_0": {
+    "betweenness_centrality": 0.0016329077415589744,
+    "closeness_centrality": 0.0107730205099535,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_1": {
+    "betweenness_centrality": 0.001194692412202138,
+    "closeness_centrality": 0.01187358397451715,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_2": {
+    "betweenness_centrality": 0.00048164661324695876,
+    "closeness_centrality": 0.014670695376929383,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_3": {
+    "betweenness_centrality": 4.827997301645029e-05,
+    "closeness_centrality": 0.01592480797951531,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_4": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015231082991327869,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_5": {
+    "betweenness_centrality": 8.49485715770253e-06,
+    "closeness_centrality": 0.015675234462194532,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_6": {
+    "betweenness_centrality": 0.0007775346164434205,
+    "closeness_centrality": 0.01302479732860161,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_7": {
+    "betweenness_centrality": 6.811675927742962e-05,
+    "closeness_centrality": 0.01069825403332009,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_8": {
+    "betweenness_centrality": 0.0027402756385001307,
+    "closeness_centrality": 0.012554208491175068,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_9": {
+    "betweenness_centrality": 0.00022494434219040221,
+    "closeness_centrality": 0.012531721428518581,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_10": {
+    "betweenness_centrality": 0.0007364383605757887,
+    "closeness_centrality": 0.015217098347842493,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_11": {
+    "betweenness_centrality": 5.876613393684012e-05,
+    "closeness_centrality": 0.012794138474757107,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_12": {
+    "betweenness_centrality": 0.0005847467992695092,
+    "closeness_centrality": 0.016219042293225884,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_13": {
+    "betweenness_centrality": 0.0354532269534863,
+    "closeness_centrality": 0.012286698332467698,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_14": {
+    "betweenness_centrality": 5.04430420905966e-05,
+    "closeness_centrality": 0.015867699843974174,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_15": {
+    "betweenness_centrality": 0.0022814692177389644,
+    "closeness_centrality": 0.015560320356294406,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_16": {
+    "betweenness_centrality": 0.0008036235578966158,
+    "closeness_centrality": 0.013863124359297022,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_17": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.016925026966829924,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_18": {
+    "betweenness_centrality": 4.7889264804182876e-05,
+    "closeness_centrality": 0.013072349410980217,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_19": {
+    "betweenness_centrality": 0.020826300456981358,
+    "closeness_centrality": 0.014667417731745937,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_20": {
+    "betweenness_centrality": 0.009142243426040452,
+    "closeness_centrality": 0.015136729222520108,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_21": {
+    "betweenness_centrality": 7.289573211189534e-05,
+    "closeness_centrality": 0.01215581664223016,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_22": {
+    "betweenness_centrality": 0.00011861443866803466,
+    "closeness_centrality": 0.014928313161425937,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_23": {
+    "betweenness_centrality": 0.0003399789015746339,
+    "closeness_centrality": 0.01588388205153212,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_24": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01565093734219585,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_25": {
+    "betweenness_centrality": 0.0026715565122131853,
+    "closeness_centrality": 0.01354780424070748,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_26": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01360278705350044,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_27": {
+    "betweenness_centrality": 0.009863712225453243,
+    "closeness_centrality": 0.016364434744425265,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_28": {
+    "betweenness_centrality": 1.8452454795794685e-05,
+    "closeness_centrality": 0.014936000850059323,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_29": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.015825314242922967,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_30": {
+    "betweenness_centrality": 5.904059040590406e-05,
+    "closeness_centrality": 0.0136833860927583,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_31": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01379029037525173,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_32": {
+    "betweenness_centrality": 0.007586116050150619,
+    "closeness_centrality": 0.017182646521168396,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_33": {
+    "betweenness_centrality": 0.0004927034285449494,
+    "closeness_centrality": 0.014983937251113645,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_34": {
+    "betweenness_centrality": 2.5856691623512507e-05,
+    "closeness_centrality": 0.014205506835425203,
+    "degree_centrality": 0.0001180776951233912
+  },
+  "Simulated_Node_35": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.011680698607563903,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_36": {
+    "betweenness_centrality": 0.0013530251088737523,
+    "closeness_centrality": 0.013036907502071413,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_37": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.013426000053900579,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_38": {
+    "betweenness_centrality": 0.012943236299619723,
+    "closeness_centrality": 0.013784746199286348,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_39": {
+    "betweenness_centrality": 4.6881806993313984e-05,
+    "closeness_centrality": 0.016590844866589058,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_40": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.009806558142995227,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_41": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.013105702543572515,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_42": {
+    "betweenness_centrality": 0.0002066420664206642,
+    "closeness_centrality": 0.013150161679133882,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_43": {
+    "betweenness_centrality": 2.952029520295203e-05,
+    "closeness_centrality": 0.00973798059647862,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_44": {
+    "betweenness_centrality": 0.0026335559571448864,
+    "closeness_centrality": 0.014776262368075317,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_45": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.014477776894534805,
+    "degree_centrality": 2.95194237808478e-05
+  },
+  "Simulated_Node_46": {
+    "betweenness_centrality": 0.0009004165494832805,
+    "closeness_centrality": 0.012018250882583648,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_47": {
+    "betweenness_centrality": 9.94573518221998e-05,
+    "closeness_centrality": 0.01361833369580817,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_48": {
+    "betweenness_centrality": 0.00019416430474468804,
+    "closeness_centrality": 0.012517116998611426,
+    "degree_centrality": 8.855827134254339e-05
+  },
+  "Simulated_Node_49": {
+    "betweenness_centrality": 0.0,
+    "closeness_centrality": 0.01278618988828125,
+    "degree_centrality": 2.95194237808478e-05
+  }
+}

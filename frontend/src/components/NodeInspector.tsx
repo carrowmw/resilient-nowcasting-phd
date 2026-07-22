@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 import useTimeStore from "@/store/useTimeStore";
 import type { NodeDetailPayload, AttentionEdge } from "@/types/payload";
 import { useState } from "react";
+import { nodeUrl } from "@/lib/payloadSource";
 
 // ---------------------------------------------------------------------------
 // SVG layout constants (shared by both charts)
@@ -188,9 +189,7 @@ interface PiChartProps {
 function PiChart({ node, currentTimestep }: PiChartProps) {
   const series = node.zinb_series;
   const T = series.length;
-
-  // Guard: old payloads without pi field degrade gracefully
-  if (T === 0 || series[0].pi === undefined) return null;
+  const hasPiData = T > 0 && series[0].pi != null;
 
   const xOf = (t: number) => PAD.left + (T <= 1 ? 0 : (t / (T - 1)) * INNER_W);
   // pi is always in (0,1) — fixed Y axis
@@ -198,6 +197,7 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
 
   // Contiguous runs of is_missing === true for background shading
   const missingRuns = useMemo(() => {
+    if (!hasPiData) return [];
     const runs: { x1: number; x2: number }[] = [];
     let start: number | null = null;
     for (const { t, is_missing } of series) {
@@ -210,9 +210,16 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
     if (start !== null) runs.push({ x1: xOf(start), x2: xOf(T - 1) });
     return runs;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series]);
+  }, [series, hasPiData]);
 
-  const piPoints = series.map(({ t, pi }) => `${xOf(t)},${yOf(pi)}`).join(" ");
+  // Guard: models without a zero-inflation head (pi null) or old payloads
+  // without the pi field degrade gracefully — no chart.
+  // This guard is AFTER all hook calls to satisfy rules-of-hooks.
+  if (!hasPiData) return null;
+
+  const piPoints = series
+    .map(({ t, pi }) => `${xOf(t)},${yOf(pi ?? 0)}`)
+    .join(" ");
   const cursorX = xOf(currentTimestep);
   const currentPi = series[currentTimestep]?.pi;
 
@@ -304,7 +311,7 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
         strokeDasharray="2 2"
       />
       {/* Pi value at cursor */}
-      {currentPi !== undefined && (
+      {currentPi != null && (
         <text
           x={Math.min(cursorX + 3, PAD.left + INNER_W - 22)}
           y={PAD.top + 9}
@@ -322,9 +329,7 @@ function PiChart({ node, currentTimestep }: PiChartProps) {
 // Attention Edge rank list
 // ---------------------------------------------------------------------------
 
-function EdgeList({ edges }: { edges: AttentionEdge[] }) {
-  const currentTimestep = useTimeStore((s) => s.currentTimestep);
-
+function EdgeList({ edges, currentTimestep }: { edges: AttentionEdge[]; currentTimestep: number }) {
   const { topIncoming, topOutgoing } = useMemo(() => {
     const byWeight = (a: AttentionEdge, b: AttentionEdge) =>
       (b.weight_sequence[currentTimestep] ?? 0) -
@@ -399,30 +404,71 @@ export default function NodeInspector() {
   const setSelectedNodeId = useTimeStore((s) => s.setSelectedNodeId);
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
   const setEgoGraphEdges = useTimeStore((s) => s.setEgoGraphEdges);
+  const activeRunId = useTimeStore((s) => s.activeRunId);
+  const activeDate = useTimeStore((s) => s.activeDate);
 
   const [nodeDetail, setNodeDetail] = useState<NodeDetailPayload | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Lazy per-node fetch: load node_{id}.json whenever the selected node changes.
-  // Write ego_graph_edges into the store so MapVisualizer can render the ArcLayer.
+  // Lazy per-node fetch: load the day-scoped node_{id}.json from R2 whenever the
+  // selection, run, or day changes. Write ego_graph_edges into the store so
+  // MapVisualizer can render the ArcLayer.
   useEffect(() => {
-    if (selectedNodeId === null) {
-      setNodeDetail(null);
+    if (selectedNodeId === null || !activeRunId || !activeDate) {
+      // Only update external state (Zustand); local React state is left stale
+      // but never rendered since selectedNodeId === null causes early return below.
       setEgoGraphEdges(null);
       return;
     }
-    fetch(`/data/nodes/node_${selectedNodeId}.json`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: NodeDetailPayload | null) => {
+    const controller = new AbortController();
+    fetch(nodeUrl(activeRunId, activeDate, selectedNodeId), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<NodeDetailPayload>;
+      })
+      .then((d) => {
+        setFetchError(null);
         setNodeDetail(d);
         setEgoGraphEdges(d?.ego_graph_edges ?? null);
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setFetchError(`Failed to load node detail: ${err.message}`);
         setNodeDetail(null);
         setEgoGraphEdges(null);
       });
-  }, [selectedNodeId, setEgoGraphEdges]);
+    return () => controller.abort();
+  }, [selectedNodeId, activeRunId, activeDate, setEgoGraphEdges]);
 
   if (selectedNodeId === null) return null;
+
+  if (fetchError) {
+    return (
+      <aside
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          width: 360,
+          zIndex: 10,
+        }}
+        className="rounded-lg border border-red-500/30 bg-neutral-950/85 p-4 text-xs text-red-300 shadow-xl backdrop-blur"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span>{fetchError}</span>
+          <button
+            type="button"
+            onClick={() => setSelectedNodeId(null)}
+            className="rounded px-2 py-0.5 text-slate-300 hover:bg-white/10"
+            aria-label="Close inspector"
+          >
+            ✕
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
   if (!nodeDetail) return null;
 
   const hasImputation =
@@ -434,11 +480,16 @@ export default function NodeInspector() {
   const hasPi =
     Array.isArray(nodeDetail.zinb_series) &&
     nodeDetail.zinb_series.length > 0 &&
-    nodeDetail.zinb_series[0].pi !== undefined;
+    nodeDetail.zinb_series[0].pi != null;
 
   const hasEgoEdges =
     Array.isArray(nodeDetail.ego_graph_edges) &&
     nodeDetail.ego_graph_edges.length > 0;
+
+  // Display role, derived for pre-harness payloads that predate node_role.
+  const role =
+    nodeDetail.node_role ??
+    (nodeDetail.is_simulated ? "simulated" : "observed");
 
   const currentZINB = nodeDetail.zinb_series?.[currentTimestep];
   const currentMasked = nodeDetail.mask_series?.[currentTimestep] ?? false;
@@ -469,9 +520,17 @@ export default function NodeInspector() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {nodeDetail.is_simulated && (
+          {role === "simulated" && (
             <span className="rounded bg-amber-600/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
               SIMULATED
+            </span>
+          )}
+          {role === "holdout" && (
+            <span
+              className="rounded bg-violet-600/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-300"
+              title="Zero-shot: this real sensor was masked throughout training; its prediction is compared against held-out ground truth."
+            >
+              HOLDOUT
             </span>
           )}
           <button
@@ -525,11 +584,17 @@ export default function NodeInspector() {
               <>
                 <dt className="text-slate-400">µ (forecast)</dt>
                 <dd className="text-right">{currentZINB.mu.toFixed(2)}</dd>
+                {/* θ/σ/π are null for models without a ZINB head (baselines) —
+                    show N/A rather than a fabricated number. */}
                 <dt className="text-slate-400">θ (dispersion)</dt>
-                <dd className="text-right">{currentZINB.theta.toFixed(2)}</dd>
+                <dd className="text-right">
+                  {currentZINB.theta == null ? "N/A" : currentZINB.theta.toFixed(2)}
+                </dd>
                 <dt className="text-slate-400">σ (uncertainty)</dt>
-                <dd className="text-right">{currentZINB.std_dev.toFixed(2)}</dd>
-                {currentZINB.pi !== undefined && (
+                <dd className="text-right">
+                  {currentZINB.std_dev == null ? "N/A" : currentZINB.std_dev.toFixed(2)}
+                </dd>
+                {currentZINB.pi != null && (
                   <>
                     <dt className="text-slate-400">π (zero-inflation)</dt>
                     <dd className="text-right text-violet-300">
@@ -573,7 +638,7 @@ export default function NodeInspector() {
               <span className="text-amber-400">→</span> out
             </span>
           </div>
-          <EdgeList edges={nodeDetail.ego_graph_edges!} />
+          <EdgeList edges={nodeDetail.ego_graph_edges!} currentTimestep={currentTimestep} />
         </div>
       )}
     </aside>
