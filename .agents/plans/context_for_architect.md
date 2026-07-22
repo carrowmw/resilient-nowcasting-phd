@@ -1,32 +1,21 @@
-# Context for Architect: GPU Data Starvation Investigation
+# Investigation Context: Fixing Zero-Inflation Representation Collapse
 
-## Objective
-Investigate why the GPU is idling between 0% and 100% every cycle (epoch/batch) and determine if data loading can be sped up or pre-loaded.
+Based on the investigation into the ML pipeline's representation collapse (where the zero-inflation probability `pi` spikes for masked/simulated nodes), we have evaluated the downstream effects of the two proposed fixes.
 
-## Relevant File Paths
-- `src/dataset.py` (Specifically `RealIoTDataset.__init__` and `__getitem__`)
-- `src/train.py` (Specifically `DataLoader` instantiation and the training loop)
-- `configs/infra.yaml` (Infrastructure configuration)
+## 1. Effects of Preserving NaNs in Targets
+Removing `val_df.fillna(0.0)` in `src/dataset.py` will ripple through the data loading process to fix the target leakage problem.
 
-## High-Level Logic Summary & Findings
+- **Scaling Implications**: `StandardScaler` naturally computes mean/std ignoring NaNs, but it outputs NaNs. Therefore, `dataset.dynamic_data` will contain true NaNs instead of the scaled mean.
+- **Safety Assertions**: The safeguard `assert not torch.isnan(self.dynamic_data).any()` (`dataset.py:190`) will instantly crash the pipeline and must be removed.
+- **Encoder Inputs**: No architectural changes are needed to handle the input side. The existing `torch.nan_to_num(..., nan=0.0)` in `pipeline.py:147` will intercept these true NaNs and map them to `0.0` for the encoder safely.
+- **Loss Masking (The Fix)**: `target_impute` and `target_forecast` in `train.py` will now correctly retain NaNs for structurally missing data. The loss logic (`valid_mask = ~torch.isnan(target_impute) & ~torch.isnan(target_forecast)`) will correctly evaluate to `False` for these points, entirely dropping them from MSE and ZINB NLL calculations. 
+- **Outcome**: The model will no longer associate `structural_mask=1` with an artificial target of `0`. This will cure the zero-inflation spike for simulated nodes.
 
-### 1. Data Loading Mechanism
-- **In-Memory Dataset**: `RealIoTDataset` loads the *entire dataset into RAM* during `__init__`. 
-- **Trivial `__getitem__`**: The `__getitem__` method performs extremely fast operations—mostly just slicing in-memory tensors (`self.dynamic_data[idx:...]` and `self.structural_masks[...]`) and permuting them.
-- **Multiprocessing Overhead**: `configs/infra.yaml` configures `num_workers: 16`. When `num_workers > 0`, PyTorch's `DataLoader` relies on Python's `multiprocessing`. Because the data is already in RAM and `__getitem__` is trivial, the inter-process communication (IPC) overhead of shipping sliced tensors across 16 worker processes back to the main process heavily bottlenecks the pipeline. The workers are slowing down the data supply rather than speeding it up.
+## 2. Effects of Explicit Indicator Channels
+Passing the temporal mask (`node_mask`) and spatial holdout mask to the encoder will teach the model to distinguish between "artificially masked data" and "data that naturally equals the mean".
 
-### 2. GPU Transfer & Pinning
-- **Batch-by-Batch Pinning**: In `src/train.py`, the `DataLoader` is created with `pin_memory=torch.cuda.is_available()`. This means a background thread in the main process must dynamically copy every batch into page-locked (pinned) memory before moving it to the GPU via `.to(device, non_blocking=True)` in the training loop.
-- **No Upfront Pinning**: The underlying tensors in `RealIoTDataset` (`dynamic_data`, `structural_masks`, `unscaled_traffic`) are *not* pinned in RAM during `__init__`.
-
-### 3. Training Loop Mechanics
-- The `for batch in train_loader:` loop transfers data to the GPU and subsequently applies dynamic `NaN` masking and structural holdouts on the GPU itself. Thus, the CPU is purely responsible for slicing and assembling the clean batches.
-
-## Potential Bottlenecks (Tripwires)
-1. **IPC Starvation**: `num_workers=16` for a fully in-memory dataset is a classic anti-pattern that creates artificial IPC overhead and starves the GPU.
-2. **Dynamic Pinning Overhead**: The batch-by-batch pinning by the `DataLoader` thread might also be struggling to keep up with the GPU.
-
-## Insights for Architect
-- Evaluate if `num_workers` should be forced to `0` for `RealIoTDataset` to avoid IPC overhead.
-- Evaluate if we can pin the tensors (`self.dynamic_data.pin_memory()`, etc.) directly in `RealIoTDataset.__init__`. If the tensors are already pinned, `num_workers=0` will yield batches that are immediately ready for non-blocking GPU transfer.
-- Consider moving the entire dataset directly to the GPU in `__init__` if VRAM permits, effectively bypassing CPU-GPU transfer during the training loop completely.
+- **Mask Expansions**: In `pipeline.py`, the 2D masks from the batch dict (`node_mask` and `spatial_holdout_mask`) will need to be reshaped/broadcasted to `[Batch, Num_Nodes, Seq_Len, 1]` and concatenated to `encoder_input`.
+- **Dimension Shifts**: `MaskedSpatiotemporalEncoder` (`encoder.py`) hardcodes `mask_dim=2`. This must be parameterized and updated to `mask_dim=4` in `pipeline.py`. Consequently, `GATv2Conv` `in_channels` will increase from 5 to 7.
+- **Breaking Checkpoints**: Expanding the input dimension of the first layer is a breaking architectural change. **All previous checkpoints will become incompatible, requiring a full retraining run from scratch.**
+- **Inference Exporter Updates**: The inference scripts (`export_paginated_payload.py` and `export_ui_payload.py`) do not generate `node_mask` or structure holdout masks in the same way `train.py` does. They will need to be updated to manually inject a zeroed temporal mask and an expanded spatial holdout mask into the inference batch so the model receives the expected 7 dimensions.
+- **Outcome**: The encoder will have explicit context for why an input sequence is a flatline of `0.0`s. For spatial holdout nodes, the model will learn to route its predictions through neighbor graph embeddings rather than collapsing to the blind zero-inflated spatial prior.
