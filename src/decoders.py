@@ -60,7 +60,7 @@ class DecoupledDecoders(nn.Module):
         pi_logits = forecast_logits[:, :, 2]
 
         # Apply ZINB constraints (Tripwires from NSTAR_BACKEND_ARCHITECTURE.md)
-        pi = torch.sigmoid(pi_logits)
+        pi = torch.clamp(torch.sigmoid(pi_logits), min=self.zinb_eps, max=1.0 - self.zinb_eps)
         mu = F.softplus(mu_logits) + self.zinb_eps
         theta = F.softplus(theta_logits) + self.zinb_eps
 
