@@ -1,0 +1,111 @@
+# ============================================================================
+# Quality-aware per-sensor forecasting track (MDPI Sensors paper rebuild)
+#
+# Full experiment configuration. Every hyperparameter of the track lives here
+# (NSTAR rule: zero hyperparameters hardcoded in Python).
+# Smoke-test variant: quality_smoke.yaml.
+# ============================================================================
+
+data_source: "parquet"          # 'parquet' | 'database'
+
+data:
+  parquet_path: "data/processed/master_dataset_15T.parquet"
+  start_date: "2023-01-08"
+  end_date: "2026-06-08"
+  veh_class: "person"
+  freq: "15min"
+
+quality:
+  window: 24                    # input steps (6 h at 15 min)
+  horizons: [8, 24]             # 2 h and 6 h ahead
+  stride: 1
+  train_frac: 0.7
+  val_frac: 0.15                # test = 1 - train - val
+  purge_boundaries: true        # drop boundary-overlapping windows (leakage fix)
+  viability:
+    min_windows: {train: 500, val: 100, test: 100}
+
+features:
+  fractional_time: true         # legacy used integer hour; fractional is documented improvement
+
+interpolation:
+  # 'none' is the reference variant; each method reruns quality metrics + models.
+  methods: [none, night_zero, linear, spline, knn]
+  night_hours: [0, 6]
+  spline_order: 3
+  knn_neighbors: 5
+  max_gap_steps: 8              # linear/spline only fill gaps <= 2 h (0 = unlimited)
+
+periodogram:
+  min_period_hours: 2.0
+  max_period_hours: 336.0       # 14 days
+  n_freqs: 4000
+  top_k: 3
+
+models:
+  persistence:
+    type: persistence
+  snaive_daily:
+    type: seasonal_naive
+    seasonality_days: 1
+  snaive_weekly:
+    type: seasonal_naive
+    seasonality_days: 7
+  arima:
+    type: arima
+    order: [2, 0, 2]
+    seasonal_order: [0, 0, 0, 0]  # s=96 seasonal MLE is infeasible; seasonality covered by snaive baselines
+    trend: "c"
+    min_fit_steps: 192
+    max_eval_history: 2688        # 4 weeks of 15-min steps
+  lstm_uv:
+    type: lstm
+    feature_groups: [count]
+    hidden_dim: 64
+    num_layers: 1
+    dropout: 0.1
+    lr: 0.001
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+  lstm_mv:
+    type: lstm
+    feature_groups: [count, half_day, day, week, quarter, year, timestamp]
+    hidden_dim: 64
+    num_layers: 2
+    dropout: 0.1
+    lr: 0.0005
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+
+ablation:
+  model: lstm_mv                # base spec whose feature set is substituted
+  # Leave-one-group-out from the full MV set, plus the UV anchor.
+  feature_sets:
+    full:        [count, half_day, day, week, quarter, year, timestamp]
+    no_half_day: [count, day, week, quarter, year, timestamp]
+    no_day:      [count, half_day, week, quarter, year, timestamp]
+    no_week:     [count, half_day, day, quarter, year, timestamp]
+    no_quarter:  [count, half_day, day, week, year, timestamp]
+    no_year:     [count, half_day, day, week, quarter, timestamp]
+    no_timestamp: [count, half_day, day, week, quarter, year]
+
+run:
+  output_dir: "artifacts/quality_full"
+  sensors: "all"                # 'all' (viable per manifest) or explicit list
+  models: [persistence, snaive_daily, snaive_weekly, arima, lstm_uv, lstm_mv]
+  horizons: [8, 24]
+  interpolation_variants: [none, night_zero, linear, spline, knn]
+  run_ablations: true             # the ablation experiment sets true
+  seed: 42
+  device: "cuda:1"
+
+wandb:
+  enabled: false                # runner works fully offline; enable on the GPU box
+  project: "quality-aware-forecasting"
+  mode: "offline"

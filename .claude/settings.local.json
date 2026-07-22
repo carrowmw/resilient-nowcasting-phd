@@ -47,7 +47,10 @@
       "Bash(git -C /workspace show HEAD:scripts/verify_phase2_phase3.sh)",
       "Bash(git *)",
       "Bash(echo \"exit=$?\")",
-      "Bash(echo \"any_exit=$?\")"
+      "Bash(echo \"any_exit=$?\")",
+      "Bash(pdfinfo /workspace/temp/mdpi_sensors.pdf)",
+      "Bash(pdftotext /workspace/temp/mdpi_sensors.pdf -)",
+      "Bash(pdfinfo /workspace/docs/thesis.pdf)"
     ]
   }
 }
