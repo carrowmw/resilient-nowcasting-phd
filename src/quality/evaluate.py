@@ -31,6 +31,29 @@ def _rmse_mae(y: np.ndarray, p: np.ndarray) -> Dict[str, float]:
     }
 
 
+def _scale_metrics(y: np.ndarray, p: np.ndarray) -> Dict[str, float]:
+    """MAPE, SMAPE, CV(RMSE), and mean count — scale-aware metrics.
+
+    MAPE denominator uses max(|y|, 1) to handle zero-count targets without
+    silently dropping them (the zero is a real observation in pedestrian data).
+    """
+    assert y.shape == p.shape, f"CRITICAL: shape mismatch {y.shape} vs {p.shape}"
+    abs_err = np.abs(p - y)
+    safe_denom = np.maximum(np.abs(y), 1.0)
+    mape = float(np.mean(abs_err / safe_denom) * 100.0)
+    smape_denom = np.abs(y) + np.abs(p)
+    smape = float(np.mean(2.0 * abs_err / np.maximum(smape_denom, 1e-8)) * 100.0)
+    mean_count = float(np.mean(y))
+    rmse = float(np.sqrt(np.mean((p - y) ** 2)))
+    cv_rmse = float(rmse / max(mean_count, 1e-8) * 100.0)
+    return {
+        "mape": mape,
+        "smape": smape,
+        "mean_count": mean_count,
+        "cv_rmse": cv_rmse,
+    }
+
+
 def evaluate_split(split: PerSensorSplit, preds_scaled: np.ndarray) -> Dict[str, float]:
     """Aggregate metrics for one (sensor, model, horizon, variant, split)."""
     assert len(preds_scaled) == len(split), \
@@ -44,6 +67,8 @@ def evaluate_split(split: PerSensorSplit, preds_scaled: np.ndarray) -> Dict[str,
     metrics: Dict[str, float] = {}
     for k, v in _rmse_mae(y_raw, p_raw).items():
         metrics[f"{k}_raw"] = v
+    for k, v in _scale_metrics(y_raw, p_raw).items():
+        metrics[f"{k}_raw"] = v
     for k, v in _rmse_mae(split.y_scaled, preds_scaled).items():
         metrics[f"{k}_scaled"] = v
 
@@ -53,9 +78,15 @@ def evaluate_split(split: PerSensorSplit, preds_scaled: np.ndarray) -> Dict[str,
     if real.any():
         for k, v in _rmse_mae(y_raw[real], p_raw[real]).items():
             metrics[f"{k}_raw_real_only"] = v
+        for k, v in _scale_metrics(y_raw[real], p_raw[real]).items():
+            metrics[f"{k}_raw_real_only"] = v
     else:
         metrics["rmse_raw_real_only"] = float("nan")
         metrics["mae_raw_real_only"] = float("nan")
+        metrics["mape_raw_real_only"] = float("nan")
+        metrics["smape_raw_real_only"] = float("nan")
+        metrics["mean_count_raw_real_only"] = float("nan")
+        metrics["cv_rmse_raw_real_only"] = float("nan")
     return metrics
 
 
