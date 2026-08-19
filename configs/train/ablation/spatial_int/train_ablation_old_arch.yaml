@@ -13,9 +13,9 @@
 # ============================================================================
 
 wandb:
-  project: "resilient-iot-v2"
-  sweep_project: "resilient-iot-sweeps-v2"
-  collection: "ablation-old-arch-inductive"
+  project: "resilient-iot-v3"
+  sweep_project: "resilient-iot-sweeps-v3"
+  collection: "ablation-spatial-int"
 
 data:
   # Full 3-year range (same as crisp-puddle-47 / radiant-voice-41)

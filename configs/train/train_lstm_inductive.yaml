@@ -4,9 +4,9 @@
 
 wandb:
   # The Weights & Biases project name for standard training runs.
-  project: "resilient-iot-v2"
+  project: "resilient-iot-v3"
   # The Weights & Biases project name used when running hyperparameter sweeps.
-  sweep_project: "resilient-iot-sweeps-v2"
+  sweep_project: "resilient-iot-sweeps-v3"
   # The collection namespace for model artifacts to group checkpoints together.
   collection: "lstm-baseline-inductive"
 

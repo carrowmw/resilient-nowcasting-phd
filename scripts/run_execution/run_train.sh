@@ -21,8 +21,8 @@
 # ==============================================================================
 
 # Default values
-CONFIG_FILE="configs/train/train_riot_full_inductive.yaml"
-GPUS="1"
+CONFIG_FILE="configs/train/ablation/spatial_int/train_ablation_old_arch.yaml"
+GPUS="3"
 DETACH=true
 USE_MOCK_DATA=false
 

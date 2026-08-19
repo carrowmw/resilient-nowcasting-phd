@@ -1,7 +1,7 @@
 wandb:
-  project: "resilient-iot-v2-test"
-  sweep_project: "resilient-iot-sweeps-v2-test"
-  collection: "resilient-iot-model-v2-test"
+  project: "resilient-iot-v3-test"
+  sweep_project: "resilient-iot-sweeps-v3-test"
+  collection: "resilient-iot-model-v3-test"
 
 data:
   start_date: "2024-04-02"

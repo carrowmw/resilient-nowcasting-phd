@@ -63,9 +63,15 @@ def apply_interpolation(
         if method == "linear":
             filled = series.interpolate(method="linear", limit=limit, limit_area="inside")
         else:
-            filled = series.interpolate(
-                method="spline", order=spline_order, limit=limit, limit_area="inside"
-            )
+            if series.notna().sum() > spline_order:
+                filled = series.interpolate(
+                    method="spline", order=spline_order, limit=limit, limit_area="inside"
+                )
+            else:
+                logger.warning(
+                    f"{series.name} [spline]: insufficient valid points ({int(series.notna().sum())} <= {spline_order}) for spline interpolation; leaving un-interpolated"
+                )
+                filled = series.copy()
         # Spline can overshoot into negative counts — clamp to the count domain
         # and record how much was clamped (no silent behavior).
         n_neg = int((filled < 0).sum())
