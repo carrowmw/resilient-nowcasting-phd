@@ -121,10 +121,20 @@ def _knn_impute(series: pd.Series, n_neighbors: int) -> pd.Series:
     missing = ~observed
     if not missing.any():
         return series.copy()
-    assert observed.sum() >= n_neighbors, \
-        f"CRITICAL: only {int(observed.sum())} observed points < k={n_neighbors}"
+    n_obs = int(observed.sum())
+    if n_obs == 0:
+        logger.warning(
+            f"{series.name} [knn]: zero observed points; leaving un-interpolated"
+        )
+        return series.copy()
 
-    knn = KNeighborsRegressor(n_neighbors=n_neighbors, weights="distance")
+    k = min(n_neighbors, n_obs)
+    if k < n_neighbors:
+        logger.warning(
+            f"{series.name} [knn]: only {n_obs} observed points < k={n_neighbors}; clamping k={k}"
+        )
+
+    knn = KNeighborsRegressor(n_neighbors=k, weights="distance")
     knn.fit(features[observed], series.to_numpy(dtype=float)[observed])
     predicted = knn.predict(features[missing])
 

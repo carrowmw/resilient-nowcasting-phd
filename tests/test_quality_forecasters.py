@@ -205,6 +205,18 @@ def test_knn_fills_everything_nonnegative():
     assert mask.sum() == s.isna().sum()
 
 
+def test_knn_sparse_series_adaptive_k():
+    idx = pd.date_range("2024-01-01", periods=20, freq="15min")
+    s = pd.Series(np.nan, index=idx, name="sparse__x")
+    s.iloc[0] = 5.0
+    s.iloc[5] = 10.0
+    s.iloc[10] = 7.0  # 3 points < k=5
+    filled, mask = apply_interpolation(s, "knn", knn_neighbors=5)
+    assert filled.notna().all()
+    assert (filled >= 0).all()
+    assert mask.sum() == 17
+
+
 # ----------------------------------------------------------------- periodogram
 
 def test_lomb_scargle_finds_24h_peak_despite_gaps():
