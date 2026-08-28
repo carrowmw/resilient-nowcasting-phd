@@ -1,0 +1,732 @@
+% !TEX root = ../index.tex
+% =============================================================================
+% Chapter 3: Methodology
+% =============================================================================
+
+\chapter{Methodology}
+\label{ch:methodology}
+
+% Chapter introduction
+This chapter presents the research methodology adopted in this thesis. It begins with an overview of the research philosophy and design, followed by detailed descriptions of the proposed spatio-temporal forecasting architecture, the masked auto-encoding training strategy, and the uncertainty quantification framework.
+
+In line with the experimental narrative of this thesis, the methodology is presented as an \emph{evolution} of models and assumptions across three experiments: (i) single-sensor temporal forecasting, (ii) multi-sensor spatio-temporal forecasting, and (iii) reconstruction-augmented forecasting designed for operational resilience under sensor outages. General design principles are introduced here, while experiment-specific details (including targeted mini literature reviews and deviations from the general configuration) are provided in Chapters~\ref{ch:exp1}--\ref{ch:exp3}.
+
+\section{Theoretical Preliminaries}
+% =============================================================================
+\section{Theoretical Preliminaries}
+\label{sec:meth-prelims}
+% =============================================================================
+
+This section establishes the mathematical foundations for the three core components that are combined in the spatio-temporal architecture developed across Experiments~1--3. Notation introduced here is used throughout the remainder of this thesis.
+
+% ---------------------------------------------------------------------------
+\subsection{Graph Attention Networks (GATv2)}
+\label{subsec:meth-gatv2}
+% ---------------------------------------------------------------------------
+
+Graph Neural Networks (GNNs) generalise deep learning to non-Euclidean domains by propagating information along the edges of a graph $G = (V, E)$ with $N = |V|$ nodes. In the sensor network setting, each node $i \in V$ represents a sensor with a feature vector $\mathbf{h}_i \in \mathbb{R}^{F}$, and each edge $(i,j) \in E$ encodes a spatial relationship between sensors.
+
+\subsubsection{Static vs.\ Learned Attention}
+
+The original Graph Attention Network (GAT)~\cite{velickovicGraphAttentionNetworks2018} computes attention coefficients between neighbouring nodes as
+
+\begin{equation}
+    e_{ij} = \text{LeakyReLU}\!\bigl(\mathbf{a}^{\top} [\mathbf{W}\mathbf{h}_i \,\|\, \mathbf{W}\mathbf{h}_j]\bigr),
+    \label{eq:gat-static}
+\end{equation}
+
+\noindent where $\mathbf{W} \in \mathbb{R}^{F' \times F}$ is a shared linear transformation, $\mathbf{a} \in \mathbb{R}^{2F'}$ is the attention vector, and $\|$ denotes concatenation. \citet{brodyHowAttentiveAre2022} showed that GAT's attention is \emph{static}: because the concatenation is followed by a single linear map and then a nonlinearity, the ranking of attention scores over neighbours is independent of the query node. That is, a node $j$ that receives high attention from one query $i$ will receive high attention from \emph{every} query, regardless of the query's features.
+
+GATv2~\cite{brodyHowAttentiveAre2022} resolves this limitation by applying the nonlinearity \emph{before} the final linear projection:
+
+\begin{equation}
+    e_{ij} = \mathbf{a}^{\top} \text{LeakyReLU}\!\bigl(\mathbf{W} [\mathbf{h}_i \,\|\, \mathbf{h}_j]\bigr).
+    \label{eq:gatv2-dynamic}
+\end{equation}
+
+\noindent This reordering yields \emph{dynamic} attention: the ranking of neighbours can change depending on the query node, which is desirable for sensor networks where the relevance of a neighbouring sensor depends on the local traffic conditions of the query sensor.
+
+\subsubsection{Edge-Feature-Aware Attention}
+
+When edges carry physical attributes $\mathbf{e}_{ij} \in \mathbb{R}^{D_e}$ (e.g., road network distances, road type fractions), these can be incorporated into the attention computation via an edge projection $\boldsymbol{\Theta}_e \in \mathbb{R}^{F' \times D_e}$:
+
+\begin{equation}
+    e_{ij} = \mathbf{a}^{\top} \text{LeakyReLU}\!\bigl(\mathbf{W} [\mathbf{h}_i \,\|\, \mathbf{h}_j] + \boldsymbol{\Theta}_e \mathbf{e}_{ij}\bigr).
+    \label{eq:gatv2-edge}
+\end{equation}
+
+\noindent This formulation allows the model to modulate spatial message passing based on the physical characteristics of the connection between two sensors, rather than relying solely on feature similarity.
+
+\subsubsection{Multi-Head Attention and Normalisation}
+
+Attention coefficients are normalised over the neighbourhood $\mathcal{N}(i)$ using the softmax function:
+
+\begin{equation}
+    \alpha_{ij} = \frac{\exp(e_{ij})}{\sum_{k \in \mathcal{N}(i)} \exp(e_{ik})}.
+    \label{eq:gat-softmax}
+\end{equation}
+
+\noindent The output representation of node $i$ under a single attention head is
+
+\begin{equation}
+    \mathbf{h}'_i = \sigma\!\Bigl(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} \, \mathbf{W} \mathbf{h}_j\Bigr),
+    \label{eq:gat-aggregate}
+\end{equation}
+
+\noindent where $\sigma$ is a nonlinear activation. To stabilise learning and increase representational capacity, $K$ independent attention heads are computed in parallel, each with its own parameters $(\mathbf{W}^{(k)}, \mathbf{a}^{(k)})$, and the outputs are concatenated:
+
+\begin{equation}
+    \mathbf{h}'_i = \Bigr\|_{k=1}^{K} \sigma\!\Bigl(\sum_{j \in \mathcal{N}(i)} \alpha_{ij}^{(k)} \, \mathbf{W}^{(k)} \mathbf{h}_j\Bigr),
+    \label{eq:gat-multihead}
+\end{equation}
+
+\noindent yielding an output of dimensionality $K \cdot F'$. If $F' = H / K$ for a target hidden dimension $H$, the concatenation produces a vector of dimension $H$.
+
+% ---------------------------------------------------------------------------
+\subsection{Transformer Self-Attention}
+\label{subsec:meth-transformer}
+% ---------------------------------------------------------------------------
+
+While graph attention captures spatial dependencies among nodes at a single time step, temporal dependencies across a sequence of $T$ time steps are modelled using the Transformer architecture~\cite{vaswaniAttentionAllYou2017}. The core mechanism is \emph{scaled dot-product attention}, which allows each position in a sequence to attend to every other position.
+
+\subsubsection{Scaled Dot-Product Attention}
+
+Given an input sequence $\mathbf{X} \in \mathbb{R}^{T \times H}$, three linear projections produce queries $\mathbf{Q} = \mathbf{X}\mathbf{W}_Q$, keys $\mathbf{K} = \mathbf{X}\mathbf{W}_K$, and values $\mathbf{V} = \mathbf{X}\mathbf{W}_V$, where $\mathbf{W}_Q, \mathbf{W}_K \in \mathbb{R}^{H \times d_k}$ and $\mathbf{W}_V \in \mathbb{R}^{H \times d_v}$. The attention output is
+
+\begin{equation}
+    \text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^{\top}}{\sqrt{d_k}}\right)\mathbf{V},
+    \label{eq:scaled-dot-product}
+\end{equation}
+
+\noindent where the scaling factor $\sqrt{d_k}$ prevents the dot products from growing excessively large in high-dimensional spaces, which would push the softmax into regions of extremely small gradients.
+
+\subsubsection{Multi-Head Self-Attention}
+
+As with graph attention, multiple attention heads are computed in parallel:
+
+\begin{equation}
+    \text{MultiHead}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \bigl[\text{head}_1 \,\|\, \cdots \,\|\, \text{head}_K\bigr]\mathbf{W}_O,
+    \label{eq:multihead}
+\end{equation}
+
+\noindent where each $\text{head}_k = \text{Attention}(\mathbf{Q}\mathbf{W}_Q^{(k)}, \mathbf{K}\mathbf{W}_K^{(k)}, \mathbf{V}\mathbf{W}_V^{(k)})$ and $\mathbf{W}_O \in \mathbb{R}^{Kd_v \times H}$ is a final output projection. Each head can attend to different temporal patterns (e.g., short-range diurnal cycles vs.\ longer-term trends).
+
+\subsubsection{Transformer Encoder Layer}
+
+A single Transformer encoder layer applies multi-head self-attention followed by a position-wise feed-forward network, with residual connections and layer normalisation at each stage:
+
+\begin{align}
+    \mathbf{Z} &= \text{LayerNorm}\bigl(\mathbf{X} + \text{MultiHead}(\mathbf{X}, \mathbf{X}, \mathbf{X})\bigr), \label{eq:transformer-attn} \\
+    \mathbf{X}' &= \text{LayerNorm}\bigl(\mathbf{Z} + \text{FFN}(\mathbf{Z})\bigr), \label{eq:transformer-ffn}
+\end{align}
+
+\noindent where $\text{FFN}(\mathbf{z}) = \text{ReLU}(\mathbf{z}\mathbf{W}_1 + \mathbf{b}_1)\mathbf{W}_2 + \mathbf{b}_2$ with $\mathbf{W}_1 \in \mathbb{R}^{H \times d_{ff}}$ and $\mathbf{W}_2 \in \mathbb{R}^{d_{ff} \times H}$. A stack of $L$ such layers produces progressively higher-order temporal representations.
+
+% ---------------------------------------------------------------------------
+\subsection{Encoder--Decoder Architectures}
+\label{subsec:meth-encdec}
+% ---------------------------------------------------------------------------
+
+The spatio-temporal model in this thesis follows a general encoder--decoder pattern. An \emph{encoder} $f_{\text{enc}}$ maps the raw input (dynamic sensor readings, graph structure, and missingness indicators) to a shared latent representation $\mathbf{Z}$, and one or more \emph{decoders} $g_{\text{dec}}^{(m)}$ map $\mathbf{Z}$ to task-specific outputs.
+
+\subsubsection{Shared Latent Representation}
+
+Given a spatiotemporal input tensor $\mathbf{X} \in \mathbb{R}^{B \times N \times T \times D}$ (batch size $B$, $N$ nodes, $T$ time steps, $D$ input features) and a graph $G = (V, E)$ with edge features, the encoder produces
+
+\begin{equation}
+    \mathbf{Z} = f_{\text{enc}}(\mathbf{X}, G) \in \mathbb{R}^{B \times N \times T \times H},
+    \label{eq:encoder-latent}
+\end{equation}
+
+\noindent where $H$ is the hidden dimension. The encoder combines spatial processing (via GATv2 across nodes at each time step) and temporal processing (via Transformer self-attention across time steps for each node). This two-stage design is described in detail in Section~\ref{sec:meth-architecture}.
+
+\subsubsection{Multi-Task Decoding}
+
+The shared latent representation $\mathbf{Z}$ is consumed by $M$ task-specific decoder heads. In this thesis, three decoding objectives are considered across the experimental progression:
+
+\begin{enumerate}
+    \item \textbf{Imputation} (reconstruction): $g_{\text{imp}}(\mathbf{Z}) \in \mathbb{R}^{B \times N \times T \times D}$ reconstructs the full input sequence, including values at masked positions.
+    \item \textbf{Forecasting}: $g_{\text{fore}}(\mathbf{Z}_{:,:,-1,:}) \in \mathbb{R}^{B \times N \times P}$ predicts future values from the last-timestep embedding, where $P$ denotes the number of distributional parameters (e.g., $\mu$, $\theta$, $\pi$ for a ZINB forecasting head).
+    \item \textbf{Spatial kriging}: $g_{\text{krig}}(\mathbf{Z}_{:,\mathcal{H},:,:}) \in \mathbb{R}^{B \times |\mathcal{H}| \times T \times D}$ reconstructs the time series at spatially held-out nodes $\mathcal{H} \subset V$, testing the model's ability to infer values at unobserved locations.
+\end{enumerate}
+
+\noindent Not all experiments employ all three heads; the specific decoder configuration for each experiment is described in Chapters~\ref{ch:exp1}--\ref{ch:exp3}. The joint training objective combines the individual decoder losses:
+
+\begin{equation}
+    \mathcal{L}_{\text{joint}} = w_{\text{imp}} \,\mathcal{L}_{\text{imp}} + w_{\text{fore}} \,\mathcal{L}_{\text{fore}} + w_{\text{krig}} \,\mathcal{L}_{\text{krig}},
+    \label{eq:joint-loss}
+\end{equation}
+
+\noindent where $w_{\text{imp}}, w_{\text{fore}}, w_{\text{krig}}$ are scalar weights controlling the relative importance of each objective. The individual loss functions are defined in Section~\ref{subsec:meth-loss-function}.
+
+% =============================================================================
+\section{Research Philosophy and Approach}
+\label{sec:meth-philosophy}
+% =============================================================================
+
+\subsection{Research Paradigm}
+\label{subsec:meth-paradigm}
+% ---------------------------------------------------------------------------
+
+This thesis adopts a \emph{post-positivist} stance. The underlying assumption is that pedestrian and vehicle flow in an urban environment is governed by real, measurable processes --- diurnal activity patterns, weather conditions, spatial topology --- and that quantitative models can approximate these processes with increasing fidelity. The research objective is therefore empirical: to develop, train, and evaluate models against observed data, and to make falsifiable claims about which architectural choices improve predictive accuracy and operational resilience.
+
+A strictly positivist position, however, would be insufficient here. The data are incomplete by nature: sensors fail intermittently, and the dataset provides no ground-truth labels distinguishing genuine zero activity from transmission dropout. This irreducible ambiguity motivates a probabilistic treatment of the target variable, in which the model is required to express uncertainty explicitly rather than producing point estimates that imply false precision. This is consistent with the post-positivist recognition that measurement is inherently fallible and that all models are approximations of an incompletely observable reality \citep{shandCentralWorksPhilosophy2005}.
+
+The choice to model uncertainty quantitatively rather than qualitatively reflects the engineering context of the work: the outputs of the model are intended for operational use in traffic management systems, where a calibrated probability distribution over future counts is more actionable than a single predicted value with no associated confidence.
+
+% ---------------------------------------------------------------------------
+\subsection{Research Design}
+\label{subsec:meth-design}
+% ---------------------------------------------------------------------------
+
+The empirical component of this thesis follows a \emph{quantitative, experimental} design structured as a sequence of three progressive experiments. Each experiment corresponds to one of the three research objectives and introduces a specific increase in model capability, enabling a controlled comparison between successive architectures.
+
+\subsubsection{Progressive Experimental Structure}
+
+The three experiments are not independent: each builds directly on the preceding one. Experiment~1 (Chapter~\ref{ch:exp1}) establishes single-sensor temporal forecasting baselines and characterises the missingness structure of the dataset. Experiment~2 (Chapter~\ref{ch:exp2}) introduces explicit spatial modelling using graph-structured learning, enabling a direct measurement of the gain attributable to incorporating inter-sensor relationships. Experiment~3 (Chapter~\ref{ch:exp3}) augments the spatial model with a reconstruction objective, equipping the pipeline with the operational resilience required under sensor outages. This progressive structure ensures that each new component is evaluated against a well-understood baseline, and that claims about model improvement are grounded in controlled comparisons rather than end-to-end black-box evaluation.
+
+\subsubsection{Ablation Methodology}
+
+Where the architecture contains multiple distinct components --- the dynamic graph learner, the spatial encoder, the temporal encoder, and the multi-task decoder heads --- an \emph{ablation study} approach is adopted to isolate the contribution of each. A component is ablated by removing or replacing it with a simpler baseline (e.g., substituting GATv2 spatial encoding with an independent per-node recurrent model), and the resulting change in held-out performance is measured. This makes it possible to attribute performance differences to specific design choices rather than to the overall system.
+
+\subsubsection{Train, Validation, and Test Protocol}
+
+All experiments use a chronological train/validation/test split of the time series data to prevent information leakage from future observations into the training process. Hyperparameters are tuned exclusively on the validation set. The test set is used only for final evaluation and is not examined during model development. The specific date ranges used for each split are reported in the relevant experiment chapters.
+
+
+% =============================================================================
+\section{Conceptual Framework}
+\label{sec:meth-framework}
+% =============================================================================
+
+The overarching goal of this research is to develop an operational, resilient spatio-temporal machine learning framework capable of robust forecasting and spatial reconstruction across imperfect urban sensor networks. Real-world municipal Internet of Things (IoT) deployments deviate substantially from the idealised, clean benchmark datasets commonly encountered in literature. In practice, municipal sensor networks exhibit three pervasive operational challenges:
+
+\begin{enumerate}
+    \item \textbf{Severe and Ambiguous Missingness:} Sensors experience intermittent power failures, packet loss, and hardware downtime. Crucially, raw telemetry feeds typically record non-reports as \texttt{null} values indistinguishably from true zero-flow conditions, creating total null-zero conflation.
+    \item \textbf{Non-Euclidean Spatial Dependencies:} Sensor interactions are governed by road topologies, pedestrian infrastructure, and urban land-use morphology rather than simple Euclidean proximity.
+    \item \textbf{Dynamic and Evolving Network Topology:} Sensors are frequently decommissioned, newly installed, or temporarily unmonitored, requiring models capable of inductive spatial inference (kriging) without retraining the entire network architecture.
+\end{enumerate}
+
+To address these challenges, this thesis proposes a modular, multi-task spatio-temporal architecture that decouples spatial topology learning, spatial message passing, temporal sequence processing, and task-specific decoding, as illustrated in the conceptual workflow of Figure~\ref{fig:conceptual_framework}.
+
+\begin{figure}[htb!]
+    \centering
+    % Ensure you export from draw.io as a PDF with 'Crop to Content' selected
+    \includegraphics[width=\linewidth]{figures/methodology/conceptual_pipeline_framework.pdf}
+    \caption{Conceptual framework of the proposed resilient IoT spatio-temporal pipeline, illustrating the flow from raw multi-modal inputs through dynamic topology inference to decoupled forecasting, imputation, and spatial kriging heads.}
+    \label{fig:conceptual_framework}
+\end{figure}
+
+A foundational design principle of this framework is the explicit conceptual separation between \textbf{temporal forecasting} and \textbf{spatial reconstruction}:
+\begin{itemize}
+    \item \textbf{Temporal Forecasting} is formulated as a sequence-to-point (or sequence-to-sequence) mapping conditioned on historical context windows $\{t-K+1, \dots, t\}$ to predict future traffic states $\{t+1, \dots, t+H\}$.
+    \item \textbf{Spatial Reconstruction (Kriging / Imputation)} is formulated as a spatial aggregation problem across contemporaneous sensor observations at time slice $t$. This enables unobserved or failed nodes to borrow predictive strength from operational neighbours via learned graph attention.
+\end{itemize}
+
+% =============================================================================
+\section{Methodological Evolution Across Experiments}
+\label{sec:meth-evolution}
+% =============================================================================
+
+Rather than presenting the final proposed system as an unmotivated monolith, this thesis adopts an evolutionary research methodology. The experimental programme is organised into three successive, increasingly sophisticated experiments aligned with the primary Research Objectives (RO1--RO3). Each experiment isolates specific architectural hypotheses, allowing the methodological design choices of the final pipeline to be empirically justified.
+
+\subsection{Progression of Research Objectives}
+\label{subsec:meth-obj-progression}
+
+\begin{enumerate}
+    \item \textbf{Experiment~1: Temporal Forecasting and Missingness Regimes (RO1, Chapter~\ref{ch:exp1}).}
+    Focuses on single-sensor temporal baselines and investigates how missing data regimes affect predictive fidelity. It establishes the limits of classical statistical methods (e.g., ARIMA) and non-spatial recurrent deep learning models (LSTM, GRU), demonstrating that naive preprocessing heuristics (such as global mean imputation or deletion) introduce severe distributional distortion under structural missingness.
+
+    \item \textbf{Experiment~2: Multi-Sensor Spatio-Temporal Modelling via Graph Attention (RO2, Chapter~\ref{ch:exp2}).}
+    Introduces explicit spatial topology modelling to evaluate the marginal value of spatial graph neural networks over purely temporal baselines. By employing Graph Attention Networks (GATv2), this experiment isolates how dynamic inter-sensor correlation improves temporal interpolation and robustness during localised sensor dropouts.
+
+    \item \textbf{Experiment~3: Resilient End-to-End Reconstruction and Forecasting (RO3, Chapter~\ref{ch:exp3}).}
+    Integrates all components into the full \gls{riot} pipeline. This phase introduces end-to-end dynamic graph learning from static urban morphology, explicit missingness indicator channels (structural MNAR masks), multi-task decoding (joint imputation, forecasting, and zero-shot spatial kriging), and a probabilistic Zero-Inflated Negative Binomial (\gls{zinb}) loss framework to resolve null-zero conflation.
+\end{enumerate}
+
+\subsection{Key Methodological Shifts and Lessons Learned}
+\label{subsec:meth-lessons}
+
+The progression from simple baselines to the complete \gls{riot} architecture was guided by several pivotal methodological insights:
+
+\begin{itemize}
+    \item \textbf{From Two-Stage Pre-Imputation to Joint Multi-Task Learning:}
+    Initial approaches in spatio-temporal forecasting often treat imputation as an upstream, disconnected preprocessing step. Early investigations in this research revealed that deterministic pre-imputation propagates synthetic errors directly into the forecasting model. The methodology subsequently shifted to joint end-to-end training, where the shared latent representation $\mathbf{Z}$ is simultaneously optimised for both sequence reconstruction and future-step forecasting.
+
+    \item \textbf{From Static Adjacency to Dynamic Graph Learning:}
+    Relying strictly on fixed Euclidean distance matrices fails to capture non-linear urban functional similarities (e.g., two distant sensors located in comparable commercial retail hubs). The methodology evolved to infer graph topology dynamically from rich static urban morphology vectors while incorporating physical OpenStreetMap road attributes directly into the graph attention mechanism.
+
+    \item \textbf{Decoupled Domain Normalisation for Count Likelihoods:}
+    Standard deep learning pipelines apply standardisation ($z$-score scaling) uniformly across all feature tensors. However, standardising count targets converts discrete, non-negative integer flows into continuous signed floats, directly violating the support of discrete count distributions. The final methodology enforces decoupled scaling: continuous dynamic features (weather and masked inputs) are scaled for stable gradient propagation, while count targets are preserved in their native non-negative integer domain for exact Negative Binomial likelihood evaluation.
+\end{itemize}
+
+
+% =============================================================================
+\section{Methodological Evolution Across Experiments}
+\label{sec:meth-evolution}
+% =============================================================================
+
+To avoid presenting results as a single, monolithic evaluation, the empirical component of this thesis is structured as a sequence of experiments that progressively increase realism and capability.
+
+\begin{enumerate}
+    \item \textbf{Experiment~1 (Chapter~\ref{ch:exp1}):} establishes single-sensor temporal baselines and a validation-driven treatment of missingness regimes.
+    \item \textbf{Experiment~2 (Chapter~\ref{ch:exp2}):} introduces explicit spatial modelling for multi-sensor forecasting to quantify the gains from graph-structured learning.
+    \item \textbf{Experiment~3 (Chapter~\ref{ch:exp3}):} integrates a reconstruction objective to achieve resilience without requiring a separate imputation stage.
+\end{enumerate}
+
+% =============================================================================
+\section{Feature Engineering and Data Representation}
+\label{sec:meth-data}
+% =============================================================================
+
+This section describes how raw sensor telemetry is transformed into the tensor representations consumed by the model. The raw data sources themselves --- the sensor network, study area, and exploratory data analysis --- are presented in Chapter~\ref{ch:data}. The focus here is on the \emph{methodological} pipeline: the ingestion interface, feature derivation, missingness encoding, normalisation, and windowed dataset construction.
+
+% ---------------------------------------------------------------------------
+\subsection{Data Ingestion Interface}
+\label{subsec:meth-ingestion}
+% ---------------------------------------------------------------------------
+
+All experiments share a common data access contract defined by a \texttt{DataConnector} abstraction that exposes three methods:
+
+\begin{enumerate}
+    \item \texttt{load\_traffic(start, end, veh\_class, direction)} returns time-stamped vehicle or pedestrian counts at 15-minute resolution.
+    \item \texttt{load\_weather(start, end, locations)} returns contemporaneous humidity and solar radiation readings, spatially joined to the nearest weather station.
+    \item \texttt{load\_static\_features(locations)} returns the pre-computed 15-dimensional urban morphology vector for each sensor location.
+\end{enumerate}
+
+\noindent The three result sets are merged on \texttt{(dt, location)} to produce a single time-indexed, location-indexed panel dataframe. This merge is subject to fail-fast assertions: the pipeline crashes immediately if any weather join introduces \texttt{NaN} values or if any expected static feature column is missing.
+
+% ---------------------------------------------------------------------------
+\subsection{Static Urban Morphology Features}
+\label{subsec:meth-static-features}
+% ---------------------------------------------------------------------------
+
+Each sensor node $i$ is characterised by a static feature vector $\mathbf{s}_i \in \mathbb{R}^{15}$, derived from two external data sources: the Google Places API (Points of Interest) and OpenStreetMap (network topology). These features are computed once per sensor location and remain constant across all time steps. They serve two purposes: (i) they provide the input to the Dynamic Graph Learner for topology inference (Section~\ref{sec:meth-architecture}), and (ii) they encode urban context that is not directly observable from traffic counts alone.
+
+The 15 features are organised into three groups:
+
+\subsubsection{Points-of-Interest Counts (7 features)}
+
+Using the Google Places API, the number of establishments within a fixed radius of each sensor is queried across six functional categories and one aggregate:
+
+\begin{enumerate}
+    \item \texttt{transit\_count}: Public transport stops and stations.
+    \item \texttt{retail\_count}: Shops and commercial establishments.
+    \item \texttt{food\_drink\_count}: Restaurants, cafés, and takeaways.
+    \item \texttt{nightlife\_count}: Bars, pubs, and clubs.
+    \item \texttt{education\_count}: Schools and universities.
+    \item \texttt{recreation\_count}: Parks, gyms, and leisure facilities.
+    \item \texttt{total\_poi\_count}: Sum across all categories.
+\end{enumerate}
+
+\subsubsection{Land-Use and Spatial Context (3 features)}
+
+\begin{enumerate}
+    \setcounter{enumi}{7}
+    \item \texttt{landuse\_entropy}: Shannon entropy over the six POI category counts, capturing the \emph{diversity} of surrounding land use. A high-entropy location (mixed commercial/residential/leisure) may exhibit more complex diurnal flow patterns than a mono-functional site.
+    \item \texttt{is\_school\_zone}: Binary indicator ($\{0, 1\}$) for sensors within 200\,m of an educational facility. School zones introduce sharp, calendar-dependent traffic spikes that are absent elsewhere.
+    \item \texttt{dist\_to\_city\_centre}: Euclidean distance from the sensor to the city centre (Newcastle upon Tyne, 54.974°N, 1.613°W), providing a radial urban-rural gradient.
+\end{enumerate}
+
+\subsubsection{Network Centrality Metrics (5 features)}
+
+Using the OpenStreetMap pedestrian walking network, graph-theoretic centrality metrics are computed for each sensor's nearest network node:
+
+\begin{enumerate}
+    \setcounter{enumi}{10}
+    \item \texttt{betweenness\_centrality}: Fraction of shortest paths passing through the node, indicating its role as a ``bridge'' in the network.
+    \item \texttt{closeness\_centrality}: Inverse of the mean shortest-path distance to all other nodes, measuring topological accessibility.
+    \item \texttt{degree\_centrality}: Normalised node degree in the walking network.
+    \item \texttt{nearby\_bus\_stops}: Count of bus stops within a fixed radius, capturing public transport connectivity.
+    \item \texttt{nearby\_parking}: Count of parking facilities within a fixed radius, capturing vehicle access.
+\end{enumerate}
+
+\noindent All 15 features are standardised (zero mean, unit variance) via a \texttt{StandardScaler} fitted on the training set before being passed to the model.
+
+% ---------------------------------------------------------------------------
+\subsection{Dynamic Feature Representation and Structural MNAR Masks}
+\label{subsec:meth-dynamic-features}
+% ---------------------------------------------------------------------------
+
+The encoder receives a dynamic input tensor $\mathbf{X} \in \mathbb{R}^{B \times N \times T \times 5}$ formed by concatenating three scaled observation channels with two binary structural missingness indicators:
+
+\begin{table}[htbp]
+    \centering
+    \caption{Channel layout of the 5-dimensional dynamic encoder input tensor.}
+    \label{tab:encoder-channels}
+    \begin{tabular}{clll}
+        \toprule
+        \textbf{Ch.} & \textbf{Name} & \textbf{Source} & \textbf{Scaling} \\
+        \midrule
+        0 & Traffic count      & Vehicle/pedestrian detections & Dedicated \texttt{StandardScaler} \\
+        1 & Humidity           & Nearest weather station       & Dedicated \texttt{StandardScaler} \\
+        2 & Solar radiation    & Nearest weather station       & (shared with Ch.~1) \\
+        \midrule
+        3 & Total MNAR mask    & $\mathbb{1}[\text{raw value is \texttt{null}}]$ & Binary $\{0, 1\}$ \\
+        4 & Night MNAR mask    & $\mathbb{1}[\text{\texttt{null}} \wedge \text{hour} \in [0,\,5)]$ & Binary $\{0, 1\}$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsubsection{Rationale for Explicit Missingness Channels}
+
+The mask channels encode \emph{where} and \emph{when} data is absent as first-class input features, rather than relying on implicit signals (e.g., zero-valued inputs that are indistinguishable from genuine zero-flow observations). This design is motivated by the null-zero conflation problem described in Section~\ref{subsec:meth-missingness-regimes}: because the raw telemetry does not distinguish sensor failure from genuine inactivity, the model must learn this distinction from contextual cues.
+
+Channel~3 (total MNAR mask) is set to 1 wherever the raw traffic count is \texttt{null}, regardless of time of day. Channel~4 (night MNAR mask) is set to 1 only when a \texttt{null} value occurs during the nighttime window (00:00--05:00), a period when genuine zero activity is plausible. The asymmetry between the two channels provides the model with a structured prior: if both channels are active, the missingness is plausibly \emph{sampling} (genuine inactivity); if only Channel~3 is active (daytime \texttt{null}), the missingness is more likely \emph{structural} (sensor failure).
+
+After mask extraction, all \texttt{null} values in the observation channels are filled with $0.0$ so that the input tensor contains no \texttt{NaN} values. This fill is intentionally uninformative: the model is expected to rely on the mask channels, not on the fill value, for information about missing observations.
+
+\subsubsection{Decoupled Normalisation Strategy}
+\label{subsubsec:meth-decoupled-scaling}
+
+A critical design decision is the \emph{separation of scaling domains} between encoder inputs and forecast targets:
+
+\begin{itemize}
+    \item \textbf{Encoder inputs} (Channels 0--2) are $z$-score normalised to stabilise gradient propagation through the GATv2 and Transformer layers.
+    \item \textbf{Forecast targets} are preserved as \emph{raw, unscaled, non-negative integer counts}. This is essential because the ZINB negative log-likelihood (Section~\ref{subsec:meth-loss-function}) is defined over a discrete count domain; applying \texttt{StandardScaler} to the targets would convert them to signed floats, invalidating the distributional assumption.
+\end{itemize}
+
+\noindent Furthermore, traffic counts (Channel~0) and weather covariates (Channels~1--2) use separate \texttt{StandardScaler} instances to prevent cross-domain contamination. The traffic scaler statistics ($\mu_{\text{traffic}}, \sigma_{\text{traffic}}$) are registered as model buffers so that the imputation loss can inverse-transform predictions back to the raw count domain for evaluation.
+
+% ---------------------------------------------------------------------------
+\subsection{Sliding Window Framing and Dataset Construction}
+\label{subsec:meth-sliding-window}
+% ---------------------------------------------------------------------------
+
+The time-indexed panel is framed into overlapping sliding windows of length $T$ (the sequence length hyperparameter, typically $T = 12$ corresponding to 3 hours at 15-minute resolution). For each window starting at index $t$, a training sample consists of:
+
+\begin{itemize}
+    \item \textbf{Dynamic features}: $\mathbf{X}_{t:t+T} \in \mathbb{R}^{N \times T \times 5}$ (5-channel input as described above).
+    \item \textbf{Structural masks}: $\mathbf{M}_{t:t+T} \in \{0,1\}^{N \times T \times 2}$ (total and night MNAR masks, sliced from the same window).
+    \item \textbf{Forecast target}: $\mathbf{y}_{t+T} \in \mathbb{R}_{\geq 0}^{N}$ (raw unscaled traffic counts at the next time step, one step ahead of the window).
+\end{itemize}
+
+\noindent The total number of training samples is $|\mathcal{T}| - T$, where $|\mathcal{T}|$ is the number of time steps in the training period. The forecast target is explicitly clamped to $\mathbf{y} \geq 0$ to eliminate floating-point precision artefacts introduced by the zero-fill step.
+
+% ---------------------------------------------------------------------------
+\subsection{Missingness Regimes and When Imputation Is Defensible}
+\label{subsec:meth-missingness-regimes}
+% ---------------------------------------------------------------------------
+
+This thesis distinguishes between (i) missingness that is plausibly driven by low activity (e.g., diurnal inactivity) and (ii) missingness arising from operational failures (e.g., intermittent connectivity, sensor outages). This distinction is critical because imputation can be reasonable for certain \emph{baseline} workflows that require regularly sampled inputs, yet inappropriate when it obscures operational failure.
+
+Accordingly, imputation is used only when required for a comparator model, and it is justified using \textbf{state-space decomposition} of the time series into components such as level/trend and seasonality. Where possible, this choice is \textbf{validated} via artificial masking of observed values and evaluation of imputation error on held-out points (described in Experiment~1, Chapter~\ref{ch:exp1}). Where validation is not possible due to ambiguity in the observed process (e.g., null/zero conflation), the resulting assumptions are stated explicitly as a best-guess and are treated conservatively.
+
+\subsection{Graph Construction}
+\label{subsec:meth-graph}
+
+% How the sensor network is represented as a graph: nodes, edges, adjacency
+
+% =============================================================================
+\section{Spatio-Temporal Model Architecture}
+\label{sec:meth-architecture}
+% =============================================================================
+
+This section presents the four-component architecture of the \gls{riot} pipeline: (1)~the Dynamic Graph Learner, which infers sensor topology from static urban features; (2)~the GATv2 Spatial Encoder, which aggregates neighbourhood information at each time step via edge-conditioned graph attention; (3)~the Transformer Temporal Encoder, which captures sequence-level dependencies across the context window; and (4)~the Decoupled Multi-Task Decoders, which produce separate outputs for imputation, forecasting, and spatial kriging. Figure~\ref{fig:conceptual_framework} illustrates the end-to-end data flow.
+
+% ---------------------------------------------------------------------------
+\subsection{Component 1: Dynamic Graph Learner}
+\label{subsec:meth-graph-learner}
+% ---------------------------------------------------------------------------
+
+Rather than relying on a fixed, hand-specified adjacency matrix (e.g., based on Euclidean distance thresholds), the pipeline infers graph topology dynamically from the static urban morphology vectors described in Section~\ref{subsec:meth-static-features}. This learned topology captures non-linear functional similarities --- for example, two distant sensors in comparable retail districts --- that proximity-based adjacency would miss.
+
+\subsubsection{Topology Inference}
+
+Given the standardised static feature matrix $\mathbf{S} \in \mathbb{R}^{N \times 15}$, the graph learner first projects each node into a low-dimensional embedding space:
+
+\begin{equation}
+    \mathbf{e}_i = \mathbf{W}_{\text{proj}} \mathbf{s}_i + \mathbf{b}_{\text{proj}}, \qquad \mathbf{e}_i \in \mathbb{R}^{d_e}
+    \label{eq:graph-projection}
+\end{equation}
+
+\noindent where $\mathbf{W}_{\text{proj}} \in \mathbb{R}^{d_e \times 15}$ and $d_e$ is the embedding dimension (a tunable hyperparameter, typically $d_e = 32$). A dense pairwise similarity matrix is then computed via dot product:
+
+\begin{equation}
+    \mathbf{A}_{\text{raw}} = \mathbf{E}\mathbf{E}^{\top}, \qquad \mathbf{A}_{\text{raw}} \in \mathbb{R}^{N \times N}
+    \label{eq:graph-similarity}
+\end{equation}
+
+\noindent Sparsification is applied in two stages: a ReLU activation ensures non-negative affinities, followed by subtraction of a tunable sparsity threshold $\tau$ and a second ReLU to discard weak connections:
+
+\begin{equation}
+    \mathbf{A}_{\text{sparse}} = \text{ReLU}\!\bigl(\text{ReLU}(\mathbf{A}_{\text{raw}}) - \tau\bigr)
+    \label{eq:graph-sparsify}
+\end{equation}
+
+\noindent The non-zero entries of $\mathbf{A}_{\text{sparse}}$ define the edge set $E$ and corresponding edge weights $w_{ij} = [\mathbf{A}_{\text{sparse}}]_{ij}$, yielding a sparse \texttt{edge\_index}~$\in \mathbb{Z}^{2 \times |E|}$ and \texttt{edge\_weight}~$\in \mathbb{R}^{|E|}$ representation. The threshold $\tau$ directly controls graph density and is exposed as a hyperparameter for Optuna tuning.
+
+\subsubsection{Edge Feature Enrichment}
+\label{subsubsec:meth-edge-enrichment}
+
+Each edge $(i, j)$ surviving sparsification is enriched with 9 pre-computed physical features derived from the OpenStreetMap pedestrian walking network between the two sensor locations. These features are stored in a static cache and indexed by (source, destination) sensor identifier. The 10-dimensional edge attribute vector is:
+
+\begin{equation}
+    \mathbf{a}_{ij} = \bigl[\underbrace{d_{\text{sp}},\; d_{\text{euc}},\; r_{\text{direct}}}_{\text{distance metrics}},\; \underbrace{f_{\text{ped}},\; f_{\text{res}},\; f_{\text{tert}},\; f_{\text{sec}},\; f_{\text{prim}},\; f_{\text{serv}}}_{\text{road-type fractions}},\; \underbrace{w_{ij}}_{\text{learned}}\bigr] \in \mathbb{R}^{10}
+    \label{eq:edge-attr}
+\end{equation}
+
+\noindent where $d_{\text{sp}}$ and $d_{\text{euc}}$ are shortest-path and Euclidean distances (min-max normalised by the global maximum distance), $r_{\text{direct}} = d_{\text{euc}} / d_{\text{sp}}$ is the directness ratio, and $f_{\text{cat}}$ are the fractions of the shortest path traversing each of six collapsed road hierarchy categories (pedestrian, residential, tertiary, secondary, primary, service). The road-type fractions sum to 1.0 for connected pairs and 0.0 for pairs with no walking path. The 10th dimension is the learned similarity weight $w_{ij}$ from Equation~\ref{eq:graph-sparsify}.
+
+This enrichment allows the spatial encoder to condition its attention not only on node feature similarity (the learned weight) but also on the physical accessibility and road character of each connection.
+
+% ---------------------------------------------------------------------------
+\subsection{Component 2: GATv2 Spatial Encoder}
+\label{subsec:meth-spatial-encoder}
+% ---------------------------------------------------------------------------
+
+The spatial encoder applies GATv2 graph attention (Section~\ref{subsec:meth-gatv2}) independently at each time step $t$ to aggregate neighbourhood information across the inferred graph topology. The input at each time step is the concatenation of the 3 scaled dynamic features and 2 structural MNAR masks, giving an input dimension of $D_{\text{in}} = 5$.
+
+For each time step $t$ and each edge $(i, j) \in E$, the edge-conditioned GATv2 attention coefficient is computed as:
+
+\begin{equation}
+    e^{(k)}_{ij,t} = {\mathbf{a}^{(k)}}^{\!\top} \text{LeakyReLU}\!\Bigl(\mathbf{W}^{(k)} \bigl[\mathbf{x}_{i,t} \,\|\, \mathbf{x}_{j,t}\bigr] + \boldsymbol{\Theta}_e^{(k)} \mathbf{a}_{ij}\Bigr)
+    \label{eq:gatv2-edge-conditioned}
+\end{equation}
+
+\noindent where $\mathbf{x}_{i,t} \in \mathbb{R}^5$ is the input feature vector for node $i$ at time $t$, $\mathbf{a}_{ij} \in \mathbb{R}^{10}$ is the enriched edge attribute (Equation~\ref{eq:edge-attr}), $\boldsymbol{\Theta}_e^{(k)} \in \mathbb{R}^{(D_{\text{in}}/K) \times 10}$ is a learnable edge projection, and $K$ is the number of attention heads. The output for each node is the concatenation of $K$ attention-weighted neighbour aggregations:
+
+\begin{equation}
+    \mathbf{h}_{i,t} = \Big\Vert_{k=1}^{K} \sum_{j \in \mathcal{N}(i)} \alpha^{(k)}_{ij,t}\, \mathbf{W}^{(k)} \mathbf{x}_{j,t}
+    \label{eq:spatial-output}
+\end{equation}
+
+\noindent yielding $\mathbf{h}_{i,t} \in \mathbb{R}^{H}$ where $H$ is the hidden dimension. In the batched implementation, the GATv2 layer is applied to $B \times T$ independent copies of the graph (with replicated \texttt{edge\_index} and \texttt{edge\_attr}), producing a spatially aggregated tensor $\mathbf{H} \in \mathbb{R}^{B \times T \times N \times H}$.
+
+% ---------------------------------------------------------------------------
+\subsection{Component 3: Transformer Temporal Encoder}
+\label{subsec:meth-temporal-encoder}
+% ---------------------------------------------------------------------------
+
+The spatially aggregated representations $\mathbf{H}$ are then processed along the temporal axis using a standard Transformer encoder (Section~\ref{subsec:meth-transformer}). Each node is treated as an independent sequence: the tensor is reshaped from $[B, T, N, H]$ to $[T, B \cdot N, H]$ (sequence-first layout), and each of the $B \cdot N$ sequences is processed independently by the Transformer's multi-head self-attention layers.
+
+This design decouples spatial and temporal processing: the GATv2 layer captures inter-node relationships at each time step, while the Transformer captures intra-node temporal dynamics across the context window. The Transformer output is reshaped back to $[B, N, T, H]$, yielding the latent embedding tensor $\mathbf{Z} \in \mathbb{R}^{B \times N \times T \times H}$ that is shared across all downstream decoder heads.
+
+% ---------------------------------------------------------------------------
+\subsection{Reconstruction vs.\ Forecasting: Spatial vs.\ Temporal Responsibilities}
+\label{subsec:meth-spatial-vs-temporal}
+% ---------------------------------------------------------------------------
+
+A foundational architectural constraint separates the two predictive tasks:
+
+\begin{itemize}
+    \item \textbf{Forecasting} is a temporal problem: the forecasting decoder operates on the \emph{final} time step of the latent embedding $\mathbf{z}_{i,T} = \mathbf{Z}[:, :, -1, :]$ to predict the next-step traffic counts $\hat{\mathbf{y}}_{T+1}$.
+    \item \textbf{Reconstruction} (imputation and kriging) is a spatial problem: the imputation and kriging decoders operate on the \emph{full} temporal sequence of latent embeddings $\mathbf{Z}[:, :, :, :]$ to reconstruct the input series at every time step.
+\end{itemize}
+
+\noindent This separation clarifies the experimental design in Chapter~\ref{ch:exp3}: reconstruction performance measures how well the spatial encoder's message passing recovers information at nodes with missing or masked inputs, while forecasting performance measures how well the temporal encoder extrapolates beyond the observed context window.
+
+% ---------------------------------------------------------------------------
+\subsection{Component 4: Decoupled Multi-Task Decoders}
+\label{subsec:meth-decoders}
+% ---------------------------------------------------------------------------
+
+Three independent decoder heads operate on the shared latent representation $\mathbf{Z}$. Each is implemented as a 2-layer MLP with GELU activation and dropout.
+
+\subsubsection{Imputation Decoder}
+
+The imputation head maps each latent embedding back to the dynamic feature space:
+
+\begin{equation}
+    \hat{\mathbf{x}}_{i,t} = \text{MLP}_{\text{imp}}(\mathbf{z}_{i,t}) \in \mathbb{R}^{D_{\text{ts}}}
+    \label{eq:imputation-decoder}
+\end{equation}
+
+\noindent where $D_{\text{ts}} = 3$ (traffic, humidity, solar radiation --- the observation channels only, excluding the mask channels). This head reconstructs the \emph{entire} input sequence, not just the masked positions, providing a dense training signal.
+
+\subsubsection{Forecasting Decoder}
+
+The forecasting head operates on the final time step embedding only and outputs three parameters of a Zero-Inflated Negative Binomial (ZINB) distribution per node:
+
+\begin{equation}
+    [\hat{\mu}_i,\; \hat{\theta}_i,\; \hat{\pi}_i] = \text{MLP}_{\text{fore}}(\mathbf{z}_{i,T}) \in \mathbb{R}^{3}
+    \label{eq:forecast-decoder}
+\end{equation}
+
+\noindent The raw logits are transformed to satisfy the distributional constraints: $\hat{\mu}_i = \text{softplus}(\cdot) + \epsilon > 0$ (mean count), $\hat{\theta}_i = \text{softplus}(\cdot) + \epsilon > 0$ (dispersion), $\hat{\pi}_i = \sigma(\cdot) \in (\epsilon, 1 - \epsilon)$ (zero-inflation probability), where $\epsilon = 10^{-6}$ provides numerical safety. The distributional motivation for ZINB is presented in Section~\ref{subsec:meth-loss-function}.
+
+\subsubsection{Spatial Kriging Decoder}
+
+The kriging head reconstructs the full time series for \emph{spatially held-out} nodes --- nodes whose dynamic features have been blanked prior to encoding (Section~\ref{subsec:meth-spatial-holdout}). It shares the same MLP architecture as the imputation head:
+
+\begin{equation}
+    \hat{\mathbf{x}}^{\text{krig}}_{j,t} = \text{MLP}_{\text{krig}}(\mathbf{z}_{j,t}) \in \mathbb{R}^{D_{\text{ts}}}, \quad j \in \mathcal{H}
+    \label{eq:kriging-decoder}
+\end{equation}
+
+\noindent where $\mathcal{H} \subset V$ is the set of held-out nodes. Critically, the kriging decoder's latent input $\mathbf{z}_{j,t}$ for held-out nodes is shaped \emph{entirely} by message passing from observable neighbours (since the held-out nodes' own features were zeroed), providing a principled zero-shot spatial interpolation capability.
+
+% ---------------------------------------------------------------------------
+\subsection{Spatial Holdout and Zero-Shot Kriging Protocol}
+\label{subsec:meth-spatial-holdout}
+% ---------------------------------------------------------------------------
+
+To train and evaluate the spatial kriging capability, this thesis adopts an IGNNK-style node masking protocol. At each training iteration, a random subset of $p_{\text{holdout}} \cdot N$ nodes (typically $p_{\text{holdout}} = 0.15$) is selected for spatial holdout:
+
+\begin{enumerate}
+    \item \textbf{Feature Blanking}: The dynamic features of held-out nodes are set to zero across all time steps and channels: $\mathbf{X}[:, j, :, :] = 0$ for $j \in \mathcal{H}$. This forces their latent embeddings to be determined entirely by spatial message passing from observable neighbours.
+    \item \textbf{Topology Masking}: Outgoing edges from held-out nodes are dropped from the graph to prevent information leakage in the reverse direction. This ensures that observable nodes do not receive corrupted (zeroed) information from held-out nodes during GATv2 message passing.
+    \item \textbf{Loss Masking}: The imputation and forecasting losses are computed only over \emph{observable} nodes, while the kriging loss is computed only over held-out nodes. This prevents the model from being penalised for poor forecasting at nodes it was never allowed to observe.
+\end{enumerate}
+
+\noindent During validation, a fixed holdout mask (seeded for reproducibility) is used to ensure stable metric tracking across epochs. For inductive evaluation (zero-shot kriging at genuinely unseen sensor locations), a fixed set of nodes is permanently excluded from training and evaluated using the kriging head without any fine-tuning.
+
+\subsection{Loss Formulation and Uncertainty Quantification}
+\label{subsec:meth-loss-function}
+
+The training objective is formulated as a three-term joint loss combining spatial reconstruction (imputation and kriging) with probabilistic temporal forecasting. This multi-task formulation requires domain-specific loss functions that respect the statistical properties of the target variables.
+
+\subsubsection{The Null-Zero Conflation Problem}
+\label{subsubsec:meth-null-zero}
+
+A fundamental challenge in urban IoT telemetry is the complete absence of explicit zero-count reporting in the raw data. Inspection of the dataset reveals that sensors transmit \texttt{null} (missing values) indistinguishably for both genuine zero activity and sensor transmission failures. Consequently, any missing value is statistically bimodal, representing either a \emph{sampling zero} (genuine environmental absence, such as low activity at night) or a \emph{structural zero} (a technical dropout).
+
+Standard regression models that silently drop or mask \texttt{null} values would train exclusively on positive counts, biasing the model to overestimate the mean and underestimate variance. Conversely, deterministically imputing all \texttt{null} values as zero would conflate sensor failures with true inactivity. As illustrated in Figure~\ref{fig:ambiguity_of_missing_data}, temporal gap analysis reveals two distinct missingness regimes: high-frequency diurnal gaps at night (highly probable zeros) and aperiodic multi-day outages (highly probable failures).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/methodology/ambiguity_of_missing_data.png}
+    \caption{Ambiguity of Missing Data: Diurnal gaps representing likely sampling zeros versus aperiodic gaps representing structural sensor failures.}
+    \label{fig:ambiguity_of_missing_data}
+\end{figure}
+
+\subsubsection{ZINB Negative Log-Likelihood for Forecasting}
+\label{subsubsec:meth-zinb}
+
+To explicitly model this bimodal missingness, the forecasting head optimises the Negative Log-Likelihood (NLL) of a Zero-Inflated Negative Binomial (ZINB) distribution. The ZINB framework treats the target variable as a probabilistic mixture, where an inflation parameter $\pi$ models the likelihood of a structural zero (sensor failure), and a Negative Binomial component models the count distribution of observable traffic, capturing the severe overdispersion ($D \gg 1$) induced by the presence of true zeros.
+
+For a sensor count $y_i$ (where missing values are mapped to $0$ during evaluation), the likelihood is:
+\begin{equation}
+    P(y_i \mid \mu_i, \theta_i, \pi_i) = 
+    \begin{cases} 
+      \pi_i + (1 - \pi_i) \text{NB}(0 \mid \mu_i, \theta_i) & y_i = 0 \\
+      (1 - \pi_i) \text{NB}(y_i \mid \mu_i, \theta_i) & y_i > 0
+    \end{cases}
+    \label{eq:zinb_likelihood}
+\end{equation}
+The forecasting loss is the mean NLL across all observable nodes:
+\begin{equation}
+    \mathcal{L}_{\text{fore}} = -\frac{1}{|\mathcal{O}|} \sum_{i \in \mathcal{O}} \log P(y_{i, T+1} \mid \hat{\mu}_i, \hat{\theta}_i, \hat{\pi}_i)
+    \label{eq:loss-fore}
+\end{equation}
+where $\mathcal{O} = V \setminus \mathcal{H}$ is the set of spatially observable nodes. 
+
+Crucially, standardizing count data (e.g., via \texttt{StandardScaler}) transforms non-negative integers into signed continuous floats, directly violating the distributional assumptions of the Negative Binomial. To prevent this domain contradiction, the forecasting loss is computed strictly against the raw, unscaled vehicle counts, maintaining separation from the scaled continuous inputs fed to the encoder.
+
+\subsubsection{Scale-Invariant MSLE for Spatial Reconstruction}
+\label{subsubsec:meth-msle}
+
+While forecasting demands a probabilistic treatment of counts, the imputation and kriging tasks reconstruct the full dynamic feature space (traffic, humidity, solar radiation) across the context window. 
+
+Traffic volumes exhibit high multiplicative variance: an absolute error of $50$ is severe during nighttime hours but negligible during peak rush hour. Standard Mean Squared Error (MSE) would disproportionately penalise peak-hour predictions. Therefore, the traffic channel is evaluated using Mean Squared Logarithmic Error (MSLE), which enforces scale-invariance by compressing the exponential dynamic range:
+\begin{equation}
+    \text{MSLE}(y, \hat{y}) = \frac{1}{|\mathcal{O}| \cdot T} \sum_{i \in \mathcal{O}} \sum_{t=1}^T \bigl( \log(1 + \hat{y}_{i,t}) - \log(1 + y_{i,t}) \bigr)^2
+\end{equation}
+Like forecasting, the imputation MSLE operates on inverse-transformed, raw traffic counts. For the continuous weather channels (humidity, solar radiation), standard MSE on the scaled feature space is sufficient. The total imputation loss $\mathcal{L}_{\text{imp}}$ is the sum of the traffic MSLE and the weather MSE over all observable nodes. 
+
+The kriging loss $\mathcal{L}_{\text{krig}}$ is mathematically identical to $\mathcal{L}_{\text{imp}}$ but is computed exclusively over the spatially held-out nodes $\mathcal{H}$.
+
+\subsubsection{Three-Term Joint Objective}
+\label{subsubsec:meth-joint-loss}
+
+The pipeline is trained end-to-end to minimise a weighted joint objective:
+\begin{equation}
+    \mathcal{L}_{\text{total}} = w_{\text{imp}} \mathcal{L}_{\text{imp}} + w_{\text{fore}} \mathcal{L}_{\text{fore}} + w_{\text{krig}} \mathcal{L}_{\text{krig}}
+    \label{eq:joint-loss}
+\end{equation}
+where $w_{\text{imp}}$, $w_{\text{fore}}$, and $w_{\text{krig}}$ are scalar weights. The explicit decoupling of $w_{\text{krig}}$ from the spatial holdout probability allows kriging to be cleanly ablated (by setting $w_{\text{krig}} = 0$) without altering the spatial masking protocol, ensuring comparable metrics across ablation experiments.
+
+% Detailed description of model components
+% =============================================================================
+\section{Evaluation Framework}
+\label{sec:meth-evaluation}
+% =============================================================================
+
+To robustly evaluate the multi-task architecture, this thesis employs a capability-gated evaluation harness that routes metrics based on the active components of the model.
+
+\subsection{Performance Metrics}
+\label{subsec:meth-metrics}
+
+Standard regression metrics alone are insufficient to evaluate probabilistic, zero-inflated forecasts under MNAR conditions. The evaluation framework computes specific metrics for each task:
+
+\begin{itemize}
+    \item \textbf{Imputation Metrics:} Mean Squared Error (MSE) is used to evaluate the reconstruction of the observable context window.
+    \item \textbf{Kriging Metrics:} Evaluated exclusively on spatially held-out nodes using \gls{mae-metric}, \gls{rmse}, and Scale-Invariant MSLE.
+    \item \textbf{Forecasting (Point) Metrics:} The expected value $\hat{\mu} \cdot (1 - \hat{\pi})$ is compared against the unscaled target using \gls{rmse} and \gls{mae-metric}.
+    \item \textbf{Zero-Accuracy:} A binary classification metric measuring the model's ability to correctly predict explicit zero-count periods (i.e., where $y=0$ and the model's most probable prediction is zero).
+\end{itemize}
+
+\subsection{Calibration Diagnostics}
+\label{subsec:meth-calibration}
+
+For the probabilistic ZINB forecasting head, calibration is as important as point accuracy:
+
+\begin{itemize}
+    \item \textbf{Probability Integral Transform (PIT) Histogram:} Evaluates the calibration of the ZINB predictive distribution. A perfectly calibrated model produces a uniform (flat) PIT histogram.
+    \item \textbf{Zero-Inflation Reliability Diagram:} Plots the predicted inflation parameter $\hat{\pi}$ against the empirically observed zero fraction in bins. Points lying on the diagonal $y=x$ indicate well-calibrated zero-inflation estimates.
+    \item \textbf{Two-Extremes MAE/RMSE Bracket:} Given the null-zero conflation problem, this diagnostic computes error under two extreme imputation assumptions (drop all \texttt{nulls} vs.\ fill all \texttt{nulls} with zero) to quantify the maximum potential bias introduced by naive data cleaning.
+\end{itemize}
+
+\subsection{Baseline Methods}
+\label{subsec:meth-baselines}
+
+The \gls{riot} pipeline is evaluated against recurrent neural network baselines to isolate the contribution of spatial graph attention and ZINB probabilistic modeling.
+
+\begin{itemize}
+    \item \textbf{LSTM and GRU Forecasters:} These baseline models process each sensor independently (no spatial message passing). They produce point forecasts and per-timestep sequence reconstructions but lack graph capability, uncertainty quantification ($\theta$), and zero-inflation handling ($\pi$).
+\end{itemize}
+
+Table~\ref{tab:capability_contrast} summarises the architectural capabilities of the evaluated models.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Capability Contrast between Baseline Models and the RIOT Pipeline.}
+    \label{tab:capability_contrast}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Capability} & \textbf{LSTM/GRU Baseline} & \textbf{RIOT Pipeline} \\
+        \midrule
+        Forecasting Mean ($\mu$) & \checkmark & \checkmark \\
+        Uncertainty/Dispersion ($\theta$) & $\times$ & \checkmark \\
+        Zero-Inflation Probability ($\pi$) & $\times$ & \checkmark \\
+        Temporal Imputation & \checkmark (MSE) & \checkmark (MSLE) \\
+        Zero-Shot Spatial Kriging & $\times$ & \checkmark \\
+        Dynamic Graph Attention & $\times$ & \checkmark \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Implementation and MLOps Infrastructure}
+\label{sec:meth-implementation}
+% =============================================================================
+
+The system is engineered as an end-to-end operational pipeline, enforcing strict MLOps principles. 
+
+\subsection{Software Stack and Containerisation}
+\label{subsec:meth-software}
+
+The pipeline is entirely containerised via Docker, enforcing a "zero host execution" rule. The core machine learning stack leverages:
+\begin{itemize}
+    \item \textbf{PyTorch (v2.0) and PyTorch Geometric:} Core deep learning and graph neural network operations.
+    \item \textbf{TimescaleDB:} A PostgreSQL-based time-series database replacing legacy Parquet files, enabling efficient server-side temporal and vehicle-class filtering.
+    \item \textbf{Next.js and Deck.gl:} A geospatial digital twin frontend for visualising the sensor network, interactive node inspection, and ego-graph attention topologies.
+\end{itemize}
+
+\subsection{Hyperparameter Optimisation and Reproducibility}
+\label{subsec:meth-reproducibility}
+
+Hyperparameter tuning is orchestrated using \textbf{Optuna}, with state persisted to an SQLite database to allow multi-worker parallel sweeps across GPUs. To ensure rigorous reproducibility during continuous development, the pipeline implements:
+
+\begin{enumerate}
+    \item \textbf{Config Co-location:} Every trained model checkpoint is saved alongside a snapshot of the exact \texttt{config.yaml} used to train it, preventing dimension mismatches (e.g., changes to static feature dimensions) from invalidating weights silently.
+    \item \textbf{Artifact Versioning:} Integration with Weights \& Biases (W\&B) for both sweep telemetry and model registry artifact tracking.
+    \item \textbf{Early Stopping:} Patient early stopping based on validation loss, combined with gradient clipping and FP32 mixed-precision autocast for numerical stability.
+\end{enumerate}
+
+% =============================================================================
+\section{Chapter Summary}
+\label{sec:meth-summary}
+% =============================================================================
+
+This chapter has presented the research methodology employed in this thesis. The following chapter describes the data and study areas used for experimental evaluation.

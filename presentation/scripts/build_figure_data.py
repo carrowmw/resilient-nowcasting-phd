@@ -28,7 +28,7 @@ K = 4
 # PIT diagram runs: underdispersion vs good calibration
 PIT_RUNS = {
     "underdispersed": "dark-brook-37",
-    "calibrated": "pretty-glitter-29",
+    "calibrated": "radiant-dawn-8",
 }
 
 OUT_DIR = Path(__file__).resolve().parents[1] / "figures" / "data"

@@ -50,7 +50,15 @@
       "Bash(echo \"any_exit=$?\")",
       "Bash(pdfinfo /workspace/temp/mdpi_sensors.pdf)",
       "Bash(pdftotext /workspace/temp/mdpi_sensors.pdf -)",
-      "Bash(pdfinfo /workspace/docs/thesis.pdf)"
+      "Bash(pdfinfo /workspace/docs/thesis.pdf)",
+      "Read(//root/.cache/**)",
+      "Bash(node -e \"const p=require\\('/workspace/presentation/node_modules/puppeteer'\\); console.log\\(p.executablePath\\(\\)\\)\")",
+      "Bash(sort -t: -k2 -rn)",
+      "Bash(node -e ' *)",
+      "Bash(curl -s \"https://pub-b102fa91750348f78a6385248654688a.r2.dev/runs/radiant-dawn-8/2026-05-15/page.json\")",
+      "Bash(python3 -c ' *)",
+      "Bash(find / -type d -name \"3d111287-7492-407e-9525-030ff1d0c331\")",
+      "Read(//Users/administrator/**)"
     ]
   }
 }

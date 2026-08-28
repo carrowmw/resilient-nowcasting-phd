@@ -1,0 +1,105 @@
+% =============================================================================
+% appendix_design_rationale.tex
+% =============================================================================
+% This appendix contains detailed engineering design rationale and comparative
+% analyses that support the architectural decisions made in Chapter 4.
+% Include in thesis via: \include{chapters/appendix_design_rationale} (or equivalent path)
+% =============================================================================
+
+\chapter{Design Rationale}
+\label{ch:appendix-design-rationale}
+
+% =============================================================================
+\section{Justification of the Graph--Model Interface}
+\label{sec:appendix-graph-interface}
+% =============================================================================
+
+A practical design choice in spatio-temporal graph forecasting is \emph{how the graph structure is provided to the model}. Let $G=(V,E)$ denote the sensor graph with $|V|=N$ nodes, edge set $E$, and an associated representation such as an adjacency matrix $\mathbf{A}\in\mathbb{R}^{N\times N}$, an edge index list, and/or edge features. In operational settings, $N$ may change over time (sensors added, removed, or temporarily decommissioned), so the chosen interface should balance flexibility, reproducibility, and deployment constraints. Four options were considered during the design of the \gls{riot} pipeline.
+
+% ---------------------------------------------------------------------------
+\subsection{Option 1: Dynamic Graph Structures (Graph Passed to Forward)}
+\label{subsec:appendix-option1-dynamic}
+% ---------------------------------------------------------------------------
+
+\textbf{Meaning.} The model receives $(\mathbf{A}$ or edge index, edge features, node masks$)$ as inputs to the forward pass rather than storing them as fixed internal state.
+
+\textbf{Pros.}
+\begin{itemize}
+    \item \textbf{Fully flexible:} supports any $N$ without rebuilding the model solely due to graph size.
+    \item \textbf{Deployment-ready:} naturally supports sensors joining/leaving and inference on subgraphs.
+    \item \textbf{Batch flexibility:} enables (where supported by the \gls{gnn} library) batching multiple graphs with different topology in the same minibatch.
+\end{itemize}
+
+\textbf{Cons.}
+\begin{itemize}
+    \item \textbf{More verbose API:} graph data must be provided on every call.
+    \item \textbf{More opportunities for mismatch:} callers must ensure graph dimensions align with $\mathbf{X}\in\mathbb{R}^{T\times N\times F}$ (or equivalent tensor layout) and any node ordering conventions.
+    \item \textbf{Slight overhead:} repeated passing/validation of graph tensors can add minor runtime overhead (typically negligible compared to attention blocks).
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\subsection{Option 2: Transfer Learning to a New Graph}
+\label{subsec:appendix-option2-transfer}
+% ---------------------------------------------------------------------------
+
+\textbf{Meaning.} Pre-train on a source graph (e.g., $N=29$ sensors), then initialise a new instance for a target graph with $N'\neq N$, and fine-tune (optionally freezing early layers).
+
+\textbf{Pros.}
+\begin{itemize}
+    \item \textbf{Data efficiency:} leverages learned spatio-temporal motifs and inductive biases from the source domain.
+    \item \textbf{Faster convergence:} often requires fewer epochs than training from scratch when domains are similar.
+\end{itemize}
+
+\textbf{Cons.}
+\begin{itemize}
+    \item \textbf{Per-graph retraining still required:} each new graph (or materially changed topology) demands an adaptation phase.
+    \item \textbf{Transfer fragility:} performance depends on similarity of sensing modalities, sampling rate, and urban morphology; large shifts can induce negative transfer.
+    \item \textbf{Component incompatibility:} if any layers encode node-specific parameters (e.g., learned node embeddings tied to a fixed index set), weights may not map cleanly to $N'$.
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\subsection{Option 3: Retrain from Scratch per Graph}
+\label{subsec:appendix-option3-scratch}
+% ---------------------------------------------------------------------------
+
+\textbf{Meaning.} For each dataset/graph, train a dedicated model instance end-to-end.
+
+\textbf{Pros.}
+\begin{itemize}
+    \item \textbf{Simplicity:} minimal engineering complexity and fewer moving parts.
+    \item \textbf{Graph-optimal fitting:} parameters can specialise to the target network topology and local dynamics.
+\end{itemize}
+
+\textbf{Cons.}
+\begin{itemize}
+    \item \textbf{Computational cost:} repeated training is expensive and slows iteration.
+    \item \textbf{Limited reuse:} does not exploit shared structure across cities or deployments.
+    \item \textbf{Data requirement:} requires sufficient training data for each new graph, which may be unrealistic for newly deployed sensors.
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\subsection{Option 4: Graph-Size Agnostic Architectures}
+\label{subsec:appendix-option4-meta}
+% ---------------------------------------------------------------------------
+
+\textbf{Meaning.} Use architectures designed to generalise across varying $N$, such as hierarchical pooling/unpooling to normalise representations, permutation-invariant set encoders, or meta-learning strategies that learn transferable initialisation.
+
+\textbf{Pros.}
+\begin{itemize}
+    \item \textbf{Cross-graph generalisation:} a single trained system can be applied across multiple networks with minimal or no fine-tuning.
+    \item \textbf{Research-grade capability:} supports multi-city or multi-network learning regimes.
+\end{itemize}
+
+\textbf{Cons.}
+\begin{itemize}
+    \item \textbf{Implementation complexity:} substantially more design choices (pooling strategy, hierarchy, task sampling).
+    \item \textbf{Potential performance trade-off:} stronger invariances can reduce specialisation to a specific network.
+    \item \textbf{Reduced interpretability:} pooled representations may obscure node-level explanations that are operationally useful.
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\subsection{Design Choice in This Thesis}
+\label{subsec:appendix-graph-interface-choice}
+% ---------------------------------------------------------------------------
+
+For an operational urban sensing context, the most robust engineering choice is \textbf{Option~1 (dynamic graph structures)}: the graph is treated as part of the input specification rather than a fixed property of the model instance. This supports realistic deployment conditions where sensors may be added or removed and enables systematic evaluation on subgraphs and altered topologies without redefining the model. Options~2 and~3 remain valuable experimental baselines (domain adaptation vs.\ fully specialised training), while Option~4 is a promising extension when the primary goal is broad cross-network generalisation rather than best performance on a single fixed graph.

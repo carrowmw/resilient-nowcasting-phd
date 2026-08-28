@@ -1,5 +1,19 @@
 # Architecture Evolution Changelog
 
+## Update: 2026-08-14 11:08
+
+- **Edge Feature Enrichment Pipeline**: Added OSM walking network cache (`edge_features_cache.json`) loading and 10-dimensional `edge_attr` construction (`edge_feature_table` with 9 physical features ⊕ learned similarity).
+- **Physical Road & Distance Features**: Mapped normalized shortest path distance, euclidean distance, directness ratio, and 6 road category fractions into the dynamic graph learner.
+- **Enriched Spatial GATv2Conv**: Updated `MaskedSpatiotemporalEncoder` to show `GATv2Conv` with `edge_dim=10` and learnable $\Theta_e$ projection.
+- **Structural Missingness (MNAR)**: Added explicit structural missingness extraction (Total MNAR + Night MNAR masks) concatenated with dynamic time series to form 5-channel encoder inputs.
+- **Scale-Invariant MSLE Loss**: Diagrammed separate scaling for traffic (channel 0) vs weather (channels 1-2) with inverse-transformation to raw count domain for scale-invariant MSLE loss via registered `traffic_mean` and `traffic_std` buffers.
+- **Spatial Holdout & Kriging Head**: Added `make_spatial_holdout_mask` and `apply_spatial_holdout` alongside the dedicated `SpatialKrigingDecoder` (2-layer MLP) and three-term joint training objective (`w_imp * L_imp + w_fore * L_fore + w_krig * L_krig`).
+- **Inductive Zero-Shot Gating**: Included `loss_node_mask` ensuring zero-shot evaluation without target leakage.
+- **Strict Topology Masking Alignment**: Diagrammed row-aligned filtering of `edge_index`, `edge_weight`, and `edge_attr` to eliminate outgoing edges from simulated and held-out nodes.
+- **MLOps & Evaluation Harness**: Updated training block to include early GPU selection (`gpu_selector.py`), evaluation harness (`harness/evaluate.py`), holdout manifests, and FP32 autocast loss execution.
+
+---
+
 ## Update: 2026-06-05 16:43
 
 - **Refactored Model Detail**: Replaced the high-level `pipeline.py` block with an explicit component-level breakdown of the `ResilientIoTPipeline`.

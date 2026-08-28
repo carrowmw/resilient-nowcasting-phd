@@ -20,13 +20,15 @@ def main():
         sys.exit(1)
 
     # 1. Update the current Mermaid diagram file
-    diagram_filename = "docs/architecture/architecture_current.mmd"
+    diagram_dir = "docs/diagrams" if os.path.exists("docs/diagrams") else "docs/architecture"
+    os.makedirs(diagram_dir, exist_ok=True)
+    diagram_filename = os.path.join(diagram_dir, "architecture_current.mmd")
     with open(diagram_filename, "w", encoding="utf-8") as f:
         f.write(diagram_code)
     print(f"Successfully updated {diagram_filename}")
 
     # 2. Append to the Architecture Changelog
-    changelog_filename = "docs/architecture/ARCHITECTURE_CHANGELOG.md"
+    changelog_filename = os.path.join(diagram_dir, "ARCHITECTURE_CHANGELOG.md")
 
     # Create file with a header if it doesn't exist
     if not os.path.exists(changelog_filename):

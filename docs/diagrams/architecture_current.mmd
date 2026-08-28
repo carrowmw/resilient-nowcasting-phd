@@ -1,115 +1,155 @@
 graph TD
     subgraph Logical Data Pipeline
         subgraph Data Ingestion
-            SENSORS[traffic_sensors.json: lat, lon, r=250m]
-            PLACES[Google Places API]
-            DYN_READINGS[Dynamic Time-Series Readings]
-            TARGETS[Target Variables: Raw Vehicle Counts]
+            SENSORS["traffic_sensors.json: Lat/Lon Coordinates"]
+            PLACES["Google Places API & DB Connector"]
+            OSM_EXT["OSM Walking Network & Road Hierarchy"]
+            DYN_READINGS["Dynamic Time-Series: Traffic, Humidity, Solar Radiation"]
+            TARGETS["Target Variables: Raw Unscaled Vehicle Counts"]
         end
 
         subgraph Feature Engineering
-            STATIC_FEAT[Static Features: POI, Commercial Density]
-            NOTE_LEAK[Note: Coordinates excluded to prevent spatial leakage] -.-> STATIC_FEAT
+            STATIC_FEAT["Static Features: 15 POI & Centrality Metrics"]
+            NOTE_LEAK["Note: Coordinates excluded to prevent spatial leakage"] -.-> STATIC_FEAT
+            EDGE_CACHE["edge_features_cache.json: 9 Physical OSM Features"]
+            MNAR_MASKS["Explicit Structural MNAR Masks: Total & Night Missingness"]
         end
 
         subgraph Preprocessing
-            SCALER_STATIC[Standard Scaler: Static]
-            MASKING[Artificial Masking]
-            SCALER_DYN[Standard Scaler: Dynamic]
+            SCALER_STATIC["StandardScaler: Static Features"]
+            SCALER_TRAFFIC["Dedicated StandardScaler: Traffic Channel 0"]
+            SCALER_WEATHER["Dedicated StandardScaler: Weather Channels 1-2"]
+            BUF_SCALER["Registered Model Buffers: traffic_mean, traffic_std"]
+            MASK_INJ["Artificial NaN Masking"]
+            SPATIAL_HOLDOUT["Spatial Holdout: make_spatial_holdout_mask (p=0.15) & apply_spatial_holdout"]
         end
 
         subgraph Model Integration
-            LOADER[PyTorch Dataset Loader]
-            BATCH[Batch Dictionary: static, dynamic_masked, targets]
+            LOADER["RealIoTDataset & PyTorch DataLoader"]
+            BATCH["Batch Dict: static, dynamic, target_forecast, structural_masks, spatial_holdout_mask, location_ids"]
         end
 
         SENSORS --> PLACES
         PLACES --> STATIC_FEAT
+        OSM_EXT --> EDGE_CACHE
         STATIC_FEAT --> SCALER_STATIC
         SCALER_STATIC --> LOADER
 
-        DYN_READINGS --> MASKING
-        MASKING --> SCALER_DYN
-        SCALER_DYN --> LOADER
+        DYN_READINGS --> MASK_INJ
+        DYN_READINGS --> MNAR_MASKS
+        MNAR_MASKS --> LOADER
+        MASK_INJ --> SCALER_TRAFFIC
+        MASK_INJ --> SCALER_WEATHER
+        SCALER_TRAFFIC --> BUF_SCALER
+        SCALER_TRAFFIC --> LOADER
+        SCALER_WEATHER --> LOADER
 
         TARGETS --> LOADER
-        LOADER --> BATCH
+        LOADER --> SPATIAL_HOLDOUT
+        SPATIAL_HOLDOUT --> BATCH
     end
 
     subgraph ResilientIoTPipeline Model
-        BATCH --> GL_IN[Static Features]
-        BATCH --> ENC_IN[Masked Dynamic Features]
+        BATCH --> GL_IN["Static Features & Location IDs"]
+        BATCH --> ENC_IN["Cleaned Dynamic Features ⊕ Structural MNAR Masks (5 Channels)"]
         
         subgraph Dynamic Graph Learner
-            GL_IN --> GL_PROJ[Linear Projection]
-            GL_PROJ --> GL_SIM[Pairwise Similarity Adjacency]
-            GL_SIM --> GL_SPARSE[ReLU & Sparsity Threshold]
-            GL_SPARSE --> GL_OUT[edge_index & edge_weight]
+            GL_IN --> GL_PROJ["Linear Projection (static_feat_dim → embedding_dim)"]
+            GL_PROJ --> GL_SIM["Pairwise Similarity Adjacency Matrix"]
+            GL_SIM --> GL_SPARSE["ReLU & Tunable Sparsity Threshold"]
+            GL_SPARSE --> GL_EI_EW["edge_index [2, E] & learned edge_weight [E]"]
+            
+            subgraph Edge Feature Enrichment
+                EDGE_CACHE --> TABLE["Buffer: edge_feature_table [N, N, 9] (Min-Max Normalised)"]
+                GL_EI_EW --> GATHER["Gather Physical Features [E, 9]"]
+                TABLE --> GATHER
+                GATHER --> CAT["Concat(Physical [E, 9], Similarity [E, 1])"]
+                GL_EI_EW -->|edge_weight| CAT
+                CAT --> GL_ATTR["Enriched edge_attr [E, 10]"]
+            end
+        end
+
+        subgraph Strict Topology Masking
+            GL_EI_EW --> TOPO_MASK["Drop Outgoing Edges from Simulated & Held-out Nodes"]
+            GL_ATTR --> TOPO_MASK
+            BATCH -->|"simulated_nodes_mask & spatial_holdout_mask"| TOPO_MASK
+            TOPO_MASK --> FILT_OUT["Filtered: edge_index, edge_weight, edge_attr"]
         end
 
         subgraph Masked Spatiotemporal Encoder
-            ENC_IN --> ENC_SPATIAL[Spatial: GATv2Conv layers]
-            GL_OUT --> ENC_SPATIAL
-            ENC_SPATIAL --> ENC_FLAT[Flatten Spatial Output]
-            ENC_FLAT --> ENC_TEMP[Temporal: TransformerEncoder]
-            ENC_TEMP --> LATENT[Latent Embeddings]
+            ENC_IN --> ENC_SPATIAL["Spatial: GATv2Conv (edge_dim=10 with Θ_e Projection)"]
+            FILT_OUT --> ENC_SPATIAL
+            ENC_SPATIAL --> ENC_FLAT["Flatten & Permute Spatial Output"]
+            ENC_FLAT --> ENC_TEMP["Temporal: TransformerEncoder (Multi-head Self-Attention)"]
+            ENC_TEMP --> LATENT["Latent Embeddings [B, N, T, H]"]
         end
 
-        subgraph Decoupled Decoders
-            LATENT --> DEC_IMP[Imputation Decoder MLP]
-            LATENT --> DEC_FOR[Forecasting Decoder MLP]
+        subgraph Multi-Task Decoders
+            LATENT --> DEC_IMP["Imputation Decoder (2-Layer MLP)"]
+            LATENT --> DEC_FOR["Forecasting Decoder (2-Layer MLP on t=-1)"]
+            LATENT --> DEC_KRIG["Spatial Kriging Decoder (2-Layer MLP on Held-out Nodes)"]
             
-            DEC_IMP --> OUT_IMP[Reconstructed Masked Data]
-            DEC_FOR --> OUT_ZINB[ZINB Parameters: mu, theta, pi]
+            DEC_IMP --> OUT_IMP["Reconstructed Sequence [B, N, T, D]"]
+            DEC_FOR --> OUT_ZINB["ZINB Distribution Parameters: μ, θ, π (ε-clamped)"]
+            DEC_KRIG --> OUT_KRIG["Held-out Kriging Reconstruction [B, K, T, D]"]
         end
     end
 
     subgraph Loss & Optimization
-        LOSS_IMP[MSE Imputation Loss]
-        LOSS_FORE[ZINB NLL Loss]
-        JOINT_LOSS[Joint Training Loss]
-        TRAIN[train.py: Orchestrator]
-        TUNE[tune.py: Optuna sweeps]
-        WANDB[Weights & Biases]
+        OUT_IMP --> LOSS_IMP["Imputation Loss: Traffic MSLE (Raw Domain) + Weather MSE"]
+        OUT_ZINB --> LOSS_FORE["Forecasting Loss: ZINB Negative Log-Likelihood"]
+        OUT_KRIG --> LOSS_KRIG["Spatial Kriging Loss: Traffic MSLE + Weather MSE"]
+        BUF_SCALER -.->|"traffic_mean, traffic_std"| LOSS_IMP
+        BUF_SCALER -.->|"traffic_mean, traffic_std"| LOSS_KRIG
 
-        OUT_IMP --> LOSS_IMP
-        OUT_ZINB --> LOSS_FORE
-        LOSS_IMP --> JOINT_LOSS
+        LOSS_IMP --> JOINT_LOSS["Three-Term Joint Loss: w_imp·L_imp + w_fore·L_fore + w_krig·L_krig"]
         LOSS_FORE --> JOINT_LOSS
+        LOSS_KRIG --> JOINT_LOSS
+        BATCH -.->|"loss_node_mask (Inductive Zero-Shot Gating)"| JOINT_LOSS
+
+        TRAIN["train.py: Orchestrator with Early GPU Selector"]
+        HARNESS["harness/evaluate.py: Metric Evaluation & Holdout Manifests"]
+        TUNE["tune.py: Optuna Hyperparameter Sweeps"]
+        WANDB["Weights & Biases Telemetry"]
+
+        TRAIN -->|autocast FP32 & clip_grad_norm| JOINT_LOSS
         TRAIN -->|optimizer.step| GL_PROJ
         TRAIN -->|optimizer.step| ENC_SPATIAL
+        TRAIN -->|optimizer.step| ENC_TEMP
         TRAIN -->|optimizer.step| DEC_IMP
         TRAIN -->|optimizer.step| DEC_FOR
-        TUNE -->|config override| TRAIN
-        TRAIN -->|log metrics| WANDB
+        TRAIN -->|optimizer.step| DEC_KRIG
+        TUNE -->|trial config override| TRAIN
+        TRAIN --> HARNESS
+        TRAIN -->|log metrics & artifacts| WANDB
     end
 
     subgraph Static Data Bridge
-        HOLDOUT[Visual Holdout Set]
-        EXPORTER[export_ui_payload.py]
-        INDEX_JSON[master_index.json / ui_payload.json]
-        NODE_SHARDS[nodes/node_*.json details]
-        META[Artifact Twinning: git hash, W&B run ID, YAML config]
+        HOLDOUT["Visual Holdout Set"]
+        EXPORTER["export_ui_payload.py / export_paginated_payload.py"]
+        INDEX_JSON["master_index.json / ui_payload.json"]
+        NODE_SHARDS["nodes/node_*.json details"]
+        META["Artifact Twinning: Git Hash, W&B Run ID, Model Weights"]
 
         HOLDOUT --> EXPORTER
-        TRAIN -->|trained model checkpoint| EXPORTER
+        TRAIN -->|trained model checkpoint & evaluation| EXPORTER
         EXPORTER --> META
         EXPORTER --> INDEX_JSON
         EXPORTER --> NODE_SHARDS
     end
 
     subgraph Frontend Geospatial Twin
-        NEXTJS[Next.js App]
-        ZUSTAND[Zustand Store: useTimeStore]
-        DECKGL[Deck.gl over MapLibre GL JS]
-        SCATTER_REAL[nodes-real: ScatterplotLayer]
-        SCATTER_SIM[nodes-simulated: ScatterplotLayer]
-        ARC_GLOBAL[topology-layer: ArcLayer]
-        ARC_EGO[ego-graph-layer: ArcLayer]
-        MAP[MapVisualizer]
-        INSPECTOR[NodeInspector]
-        CONTROLS[AttentionControls]
-        SLIDER[TimeSlider]
+        NEXTJS["Next.js Application"]
+        ZUSTAND["Zustand Store: useTimeStore"]
+        DECKGL["Deck.gl over MapLibre GL JS"]
+        SCATTER_REAL["nodes-real: ScatterplotLayer"]
+        SCATTER_SIM["nodes-simulated: ScatterplotLayer"]
+        ARC_GLOBAL["topology-layer: ArcLayer (with OSM Edge Features)"]
+        ARC_EGO["ego-graph-layer: ArcLayer"]
+        MAP["MapVisualizer"]
+        INSPECTOR["NodeInspector"]
+        CONTROLS["AttentionControls"]
+        SLIDER["TimeSlider"]
 
         INDEX_JSON --> NEXTJS
         NODE_SHARDS --> NEXTJS
@@ -118,7 +158,7 @@ graph TD
         NEXTJS --> INSPECTOR
         NEXTJS --> CONTROLS
         NEXTJS --> SLIDER
-        ZUSTAND -->|timestep & threshold filtering| DECKGL
+        ZUSTAND -->|timestep, ego filter & confidence bounds| DECKGL
         MAP --> DECKGL
         DECKGL --> SCATTER_REAL
         DECKGL --> SCATTER_SIM
