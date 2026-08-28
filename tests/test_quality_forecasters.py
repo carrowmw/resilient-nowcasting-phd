@@ -186,12 +186,35 @@ def test_interpolation_never_alters_observed():
         np.testing.assert_allclose(filled[observed], s[observed])
 
 
+def test_spline_sparse_series_graceful_fallback():
+    idx = pd.date_range("2024-01-01", periods=20, freq="15min")
+    s = pd.Series(np.nan, index=idx, name="sparse__x")
+    s.iloc[0] = 5.0
+    s.iloc[5] = 10.0
+    s.iloc[10] = 7.0  # exactly 3 points (<= spline_order 3)
+    filled, mask = apply_interpolation(s, "spline", spline_order=3)
+    assert mask.sum() == 0
+    assert filled.notna().sum() == 3
+
+
 def test_knn_fills_everything_nonnegative():
     s = make_gappy_series()
     filled, mask = apply_interpolation(s, "knn", knn_neighbors=5)
     assert filled.notna().all()
     assert (filled >= 0).all()
     assert mask.sum() == s.isna().sum()
+
+
+def test_knn_sparse_series_adaptive_k():
+    idx = pd.date_range("2024-01-01", periods=20, freq="15min")
+    s = pd.Series(np.nan, index=idx, name="sparse__x")
+    s.iloc[0] = 5.0
+    s.iloc[5] = 10.0
+    s.iloc[10] = 7.0  # 3 points < k=5
+    filled, mask = apply_interpolation(s, "knn", knn_neighbors=5)
+    assert filled.notna().all()
+    assert (filled >= 0).all()
+    assert mask.sum() == 17
 
 
 # ----------------------------------------------------------------- periodogram

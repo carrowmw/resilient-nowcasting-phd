@@ -12,9 +12,9 @@
 # ============================================================================
 
 wandb:
-  project: "resilient-iot-v2"
-  sweep_project: "resilient-iot-sweeps-v2"
-  collection: "ablation-small-batch-inductive"
+  project: "resilient-iot-v3"
+  sweep_project: "resilient-iot-sweeps-v3"
+  collection: "ablation-spatial-int"
 
 data:
   start_date: "2023-04-02"

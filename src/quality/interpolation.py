@@ -63,9 +63,15 @@ def apply_interpolation(
         if method == "linear":
             filled = series.interpolate(method="linear", limit=limit, limit_area="inside")
         else:
-            filled = series.interpolate(
-                method="spline", order=spline_order, limit=limit, limit_area="inside"
-            )
+            if series.notna().sum() > spline_order:
+                filled = series.interpolate(
+                    method="spline", order=spline_order, limit=limit, limit_area="inside"
+                )
+            else:
+                logger.warning(
+                    f"{series.name} [spline]: insufficient valid points ({int(series.notna().sum())} <= {spline_order}) for spline interpolation; leaving un-interpolated"
+                )
+                filled = series.copy()
         # Spline can overshoot into negative counts — clamp to the count domain
         # and record how much was clamped (no silent behavior).
         n_neg = int((filled < 0).sum())
@@ -115,10 +121,20 @@ def _knn_impute(series: pd.Series, n_neighbors: int) -> pd.Series:
     missing = ~observed
     if not missing.any():
         return series.copy()
-    assert observed.sum() >= n_neighbors, \
-        f"CRITICAL: only {int(observed.sum())} observed points < k={n_neighbors}"
+    n_obs = int(observed.sum())
+    if n_obs == 0:
+        logger.warning(
+            f"{series.name} [knn]: zero observed points; leaving un-interpolated"
+        )
+        return series.copy()
 
-    knn = KNeighborsRegressor(n_neighbors=n_neighbors, weights="distance")
+    k = min(n_neighbors, n_obs)
+    if k < n_neighbors:
+        logger.warning(
+            f"{series.name} [knn]: only {n_obs} observed points < k={n_neighbors}; clamping k={k}"
+        )
+
+    knn = KNeighborsRegressor(n_neighbors=k, weights="distance")
     knn.fit(features[observed], series.to_numpy(dtype=float)[observed])
     predicted = knn.predict(features[missing])
 

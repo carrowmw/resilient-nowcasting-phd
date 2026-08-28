@@ -10,8 +10,8 @@
 #     GATv2 (edge_dim=10) — model.edge_features_cache_path.
 # ============================================================================
 wandb:
-  project: "resilient-iot-v2"
-  sweep_project: "resilient-iot-sweeps-v2"
+  project: "resilient-iot-v3"
+  sweep_project: "resilient-iot-sweeps-v3"
   collection: "lstm-model"
 
 data:
