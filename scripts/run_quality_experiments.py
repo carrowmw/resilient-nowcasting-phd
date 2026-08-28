@@ -313,6 +313,9 @@ def main():
         for model_key in run_cfg["models"]:
             assert model_key in config["models"], \
                 f"CRITICAL: run.models entry {model_key!r} not defined under models:"
+            # Masked transformers handle gaps natively — only run on 'none'
+            if model_key.startswith("transformer_masked") and method != "none":
+                continue
             for horizon in run_cfg["horizons"]:
                 jobs.append((f"{model_key}_h{horizon}_{method}", model_key, int(horizon),
                              method, None, ""))

@@ -13,10 +13,14 @@ from quality.forecasters import (
     PersistenceForecaster,
     SeasonalNaiveForecaster,
 )
+from quality.transformer_forecaster import (
+    MaskedTransformerSensorForecaster,
+    TransformerSensorForecaster,
+)
 
 logger = logging.getLogger(__name__)
 
-KNOWN_TYPES = ("persistence", "seasonal_naive", "arima", "lstm")
+KNOWN_TYPES = ("persistence", "seasonal_naive", "arima", "lstm", "transformer", "transformer_masked")
 
 
 def build_forecaster(
@@ -77,8 +81,57 @@ def build_forecaster(
             device=device,
         )
 
+    elif mtype == "transformer":
+        groups = list(feature_groups_override or spec["feature_groups"])
+        assert groups and groups[0] == "count", \
+            f"CRITICAL: Transformer feature groups must start with 'count', got {groups}"
+        unknown = set(groups) - set(ALL_FEATURE_GROUPS)
+        assert not unknown, f"CRITICAL: unknown feature groups {unknown}"
+        forecaster = TransformerSensorForecaster(
+            feature_groups=groups,
+            d_model=spec["d_model"],
+            nhead=spec["nhead"],
+            num_encoder_layers=spec["num_encoder_layers"],
+            dim_feedforward=spec["dim_feedforward"],
+            dropout=spec["dropout"],
+            lr=spec["lr"],
+            batch_size=spec["batch_size"],
+            epochs=spec["epochs"],
+            patience=spec["patience"],
+            scheduler_step_size=spec.get("scheduler_step_size", 5),
+            scheduler_gamma=spec.get("scheduler_gamma", 0.7),
+            fractional_time=spec.get("fractional_time", True),
+            seed=seed,
+            device=device,
+        )
+
+    elif mtype == "transformer_masked":
+        groups = list(feature_groups_override or spec["feature_groups"])
+        assert groups and groups[0] == "count", \
+            f"CRITICAL: MaskedTransformer feature groups must start with 'count', got {groups}"
+        unknown = set(groups) - set(ALL_FEATURE_GROUPS)
+        assert not unknown, f"CRITICAL: unknown feature groups {unknown}"
+        forecaster = MaskedTransformerSensorForecaster(
+            feature_groups=groups,
+            d_model=spec["d_model"],
+            nhead=spec["nhead"],
+            num_encoder_layers=spec["num_encoder_layers"],
+            dim_feedforward=spec["dim_feedforward"],
+            dropout=spec["dropout"],
+            lr=spec["lr"],
+            batch_size=spec["batch_size"],
+            epochs=spec["epochs"],
+            patience=spec["patience"],
+            scheduler_step_size=spec.get("scheduler_step_size", 5),
+            scheduler_gamma=spec.get("scheduler_gamma", 0.7),
+            fractional_time=spec.get("fractional_time", True),
+            seed=seed,
+            device=device,
+        )
+
     # Ablation variants keep the base model_key as name; the runner records
     # the substituted feature set in a dedicated column.
     forecaster.name = model_key
     logger.info(f"Built forecaster {model_key!r} ({mtype}), capabilities={forecaster.capabilities}")
     return forecaster
+

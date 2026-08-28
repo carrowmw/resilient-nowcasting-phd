@@ -82,6 +82,62 @@ models:
     patience: 5
     scheduler_step_size: 5
     scheduler_gamma: 0.7
+  transformer_uv:
+    type: transformer
+    feature_groups: [count]
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    dropout: 0.1
+    lr: 0.001
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+  transformer_mv:
+    type: transformer
+    feature_groups: [count, half_day, day, week, quarter, year, timestamp]
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    dropout: 0.1
+    lr: 0.0005
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+  transformer_masked_uv:
+    type: transformer_masked
+    feature_groups: [count]
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    dropout: 0.1
+    lr: 0.001
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+  transformer_masked_mv:
+    type: transformer_masked
+    feature_groups: [count, half_day, day, week, quarter, year, timestamp]
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    dropout: 0.1
+    lr: 0.0005
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
 
 ablation:
   model: lstm_mv                # base spec whose feature set is substituted
@@ -98,7 +154,8 @@ ablation:
 run:
   output_dir: "artifacts/quality_full_v2"
   sensors: "all"                # 'all' (viable per manifest) or explicit list
-  models: [persistence, snaive_daily, snaive_weekly, arima, lstm_uv, lstm_mv]
+  models: [persistence, snaive_daily, snaive_weekly, arima, lstm_uv, lstm_mv,
+           transformer_uv, transformer_mv, transformer_masked_uv, transformer_masked_mv]
   horizons: [8, 24]
   interpolation_variants: [none, night_zero, linear, spline, knn]
   run_ablations: true             # the ablation experiment sets true
@@ -109,3 +166,4 @@ wandb:
   enabled: false                # runner works fully offline; enable on the GPU box
   project: "quality-aware-forecasting"
   mode: "offline"
+
