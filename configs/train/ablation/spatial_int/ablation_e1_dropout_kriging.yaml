@@ -1,0 +1,67 @@
+# ============================================================================
+# Ablation E1: Dropout 0.3 + Kriging Weight 2.0 (Combined Intervention)
+# ============================================================================
+# PURPOSE: Test whether dropout + higher kriging weight are additive.
+#
+# tough-dragon-7 (dropout=0.3, w_kriging=0.5) was the only new-data run
+# that partially avoided simulated node zero-collapse (sim_mu_mean=6.06).
+# This ablation combines that dropout with a higher kriging weight to
+# test whether the two interventions compound — dropout preventing the
+# "predict zero" shortcut, and higher kriging weight providing stronger
+# gradient signal to learn genuine spatial patterns.
+#
+# CONTROL: tough-dragon-7 (d=0.3, w_k=0.5)
+# VARIABLE: w_kriging (0.5 → 2.0) while keeping d=0.3
+# ============================================================================
+
+wandb:
+  project: "resilient-iot-v3"
+  sweep_project: "resilient-iot-sweeps-v3"
+  collection: "ablation-spatial-int"
+
+data:
+  start_date: "2023-04-02"
+  end_date: "2026-04-02"
+  seq_len: 12
+  target_veh_class: "person"
+  target_dir: "all"
+  mask_prob: 0.15
+  spatial_holdout_prob: 0.2
+  inductive_holdout_frac: 0.2
+
+model:
+  num_nodes: 81
+  static_feat_dim: 15
+  time_series_dim: 3
+  embedding_dim: 32
+  hidden_dim: 64
+  num_layers: 3
+  num_heads: 4
+  sparsity_threshold: 0.5
+  # === DROPOUT AS SPATIAL REGULARISER ===
+  dropout: 0.3
+  # ======================================
+  dim_feedforward: null
+  zinb_eps: 1.0e-6
+  edge_features_cache_path: "data/external/edge_features_cache.json"
+  simulated_edge_features_cache_path: "data/external/simulated_edge_features_cache.json"
+
+training:
+  epochs: 100
+  batch_size: 128
+  lr: 0.0003
+  grad_clip_max_norm: 1.0
+  early_stop_patience: 10
+  early_stop_min_delta: 0.001
+
+loss:
+  w_forecast: 1.0
+  w_impute: 1.0
+  # === COMBINED: DROPOUT + HIGHER KRIGING ===
+  w_kriging: 2.0
+  # ==========================================
+
+model_type: gnn
+eval_mode: inductive
+train_split: 0.8
+amp: false

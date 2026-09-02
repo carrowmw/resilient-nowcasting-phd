@@ -1,0 +1,63 @@
+# ============================================================================
+# Ablation B2: Kriging Weight = 5.0 (10× default)
+# ============================================================================
+# PURPOSE: Aggressive kriging upweighting to determine the upper bound of
+#          spatial interpolation quality achievable via loss rebalancing.
+#
+# If B1 (w_k=2.0) shows partial improvement but not full recovery, B2 tests
+# whether pushing the weight even further can fully recover the floral-rain-6
+# spatial quality. Expected trade-off: forecasting RMSE will worsen.
+#
+# CONTROL: B1 (w_kriging=2.0)
+# VARIABLE: w_kriging (2.0 → 5.0)
+# ============================================================================
+
+wandb:
+  project: "resilient-iot-v3"
+  sweep_project: "resilient-iot-sweeps-v3"
+  collection: "ablation-spatial-int"
+
+data:
+  start_date: "2023-04-02"
+  end_date: "2026-04-02"
+  seq_len: 12
+  target_veh_class: "person"
+  target_dir: "all"
+  mask_prob: 0.15
+  spatial_holdout_prob: 0.2
+  inductive_holdout_frac: 0.2
+
+model:
+  num_nodes: 81
+  static_feat_dim: 15
+  time_series_dim: 3
+  embedding_dim: 32
+  hidden_dim: 64
+  num_layers: 3
+  num_heads: 4
+  sparsity_threshold: 0.5
+  dropout: 0.1
+  dim_feedforward: null
+  zinb_eps: 1.0e-6
+  edge_features_cache_path: "data/external/edge_features_cache.json"
+  simulated_edge_features_cache_path: "data/external/simulated_edge_features_cache.json"
+
+training:
+  epochs: 100
+  batch_size: 128
+  lr: 0.0003
+  grad_clip_max_norm: 1.0
+  early_stop_patience: 10
+  early_stop_min_delta: 0.001
+
+loss:
+  w_forecast: 1.0
+  w_impute: 1.0
+  # === AGGRESSIVE KRIGING WEIGHT (10× default) ===
+  w_kriging: 5.0
+  # ================================================
+
+model_type: gnn
+eval_mode: inductive
+train_split: 0.8
+amp: false
