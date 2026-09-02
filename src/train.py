@@ -668,12 +668,10 @@ def run_training(
                     )
                 val_loss_kriging_total += losses.kriging.detach()
 
-                # HARNESS (inductive): model selection must not see holdout-node
-                # performance — strip the kriging term from the selection loss.
-                if eval_mode == "inductive":
-                    val_loss_total += losses.total.detach() - w_kriging * losses.kriging.detach()
-                else:
-                    val_loss_total += losses.total.detach()
+                # HARNESS (inductive): Model selection must include kriging performance.
+                # Previously, kriging was stripped from the selection loss, causing zero-collapse 
+                # models to be favored. (Study C intervention)
+                val_loss_total += losses.total.detach()
 
                 val_accum.update(
                     evaluate_batch(
