@@ -22,3 +22,4 @@ python-dotenv
 # Quality track (MDPI rebuild) dependencies
 statsmodels
 matplotlib
+seaborn
