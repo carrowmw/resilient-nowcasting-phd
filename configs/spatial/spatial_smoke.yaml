@@ -1,0 +1,102 @@
+# Chapter 6 spatial track — CPU smoke config: end-to-end pipeline check.
+# 3 months of data, tiny models, single seed, one baseline + one temporal +
+# one GAT on {identity, gabriel}. Verifies: loader, node selection, graphs,
+# training, evaluation, DM aggregation, attention outputs, resumability.
+
+data_source: "parquet"
+data:
+  parquet_path: "data/processed/master_dataset_15T.parquet"
+  start_date: "2024-01-01"
+  end_date: "2024-04-01"
+  veh_class: "person"
+  direction: "all"
+  freq: "15min"
+
+nodes:
+  min_completeness: 0.50
+  edge_features_cache: "data/external/edge_features_cache.json"
+  static_features_cache: "data/external/static_features_cache.parquet"
+  min_nodes: 10
+
+temporal:
+  window: 12
+  horizons: [1, 2]
+  stride: 1
+  train_frac: 0.70
+  val_frac: 0.15
+  purge_boundaries: true
+
+inputs:
+  mask_channel: true
+  time_features: [day]
+
+graph:
+  variants:
+    identity: {method: identity}
+    gabriel:  {method: gabriel, edge_attr: physical}
+
+models:
+  persistence: {type: persistence}
+  lstm:
+    type: lstm
+    hidden_dim: 16
+    num_layers: 1
+    dropout: 0.1
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 2
+    patience: 2
+    scheduler_step_size: 1
+    scheduler_gamma: 0.9
+    grad_clip: 1.0
+  gat_plain:
+    type: gat
+    temporal_encoder: none
+    gat_layers: 1
+    heads: 2
+    hidden_dim: 16
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 2
+    patience: 2
+    scheduler_step_size: 1
+    scheduler_gamma: 0.9
+    grad_clip: 1.0
+
+run:
+  output_dir: "artifacts/spatial_smoke"
+  device: null                # auto: cuda if available, else cpu
+  base_seed: 42
+  matrix:
+    - tag: A_baselines
+      models: [persistence]
+      graphs: [identity]
+      seeds: [42]
+    - tag: A_temporal
+      models: [lstm]
+      graphs: [identity]
+      seeds: [42]
+    - tag: A_spatial
+      models: [gat_plain]
+      graphs: [identity, gabriel]
+      seeds: [42, 43]
+  attention:
+    enabled: true
+    max_windows: 32
+    models: [gat_plain]
+
+analysis:
+  champion_metric: "mae_raw"
+  champion_stages: [A_spatial]
+  dm_pairs:
+    - focal:    {model: gat_plain, graph: gabriel}
+      baseline: {model: lstm, graph: identity}
+    - focal:    {model: gat_plain, graph: gabriel}
+      baseline: {model: gat_plain, graph: identity}
+
+wandb:
+  enabled: false
+  project: "ch6-spatial-gat-test"
+  mode: "offline"

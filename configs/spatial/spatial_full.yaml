@@ -1,0 +1,286 @@
+# Chapter 6 spatial track — full experiment matrix.
+# NSTAR rule: zero hyperparameters hardcoded in Python. Everything lives here.
+#
+# Stages (run.matrix):
+#   A_* : model comparison — temporal baselines vs GAT variants on gabriel
+#   B_* : graph-structure ablation on the Stage-A champion (identity control,
+#         knn8, fc, learned topology). NOTE: set B/C model keys to the
+#         val-selected champion from aggregated/champion.json before running
+#         Stages B/C (a deliberate human step, committed to git).
+#   C_* : component ablations (heads / depth / edge features), champion ± one factor
+#
+# start/end dates: align with the Chapter 5 study window before the full run
+# (data spans 2023-03 → 2026-06).
+
+data_source: "parquet"
+data:
+  parquet_path: "data/processed/master_dataset_15T.parquet"
+  start_date: "2024-01-01"
+  end_date: "2026-01-01"
+  veh_class: "person"
+  direction: "all"            # summed per location
+  freq: "15min"
+
+nodes:
+  min_completeness: 0.30
+  edge_features_cache: "data/external/edge_features_cache.json"
+  static_features_cache: "data/external/static_features_cache.parquet"
+  min_nodes: 30
+
+temporal:
+  window: 12                  # 3 h lookback (legacy reference)
+  horizons: [1, 2, 4]         # 15 / 30 / 60 min
+  stride: 1
+  train_frac: 0.70
+  val_frac: 0.15
+  purge_boundaries: true
+
+inputs:
+  mask_channel: true
+  time_features: [day, week]  # sin/cos pairs
+
+graph:
+  variants:
+    identity:      {method: identity}
+    gabriel:       {method: gabriel, edge_attr: physical}
+    gabriel_plain: {method: gabriel, edge_attr: none}   # C: edge-feature ablation
+    knn8:          {method: knn, k: 8, symmetrise: true, edge_attr: physical}
+    fc:            {method: fully_connected, edge_attr: physical}
+
+models:
+  persistence: {type: persistence}
+  snaive_daily: {type: seasonal_naive, seasonality_days: 1}
+  snaive_weekly: {type: seasonal_naive, seasonality_days: 7}
+  hist_avg: {type: historical_average}
+
+  lstm:
+    type: lstm
+    hidden_dim: 64
+    num_layers: 2
+    dropout: 0.1
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+
+  transformer:
+    type: transformer
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    dropout: 0.1
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+
+  gat_plain:
+    type: gat
+    temporal_encoder: none
+    gat_layers: 2
+    heads: 4
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+
+  gat_lstm:
+    type: gat
+    temporal_encoder: lstm
+    num_layers: 2
+    gat_layers: 2
+    heads: 4
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+
+  gat_transformer:
+    type: gat
+    temporal_encoder: transformer
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    gat_layers: 2
+    heads: 4
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+
+  gat_learned:
+    type: gat_learned
+    temporal_encoder: transformer
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    gat_layers: 2
+    heads: 4
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    embedding_dim: 32
+    sparsity_threshold: 0.5
+    edge_attr_mode: physical_plus_learned
+    edge_features_cache: "data/external/edge_features_cache.json"
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+
+  # ---- Stage C variants: champion spec ± exactly one factor.
+  # Defined against gat_transformer; re-point at the champion after Stage A.
+  gat_h1:
+    type: gat
+    temporal_encoder: transformer
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    gat_layers: 2
+    heads: 1                  # ← the one changed factor
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+  gat_h8:
+    type: gat
+    temporal_encoder: transformer
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    gat_layers: 2
+    heads: 8                  # ←
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+  gat_l1:
+    type: gat
+    temporal_encoder: transformer
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    gat_layers: 1             # ←
+    heads: 4
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+  gat_l3:
+    type: gat
+    temporal_encoder: transformer
+    nhead: 4
+    num_encoder_layers: 2
+    dim_feedforward: 128
+    gat_layers: 3             # ←
+    heads: 4
+    hidden_dim: 64
+    dropout: 0.1
+    use_static_features: false
+    lr: 1.0e-3
+    batch_size: 32
+    epochs: 60
+    patience: 8
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+    grad_clip: 1.0
+
+run:
+  output_dir: "artifacts/spatial_full"
+  device: "cuda:0"
+  base_seed: 42
+  matrix:
+    - tag: A_baselines
+      models: [persistence, snaive_daily, snaive_weekly, hist_avg]
+      graphs: [identity]
+      seeds: [42]
+    - tag: A_temporal
+      models: [lstm, transformer]
+      graphs: [identity]
+      seeds: [42, 43, 44]
+    - tag: A_spatial
+      models: [gat_plain, gat_lstm, gat_transformer]
+      graphs: [gabriel]
+      seeds: [42, 43, 44]
+    - tag: B_graphs                 # ← set model to the Stage-A champion
+      models: [gat_transformer]
+      graphs: [identity, knn8, fc]
+      seeds: [42, 43, 44]
+    - tag: B_learned
+      models: [gat_learned]
+      graphs: [identity]            # gat_learned asserts identity and learns its own
+      seeds: [42, 43, 44]
+    - tag: C_ablations              # ← re-point at champion spec ± one factor
+      models: [gat_h1, gat_h8, gat_l1, gat_l3]
+      graphs: [gabriel]
+      seeds: [42, 43, 44]
+    - tag: C_no_edge_attr           # gabriel without physical edge features
+      models: [gat_transformer]
+      graphs: [gabriel_plain]
+      seeds: [42, 43, 44]
+  attention:
+    enabled: true
+    max_windows: 256
+    models: [gat_transformer, gat_learned]
+
+analysis:
+  champion_metric: "mae_raw"
+  champion_stages: [A_spatial]
+  dm_pairs:
+    - focal:    {model: gat_transformer, graph: gabriel}
+      baseline: {model: lstm, graph: identity}
+    - focal:    {model: gat_transformer, graph: gabriel}
+      baseline: {model: transformer, graph: identity}
+    - focal:    {model: gat_transformer, graph: gabriel}
+      baseline: {model: gat_transformer, graph: identity}
+
+wandb:
+  enabled: false
+  project: "ch6-spatial-gat"
+  mode: "offline"
