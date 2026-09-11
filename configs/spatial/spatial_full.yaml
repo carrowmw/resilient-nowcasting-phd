@@ -15,8 +15,8 @@
 data_source: "parquet"
 data:
   parquet_path: "data/processed/master_dataset_15T.parquet"
-  start_date: "2024-01-01"
-  end_date: "2026-01-01"
+  start_date: "2023-01-08"
+  end_date: "2026-06-08"
   veh_class: "person"
   direction: "all"            # summed per location
   freq: "15min"

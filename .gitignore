@@ -44,3 +44,6 @@ dummy.txt
 run.log
 frontend/frontend/
 frontend/frontend_runtime_errors.log
+
+# Context & legacy research files (do not commit)
+docs/context/
