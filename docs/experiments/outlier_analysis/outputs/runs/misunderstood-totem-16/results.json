@@ -1,0 +1,510 @@
+{
+  "run_meta": {
+    "run_id": "misunderstood-totem-16",
+    "wandb_run_id": "o4kzizm1",
+    "generated_at": "2026-09-09T14:51:24+00:00",
+    "git_commit": "2be8aef047da2c19f9aef1beb290d56c515d41b4",
+    "n_dates": 31,
+    "elapsed_sec": 26.9
+  },
+  "results": {
+    "test1": {
+      "n_events": 136,
+      "class_counts": {
+        "network-wide": 15,
+        "multi-focal": 47,
+        "cluster": 28,
+        "isolated": 46
+      },
+      "total_flagged_steps": 5485,
+      "mean_pct_flagged": 3.544,
+      "max_pct_flagged": 67.308,
+      "catalogue": [
+        {
+          "rank": 1,
+          "event_id": 0,
+          "start": "2026-05-07T06:30",
+          "end": "2026-05-07T19:30",
+          "duration_steps": 53,
+          "n_affected": 47,
+          "peak_frac": 0.5385,
+          "classification": "network-wide",
+          "severity": 345.698,
+          "peak_residual": 580.62,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 2,
+          "event_id": 1,
+          "start": "2026-05-08T06:45",
+          "end": "2026-05-08T19:00",
+          "duration_steps": 50,
+          "n_affected": 47,
+          "peak_frac": 0.6731,
+          "classification": "network-wide",
+          "severity": 330.129,
+          "peak_residual": 320.92,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 3,
+          "event_id": 2,
+          "start": "2026-05-05T06:15",
+          "end": "2026-05-05T18:15",
+          "duration_steps": 49,
+          "n_affected": 42,
+          "peak_frac": 0.5385,
+          "classification": "network-wide",
+          "severity": 263.239,
+          "peak_residual": 473.02,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 4,
+          "event_id": 3,
+          "start": "2026-05-06T06:30",
+          "end": "2026-05-06T19:00",
+          "duration_steps": 51,
+          "n_affected": 41,
+          "peak_frac": 0.3077,
+          "classification": "network-wide",
+          "severity": 233.241,
+          "peak_residual": 497.71,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 5,
+          "event_id": 4,
+          "start": "2026-05-02T07:45",
+          "end": "2026-05-02T21:00",
+          "duration_steps": 54,
+          "n_affected": 36,
+          "peak_frac": 0.1923,
+          "classification": "multi-focal",
+          "severity": 228.217,
+          "peak_residual": 1149.27,
+          "peak_node": 15,
+          "peak_node_name": "NclHeberSt",
+          "calendar": "Saturday, weekend"
+        },
+        {
+          "rank": 6,
+          "event_id": 5,
+          "start": "2026-05-19T06:45",
+          "end": "2026-05-19T08:15",
+          "duration_steps": 7,
+          "n_affected": 36,
+          "peak_frac": 0.4615,
+          "classification": "network-wide",
+          "severity": 202.374,
+          "peak_residual": 399.59,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 7,
+          "event_id": 6,
+          "start": "2026-05-18T06:45",
+          "end": "2026-05-18T09:15",
+          "duration_steps": 11,
+          "n_affected": 35,
+          "peak_frac": 0.4038,
+          "classification": "network-wide",
+          "severity": 197.681,
+          "peak_residual": 445.42,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 8,
+          "event_id": 7,
+          "start": "2026-05-11T06:45",
+          "end": "2026-05-11T08:45",
+          "duration_steps": 9,
+          "n_affected": 35,
+          "peak_frac": 0.3846,
+          "classification": "network-wide",
+          "severity": 189.289,
+          "peak_residual": 444.98,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 9,
+          "event_id": 8,
+          "start": "2026-05-21T11:00",
+          "end": "2026-05-21T19:30",
+          "duration_steps": 35,
+          "n_affected": 33,
+          "peak_frac": 0.25,
+          "classification": "multi-focal",
+          "severity": 180.783,
+          "peak_residual": 454.82,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 10,
+          "event_id": 9,
+          "start": "2026-05-21T06:30",
+          "end": "2026-05-21T08:15",
+          "duration_steps": 8,
+          "n_affected": 30,
+          "peak_frac": 0.4423,
+          "classification": "network-wide",
+          "severity": 177.438,
+          "peak_residual": 237.13,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 11,
+          "event_id": 10,
+          "start": "2026-05-01T06:45",
+          "end": "2026-05-01T10:00",
+          "duration_steps": 14,
+          "n_affected": 32,
+          "peak_frac": 0.3269,
+          "classification": "network-wide",
+          "severity": 175.019,
+          "peak_residual": 210.72,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 12,
+          "event_id": 11,
+          "start": "2026-05-18T11:00",
+          "end": "2026-05-18T19:45",
+          "duration_steps": 36,
+          "n_affected": 33,
+          "peak_frac": 0.1731,
+          "classification": "multi-focal",
+          "severity": 172.856,
+          "peak_residual": 408.65,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 13,
+          "event_id": 12,
+          "start": "2026-05-20T09:15",
+          "end": "2026-05-20T17:45",
+          "duration_steps": 35,
+          "n_affected": 31,
+          "peak_frac": 0.2308,
+          "classification": "multi-focal",
+          "severity": 171.939,
+          "peak_residual": 393.37,
+          "peak_node": 34,
+          "peak_node_name": "NclShieldsRdCliffordStSouth",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 14,
+          "event_id": 13,
+          "start": "2026-05-14T06:30",
+          "end": "2026-05-14T09:00",
+          "duration_steps": 11,
+          "n_affected": 33,
+          "peak_frac": 0.3846,
+          "classification": "network-wide",
+          "severity": 170.15,
+          "peak_residual": 232.3,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 15,
+          "event_id": 14,
+          "start": "2026-05-11T10:15",
+          "end": "2026-05-11T18:15",
+          "duration_steps": 33,
+          "n_affected": 35,
+          "peak_frac": 0.1346,
+          "classification": "multi-focal",
+          "severity": 170.084,
+          "peak_residual": 521.42,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 16,
+          "event_id": 15,
+          "start": "2026-05-19T13:45",
+          "end": "2026-05-19T19:15",
+          "duration_steps": 23,
+          "n_affected": 30,
+          "peak_frac": 0.1731,
+          "classification": "multi-focal",
+          "severity": 168.056,
+          "peak_residual": 397.8,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 17,
+          "event_id": 16,
+          "start": "2026-05-15T11:30",
+          "end": "2026-05-15T20:45",
+          "duration_steps": 38,
+          "n_affected": 28,
+          "peak_frac": 0.1538,
+          "classification": "multi-focal",
+          "severity": 163.802,
+          "peak_residual": 358.58,
+          "peak_node": 5,
+          "peak_node_name": "NclBarrasBridgeCivicCentre",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 18,
+          "event_id": 17,
+          "start": "2026-05-20T04:45",
+          "end": "2026-05-20T08:15",
+          "duration_steps": 15,
+          "n_affected": 34,
+          "peak_frac": 0.3077,
+          "classification": "network-wide",
+          "severity": 161.82,
+          "peak_residual": 327.48,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 19,
+          "event_id": 18,
+          "start": "2026-05-12T06:45",
+          "end": "2026-05-12T08:45",
+          "duration_steps": 9,
+          "n_affected": 33,
+          "peak_frac": 0.3654,
+          "classification": "network-wide",
+          "severity": 156.24,
+          "peak_residual": 271.34,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 20,
+          "event_id": 19,
+          "start": "2026-05-22T06:45",
+          "end": "2026-05-22T09:15",
+          "duration_steps": 11,
+          "n_affected": 28,
+          "peak_frac": 0.3269,
+          "classification": "network-wide",
+          "severity": 155.01,
+          "peak_residual": 167.34,
+          "peak_node": 10,
+          "peak_node_name": "NclFalconarStLoversLn",
+          "calendar": "Friday"
+        }
+      ],
+      "busiest_nodes": [
+        {
+          "node": 44,
+          "name": "NclStephensonRdHeatonRdNewtonRdNE3",
+          "n_outliers": 161
+        },
+        {
+          "node": 26,
+          "name": "NclQueenVictoriaRdBedsonBuilding",
+          "n_outliers": 153
+        },
+        {
+          "node": 30,
+          "name": "NclRedHallDrMartelloGardensZebra",
+          "n_outliers": 153
+        },
+        {
+          "node": 41,
+          "name": "NclShieldsRdSquareWest",
+          "n_outliers": 146
+        },
+        {
+          "node": 40,
+          "name": "NclShieldsRdSquareEast",
+          "n_outliers": 145
+        }
+      ],
+      "figures": [
+        "t1_network_activity.png",
+        "t1_spatial_burden.png"
+      ]
+    },
+    "test2": {
+      "outlier": {
+        "n": 5485,
+        "mean_variance": 6229.14271,
+        "mean_pi": 0.00417,
+        "mean_mu": 78.49529,
+        "mean_theta": 3.16064
+      },
+      "baseline": {
+        "n": 149267,
+        "mean_variance": 401.28364,
+        "mean_pi": 0.09024,
+        "mean_mu": 17.01455,
+        "mean_theta": 2.55711
+      },
+      "variance_ratio": 15.52304,
+      "pi_ratio": 0.04621,
+      "coverage": {
+        "50": {
+          "outlier": 0.19818,
+          "baseline": 0.70811,
+          "nominal": 0.5
+        },
+        "90": {
+          "outlier": 0.7247,
+          "baseline": 0.9376,
+          "nominal": 0.9
+        },
+        "99": {
+          "outlier": 0.92707,
+          "baseline": 0.9803,
+          "nominal": 0.99
+        }
+      },
+      "figures": [
+        "t2_zinb_behaviour.png"
+      ]
+    },
+    "test3": {
+      "sim_outgoing_edges": 0,
+      "sim_incoming_edges": 1763,
+      "sim_nodes_with_incoming": 50,
+      "mean_incoming_neighbours": 35.26,
+      "n_att_pairs": 2463,
+      "attention_shift_median": -0.00365,
+      "attention_shift_pos_frac": 0.49249,
+      "n_mu_pairs": 2463,
+      "mu_shift_median_abs": 0.44995,
+      "mu_shift_frac_gt_0p5z": 0.15307,
+      "median_lag_steps": 0.0,
+      "figures": [
+        "t3_propagation.png"
+      ]
+    },
+    "test4": {
+      "n_events_used": 25,
+      "pre_event_slopes_per_hour": {
+        "mu": 2.95594,
+        "theta": 0.36557,
+        "pi": -0.00344,
+        "impute_res": 6.31793,
+        "att_entropy": 0.14338
+      },
+      "mu_recovery_hours": null,
+      "figures": [
+        "t4_buildup.png"
+      ]
+    },
+    "test5": {
+      "kriging_rmse_normal": 39.404,
+      "kriging_rmse_exposed": 65.71486,
+      "kriging_rmse_normal_ci": [
+        38.06046,
+        40.48089
+      ],
+      "kriging_rmse_exposed_ci": [
+        63.65975,
+        67.89134
+      ],
+      "impute_rmse_normal": 29.94222,
+      "impute_rmse_exposed": 57.37048,
+      "n_normal": 26180,
+      "n_exposed": 12508,
+      "kriging_degradation_ratio": 1.66772,
+      "impute_degradation_ratio": 1.91604,
+      "figures": [
+        "t5_kriging.png"
+      ]
+    },
+    "test6": {
+      "by_type": {
+        "PI_CLAMP": {
+          "count": 71223,
+          "mean_gt": 31.52451,
+          "median_gt": 20.0,
+          "frac_at_night": 0.01053,
+          "frac_coincide_outlier": 0.06939,
+          "node_gini": 0.24826,
+          "n_distinct_nodes": 51
+        }
+      },
+      "total": 71223,
+      "figures": [
+        "t6_tripwire.png"
+      ]
+    },
+    "test7": {
+      "high_node": {
+        "node": 5,
+        "name": "NclBarrasBridgeCivicCentre",
+        "mean_count": 78.9291,
+        "n_outliers": 67,
+        "mean_msle_outlier": 5.09809,
+        "mean_se_outlier": 115966.95386,
+        "peak_gt": 1004.0
+      },
+      "low_node": {
+        "node": 18,
+        "name": "NclJesmondRdAllSaintsCemeterySouth",
+        "mean_count": 1.21774,
+        "n_outliers": 125,
+        "mean_msle_outlier": 3.64748,
+        "mean_se_outlier": 362.81693,
+        "peak_gt": 7.0
+      },
+      "msle_ratio_high_over_low": 1.3977,
+      "se_ratio_high_over_low": 319.62939,
+      "n_high_candidates": 2,
+      "n_low_candidates": 9,
+      "figures": [
+        "t7_scale.png"
+      ]
+    },
+    "test8": {
+      "median_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "mean_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "spearman_gap_vs_outliers": null,
+      "n_node_days": 3162,
+      "n_real_node_days_with_gap": 1612,
+      "nonzero_gap_frac": 0.0,
+      "degenerate_export": true,
+      "figures": [
+        "t8_two_extremes.png"
+      ]
+    }
+  }
+}

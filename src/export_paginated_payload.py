@@ -522,7 +522,8 @@ def run_day_inference(
 
             for node_id in range(num_nodes_real):
                 imputed_series[node_id].append(round(float(imputed_last_raw[node_id]), 4))
-                ground_truth_series[node_id].append(round(max(0.0, float(real_gt[node_id])), 4))
+                val = float(real_gt[node_id])
+                ground_truth_series[node_id].append(None if math.isnan(val) else round(max(0.0, val), 4))
                 mask_series[node_id].append(bool(real_mask_last[node_id]))
 
             for j in range(sim_injector.num_nodes):

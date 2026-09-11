@@ -1,0 +1,4 @@
+# Raw R2 / W&B payloads pulled at analysis time (large, reproducible)
+cache/
+__pycache__/
+*.pyc

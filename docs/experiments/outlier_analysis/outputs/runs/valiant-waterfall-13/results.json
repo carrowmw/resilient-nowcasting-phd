@@ -1,0 +1,510 @@
+{
+  "run_meta": {
+    "run_id": "valiant-waterfall-13",
+    "wandb_run_id": "b58b14ee",
+    "generated_at": "2026-09-09T14:50:56+00:00",
+    "git_commit": "2be8aef047da2c19f9aef1beb290d56c515d41b4",
+    "n_dates": 31,
+    "elapsed_sec": 21.9
+  },
+  "results": {
+    "test1": {
+      "n_events": 145,
+      "class_counts": {
+        "network-wide": 9,
+        "multi-focal": 45,
+        "cluster": 22,
+        "isolated": 69
+      },
+      "total_flagged_steps": 4993,
+      "mean_pct_flagged": 3.226,
+      "max_pct_flagged": 46.154,
+      "catalogue": [
+        {
+          "rank": 1,
+          "event_id": 0,
+          "start": "2026-05-07T07:00",
+          "end": "2026-05-07T19:15",
+          "duration_steps": 50,
+          "n_affected": 32,
+          "peak_frac": 0.4615,
+          "classification": "network-wide",
+          "severity": 176.02,
+          "peak_residual": 509.72,
+          "peak_node": 7,
+          "peak_node_name": "NclCoastRdRedHallDrNorthCrossing",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 2,
+          "event_id": 1,
+          "start": "2026-05-08T07:15",
+          "end": "2026-05-08T19:15",
+          "duration_steps": 49,
+          "n_affected": 33,
+          "peak_frac": 0.4231,
+          "classification": "network-wide",
+          "severity": 166.046,
+          "peak_residual": 516.28,
+          "peak_node": 28,
+          "peak_node_name": "NclRavenswoodRdStanmoreRd",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 3,
+          "event_id": 2,
+          "start": "2026-05-01T09:15",
+          "end": "2026-05-01T17:15",
+          "duration_steps": 33,
+          "n_affected": 35,
+          "peak_frac": 0.3462,
+          "classification": "network-wide",
+          "severity": 149.795,
+          "peak_residual": 518.22,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 4,
+          "event_id": 3,
+          "start": "2026-05-21T10:00",
+          "end": "2026-05-21T18:30",
+          "duration_steps": 35,
+          "n_affected": 33,
+          "peak_frac": 0.3269,
+          "classification": "network-wide",
+          "severity": 135.457,
+          "peak_residual": 499.99,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 5,
+          "event_id": 4,
+          "start": "2026-05-22T10:00",
+          "end": "2026-05-22T20:00",
+          "duration_steps": 41,
+          "n_affected": 33,
+          "peak_frac": 0.3077,
+          "classification": "network-wide",
+          "severity": 130.096,
+          "peak_residual": 553.19,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 6,
+          "event_id": 5,
+          "start": "2026-05-18T10:15",
+          "end": "2026-05-18T18:00",
+          "duration_steps": 32,
+          "n_affected": 32,
+          "peak_frac": 0.3269,
+          "classification": "network-wide",
+          "severity": 129.867,
+          "peak_residual": 545.49,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 7,
+          "event_id": 6,
+          "start": "2026-05-19T10:30",
+          "end": "2026-05-19T19:15",
+          "duration_steps": 36,
+          "n_affected": 30,
+          "peak_frac": 0.25,
+          "classification": "multi-focal",
+          "severity": 122.88,
+          "peak_residual": 550.18,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 8,
+          "event_id": 7,
+          "start": "2026-05-29T11:15",
+          "end": "2026-05-29T19:15",
+          "duration_steps": 33,
+          "n_affected": 30,
+          "peak_frac": 0.2885,
+          "classification": "multi-focal",
+          "severity": 120.264,
+          "peak_residual": 537.73,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 9,
+          "event_id": 8,
+          "start": "2026-05-11T10:30",
+          "end": "2026-05-11T18:15",
+          "duration_steps": 32,
+          "n_affected": 27,
+          "peak_frac": 0.25,
+          "classification": "multi-focal",
+          "severity": 117.456,
+          "peak_residual": 503.91,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 10,
+          "event_id": 9,
+          "start": "2026-05-20T11:00",
+          "end": "2026-05-20T19:00",
+          "duration_steps": 33,
+          "n_affected": 30,
+          "peak_frac": 0.3077,
+          "classification": "network-wide",
+          "severity": 116.777,
+          "peak_residual": 507.1,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 11,
+          "event_id": 10,
+          "start": "2026-05-23T10:45",
+          "end": "2026-05-23T17:00",
+          "duration_steps": 26,
+          "n_affected": 32,
+          "peak_frac": 0.25,
+          "classification": "multi-focal",
+          "severity": 115.871,
+          "peak_residual": 655.22,
+          "peak_node": 27,
+          "peak_node_name": "NclQueenVictoriaRdPercyBuilding",
+          "calendar": "Saturday, weekend"
+        },
+        {
+          "rank": 12,
+          "event_id": 11,
+          "start": "2026-05-06T11:00",
+          "end": "2026-05-06T17:30",
+          "duration_steps": 27,
+          "n_affected": 27,
+          "peak_frac": 0.2692,
+          "classification": "multi-focal",
+          "severity": 114.398,
+          "peak_residual": 541.67,
+          "peak_node": 50,
+          "peak_node_name": "NclTenthAveSecondAve",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 13,
+          "event_id": 12,
+          "start": "2026-05-15T10:30",
+          "end": "2026-05-15T18:15",
+          "duration_steps": 32,
+          "n_affected": 29,
+          "peak_frac": 0.3077,
+          "classification": "network-wide",
+          "severity": 114.243,
+          "peak_residual": 499.45,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 14,
+          "event_id": 13,
+          "start": "2026-05-13T13:30",
+          "end": "2026-05-13T18:30",
+          "duration_steps": 21,
+          "n_affected": 26,
+          "peak_frac": 0.2692,
+          "classification": "multi-focal",
+          "severity": 106.799,
+          "peak_residual": 527.97,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 15,
+          "event_id": 14,
+          "start": "2026-05-31T09:45",
+          "end": "2026-05-31T17:45",
+          "duration_steps": 33,
+          "n_affected": 25,
+          "peak_frac": 0.25,
+          "classification": "multi-focal",
+          "severity": 102.239,
+          "peak_residual": 572.55,
+          "peak_node": 3,
+          "peak_node_name": "NclAdelaideTerNicholSt",
+          "calendar": "Sunday, weekend"
+        },
+        {
+          "rank": 16,
+          "event_id": 15,
+          "start": "2026-05-24T10:15",
+          "end": "2026-05-24T20:15",
+          "duration_steps": 41,
+          "n_affected": 28,
+          "peak_frac": 0.2692,
+          "classification": "multi-focal",
+          "severity": 100.585,
+          "peak_residual": 649.73,
+          "peak_node": 27,
+          "peak_node_name": "NclQueenVictoriaRdPercyBuilding",
+          "calendar": "Sunday, weekend"
+        },
+        {
+          "rank": 17,
+          "event_id": 16,
+          "start": "2026-05-12T13:45",
+          "end": "2026-05-12T18:15",
+          "duration_steps": 19,
+          "n_affected": 25,
+          "peak_frac": 0.3077,
+          "classification": "network-wide",
+          "severity": 95.363,
+          "peak_residual": 520.61,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 18,
+          "event_id": 17,
+          "start": "2026-05-16T10:15",
+          "end": "2026-05-16T18:30",
+          "duration_steps": 34,
+          "n_affected": 24,
+          "peak_frac": 0.2115,
+          "classification": "multi-focal",
+          "severity": 90.905,
+          "peak_residual": 528.57,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Saturday, weekend"
+        },
+        {
+          "rank": 19,
+          "event_id": 18,
+          "start": "2026-05-28T11:15",
+          "end": "2026-05-28T18:30",
+          "duration_steps": 30,
+          "n_affected": 20,
+          "peak_frac": 0.1346,
+          "classification": "multi-focal",
+          "severity": 90.782,
+          "peak_residual": 496.12,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 20,
+          "event_id": 19,
+          "start": "2026-05-10T08:45",
+          "end": "2026-05-10T16:15",
+          "duration_steps": 31,
+          "n_affected": 22,
+          "peak_frac": 0.1731,
+          "classification": "multi-focal",
+          "severity": 84.975,
+          "peak_residual": 650.59,
+          "peak_node": 27,
+          "peak_node_name": "NclQueenVictoriaRdPercyBuilding",
+          "calendar": "Sunday, weekend"
+        }
+      ],
+      "busiest_nodes": [
+        {
+          "node": 24,
+          "name": "NclQuaysideMarinersWharfHadriansWallPath",
+          "n_outliers": 223
+        },
+        {
+          "node": 32,
+          "name": "NclSandyfordRdJesmondRdSouthbound",
+          "n_outliers": 193
+        },
+        {
+          "node": 20,
+          "name": "NclMowbrayStStratfordRdANPR",
+          "n_outliers": 176
+        },
+        {
+          "node": 17,
+          "name": "NclJesmondRdAllSaintsCemeteryNorth",
+          "n_outliers": 175
+        },
+        {
+          "node": 43,
+          "name": "NclStephensonRdHeatonRdNewtonRdNE2",
+          "n_outliers": 171
+        }
+      ],
+      "figures": [
+        "t1_network_activity.png",
+        "t1_spatial_burden.png"
+      ]
+    },
+    "test2": {
+      "outlier": {
+        "n": 4993,
+        "mean_variance": 51591.15349,
+        "mean_pi": 0.03114,
+        "mean_mu": 377.24517,
+        "mean_theta": 3.52356
+      },
+      "baseline": {
+        "n": 149759,
+        "mean_variance": 10213.44864,
+        "mean_pi": 0.22372,
+        "mean_mu": 95.54572,
+        "mean_theta": 1.92068
+      },
+      "variance_ratio": 5.0513,
+      "pi_ratio": 0.13919,
+      "coverage": {
+        "50": {
+          "outlier": 0.02864,
+          "baseline": 0.35631,
+          "nominal": 0.5
+        },
+        "90": {
+          "outlier": 0.12117,
+          "baseline": 0.63061,
+          "nominal": 0.9
+        },
+        "99": {
+          "outlier": 0.44783,
+          "baseline": 0.84788,
+          "nominal": 0.99
+        }
+      },
+      "figures": [
+        "t2_zinb_behaviour.png"
+      ]
+    },
+    "test3": {
+      "sim_outgoing_edges": 0,
+      "sim_incoming_edges": 1763,
+      "sim_nodes_with_incoming": 50,
+      "mean_incoming_neighbours": 35.26,
+      "n_att_pairs": 1731,
+      "attention_shift_median": -0.02782,
+      "attention_shift_pos_frac": 0.45234,
+      "n_mu_pairs": 1731,
+      "mu_shift_median_abs": 0.7922,
+      "mu_shift_frac_gt_0p5z": 0.73484,
+      "median_lag_steps": 0.0,
+      "figures": [
+        "t3_propagation.png"
+      ]
+    },
+    "test4": {
+      "n_events_used": 25,
+      "pre_event_slopes_per_hour": {
+        "mu": 45.50598,
+        "theta": 0.28576,
+        "pi": -0.05149,
+        "impute_res": 18.15643,
+        "att_entropy": 1.95588
+      },
+      "mu_recovery_hours": null,
+      "figures": [
+        "t4_buildup.png"
+      ]
+    },
+    "test5": {
+      "kriging_rmse_normal": 145.40142,
+      "kriging_rmse_exposed": 332.36464,
+      "kriging_rmse_normal_ci": [
+        143.69833,
+        147.3344
+      ],
+      "kriging_rmse_exposed_ci": [
+        330.31233,
+        334.61115
+      ],
+      "impute_rmse_normal": 65.99122,
+      "impute_rmse_exposed": 167.25705,
+      "n_normal": 27327,
+      "n_exposed": 11361,
+      "kriging_degradation_ratio": 2.28584,
+      "impute_degradation_ratio": 2.53453,
+      "figures": [
+        "t5_kriging.png"
+      ]
+    },
+    "test6": {
+      "by_type": {
+        "PI_CLAMP": {
+          "count": 4,
+          "mean_gt": 33.5,
+          "median_gt": 33.5,
+          "frac_at_night": 0.0,
+          "frac_coincide_outlier": 0.0,
+          "node_gini": 0.25,
+          "n_distinct_nodes": 2
+        }
+      },
+      "total": 4,
+      "figures": [
+        "t6_tripwire.png"
+      ]
+    },
+    "test7": {
+      "high_node": {
+        "node": 5,
+        "name": "NclBarrasBridgeCivicCentre",
+        "mean_count": 78.9291,
+        "n_outliers": 53,
+        "mean_msle_outlier": 2.78258,
+        "mean_se_outlier": 155790.83649,
+        "peak_gt": 1004.0
+      },
+      "low_node": {
+        "node": 18,
+        "name": "NclJesmondRdAllSaintsCemeterySouth",
+        "mean_count": 1.21774,
+        "n_outliers": 80,
+        "mean_msle_outlier": 25.55373,
+        "mean_se_outlier": 266306.19897,
+        "peak_gt": 7.0
+      },
+      "msle_ratio_high_over_low": 0.10889,
+      "se_ratio_high_over_low": 0.58501,
+      "n_high_candidates": 2,
+      "n_low_candidates": 9,
+      "figures": [
+        "t7_scale.png"
+      ]
+    },
+    "test8": {
+      "median_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "mean_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "spearman_gap_vs_outliers": null,
+      "n_node_days": 3162,
+      "n_real_node_days_with_gap": 1612,
+      "nonzero_gap_frac": 0.0,
+      "degenerate_export": true,
+      "figures": [
+        "t8_two_extremes.png"
+      ]
+    }
+  }
+}

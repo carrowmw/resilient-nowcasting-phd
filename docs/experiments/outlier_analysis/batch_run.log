@@ -1,0 +1,200 @@
+=== SKIP b1_kriging_w2_batch_32 (already snapshotted) ===
+=== SKIP lyric-jazz-19 (already snapshotted) ===
+=== SKIP valiant-waterfall-13 (already snapshotted) ===
+=== SKIP misunderstood-totem-16 (already snapshotted) ===
+=== SKIP whole-paper-14 (already snapshotted) ===
+=== START rich-dust-15 14:53:42 ===
+[run] run_id=rich-dust-15 wandb=3725u0kn dates=31 nodes=102
+[data_io] prefetching 3193 objects (31 dates x 102 nodes) ...
+[data_io]   200/3193 (missing=0)
+[data_io]   400/3193 (missing=0)
+[data_io]   600/3193 (missing=0)
+[data_io]   800/3193 (missing=0)
+[data_io]   1000/3193 (missing=0)
+[data_io]   1200/3193 (missing=0)
+[data_io]   1400/3193 (missing=0)
+[data_io]   1600/3193 (missing=0)
+[data_io]   1800/3193 (missing=0)
+[data_io]   2000/3193 (missing=0)
+[data_io]   2200/3193 (missing=0)
+[data_io]   2400/3193 (missing=0)
+[data_io]   2600/3193 (missing=0)
+[data_io]   2800/3193 (missing=0)
+[data_io]   3000/3193 (missing=0)
+[data_io]   3193/3193 (missing=0)
+[run] dataset built: T=2976 real=52 holdout=13 sim=50
+[run] 5389 outlier steps, 135 events
+[run] test1 done (0.2s)
+[run] test2 done (1.1s)
+[run] test3 done (1.1s)
+[run] test4 done (0.4s)
+[run] test5 done (0.1s)
+[run] test6 done (0.2s)
+[run] test7 done (0.1s)
+[run] test8 done (0.1s)
+wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+[run] wrote /workspace/docs/experiments/outlier_analysis/outputs/report.md and outputs/results.json in 14.5s
+=== DONE rich-dust-15 14:53:57 ===
+=== START atomic-morning-12 14:53:57 ===
+[run] run_id=atomic-morning-12 wandb=xixdyuwj dates=31 nodes=102
+[data_io] prefetching 3193 objects (31 dates x 102 nodes) ...
+[data_io]   200/3193 (missing=0)
+[data_io]   400/3193 (missing=0)
+[data_io]   600/3193 (missing=0)
+[data_io]   800/3193 (missing=0)
+[data_io]   1000/3193 (missing=0)
+[data_io]   1200/3193 (missing=0)
+[data_io]   1400/3193 (missing=0)
+[data_io]   1600/3193 (missing=0)
+[data_io]   1800/3193 (missing=0)
+[data_io]   2000/3193 (missing=0)
+[data_io]   2200/3193 (missing=0)
+[data_io]   2400/3193 (missing=0)
+[data_io]   2600/3193 (missing=0)
+[data_io]   2800/3193 (missing=0)
+[data_io]   3000/3193 (missing=0)
+[data_io]   3193/3193 (missing=0)
+[run] dataset built: T=2976 real=52 holdout=13 sim=50
+[run] 8022 outlier steps, 1 events
+[run] test1 done (0.2s)
+[run] test2 done (0.5s)
+/workspace/docs/experiments/outlier_analysis/oea/analysis.py:442: UserWarning: No artists with labels found to put in legend.  Note that artists whose label start with an underscore are ignored when legend() is called with no argument.
+  ax1.legend(fontsize=8)
+[run] test3 done (0.1s)
+[run] test4 done (0.1s)
+[run] test5 done (0.2s)
+[run] test6 done (1.0s)
+[run] test7 done (0.1s)
+[run] test8 done (0.2s)
+wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+[run] wrote /workspace/docs/experiments/outlier_analysis/outputs/report.md and outputs/results.json in 120.8s
+=== DONE atomic-morning-12 14:55:59 ===
+=== START cool-voice-11 14:55:59 ===
+[run] run_id=cool-voice-11 wandb=ei8h8rem dates=31 nodes=102
+[data_io] prefetching 3193 objects (31 dates x 102 nodes) ...
+[data_io]   200/3193 (missing=0)
+[data_io]   400/3193 (missing=0)
+[data_io]   600/3193 (missing=0)
+[data_io]   800/3193 (missing=0)
+[data_io]   1000/3193 (missing=0)
+[data_io]   1200/3193 (missing=0)
+[data_io]   1400/3193 (missing=0)
+[data_io]   1600/3193 (missing=0)
+[data_io]   1800/3193 (missing=0)
+[data_io]   2000/3193 (missing=0)
+[data_io]   2200/3193 (missing=0)
+[data_io]   2400/3193 (missing=0)
+[data_io]   2600/3193 (missing=0)
+[data_io]   2800/3193 (missing=0)
+[data_io]   3000/3193 (missing=0)
+[data_io]   3193/3193 (missing=0)
+[run] dataset built: T=2976 real=52 holdout=13 sim=50
+[run] 5123 outlier steps, 110 events
+[run] test1 done (0.2s)
+[run] test2 done (1.2s)
+[run] test3 done (0.9s)
+[run] test4 done (0.5s)
+[run] test5 done (0.1s)
+[run] test6 done (0.3s)
+[run] test7 done (0.1s)
+[run] test8 done (0.1s)
+wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+[run] wrote /workspace/docs/experiments/outlier_analysis/outputs/report.md and outputs/results.json in 209.2s
+=== DONE cool-voice-11 14:59:29 ===
+=== START magic-snow-10 14:59:29 ===
+[run] run_id=magic-snow-10 wandb=fuyf7dkd dates=31 nodes=102
+[data_io] prefetching 3193 objects (31 dates x 102 nodes) ...
+[data_io]   200/3193 (missing=0)
+[data_io]   400/3193 (missing=0)
+[data_io]   600/3193 (missing=0)
+[data_io]   800/3193 (missing=0)
+[data_io]   1000/3193 (missing=0)
+[data_io]   1200/3193 (missing=0)
+[data_io]   1400/3193 (missing=0)
+[data_io]   1600/3193 (missing=0)
+[data_io]   1800/3193 (missing=0)
+[data_io]   2000/3193 (missing=0)
+[data_io]   2200/3193 (missing=0)
+[data_io]   2400/3193 (missing=0)
+[data_io]   2600/3193 (missing=0)
+[data_io]   2800/3193 (missing=0)
+[data_io]   3000/3193 (missing=0)
+[data_io]   3193/3193 (missing=0)
+[run] dataset built: T=2976 real=52 holdout=13 sim=50
+[run] 5019 outlier steps, 90 events
+[run] test1 done (0.2s)
+[run] test2 done (1.2s)
+[run] test3 done (0.9s)
+[run] test4 done (0.4s)
+[run] test5 done (0.1s)
+[run] test6 done (0.2s)
+[run] test7 done (0.1s)
+[run] test8 done (0.1s)
+wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+[run] wrote /workspace/docs/experiments/outlier_analysis/outputs/report.md and outputs/results.json in 184.9s
+=== DONE magic-snow-10 15:02:35 ===
+=== START copper-mountain-9 15:02:35 ===
+[run] run_id=copper-mountain-9 wandb=v2iq9t5i dates=31 nodes=102
+[data_io] prefetching 3193 objects (31 dates x 102 nodes) ...
+[data_io]   200/3193 (missing=0)
+[data_io]   400/3193 (missing=0)
+[data_io]   600/3193 (missing=0)
+[data_io]   800/3193 (missing=0)
+[data_io]   1000/3193 (missing=0)
+[data_io]   1200/3193 (missing=0)
+[data_io]   1400/3193 (missing=0)
+[data_io]   1600/3193 (missing=0)
+[data_io]   1800/3193 (missing=0)
+[data_io]   2000/3193 (missing=0)
+[data_io]   2200/3193 (missing=0)
+[data_io]   2400/3193 (missing=0)
+[data_io]   2600/3193 (missing=0)
+[data_io]   2800/3193 (missing=0)
+[data_io]   3000/3193 (missing=0)
+[data_io]   3193/3193 (missing=0)
+[run] dataset built: T=2976 real=52 holdout=13 sim=50
+[run] 5549 outlier steps, 105 events
+[run] test1 done (0.2s)
+[run] test2 done (1.1s)
+[run] test3 done (1.1s)
+[run] test4 done (0.4s)
+[run] test5 done (0.1s)
+[run] test6 done (0.1s)
+[run] test7 done (0.1s)
+[run] test8 done (0.1s)
+wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+[run] wrote /workspace/docs/experiments/outlier_analysis/outputs/report.md and outputs/results.json in 179.2s
+=== DONE copper-mountain-9 15:05:35 ===
+=== START tough-dragon-7 15:05:35 ===
+[run] run_id=tough-dragon-7 wandb=embn4pr7 dates=31 nodes=102
+[data_io] prefetching 3193 objects (31 dates x 102 nodes) ...
+[data_io]   200/3193 (missing=0)
+[data_io]   400/3193 (missing=0)
+[data_io]   600/3193 (missing=0)
+[data_io]   800/3193 (missing=0)
+[data_io]   1000/3193 (missing=0)
+[data_io]   1200/3193 (missing=0)
+[data_io]   1400/3193 (missing=0)
+[data_io]   1600/3193 (missing=0)
+[data_io]   1800/3193 (missing=0)
+[data_io]   2000/3193 (missing=0)
+[data_io]   2200/3193 (missing=0)
+[data_io]   2400/3193 (missing=0)
+[data_io]   2600/3193 (missing=0)
+[data_io]   2800/3193 (missing=0)
+[data_io]   3000/3193 (missing=0)
+[data_io]   3193/3193 (missing=0)
+[run] dataset built: T=2976 real=52 holdout=13 sim=50
+[run] 3923 outlier steps, 151 events
+[run] test1 done (0.2s)
+[run] test2 done (1.1s)
+[run] test3 done (1.1s)
+[run] test4 done (0.5s)
+[run] test5 done (0.1s)
+[run] test6 done (0.2s)
+[run] test7 done (0.1s)
+[run] test8 done (0.1s)
+wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+[run] wrote /workspace/docs/experiments/outlier_analysis/outputs/report.md and outputs/results.json in 184.6s
+=== DONE tough-dragon-7 15:08:41 ===
+=== ALL COMPLETE ===

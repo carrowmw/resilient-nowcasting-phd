@@ -1091,8 +1091,9 @@ def main() -> None:
                 )
                 # clamp(min=0) on display-only ground truth (matches the dataset's
                 # target_forecast clamp; raw counts cannot be negative).
+                val = float(real_gt[node_id])
                 ground_truth_series[node_id].append(
-                    round(max(0.0, float(real_gt[node_id])), 4)
+                    None if math.isnan(val) else round(max(0.0, val), 4)
                 )
                 mask_series[node_id].append(bool(real_mask_last[node_id]))
 

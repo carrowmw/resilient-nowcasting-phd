@@ -17,13 +17,13 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 PAPER_RC = {
-    "font.size": 13,
-    "axes.titlesize": 14,
-    "axes.labelsize": 13,
-    "xtick.labelsize": 12,
-    "ytick.labelsize": 12,
-    "legend.fontsize": 12,
-    "figure.titlesize": 15,
+    "font.size": 14,
+    "axes.titlesize": 16,
+    "axes.labelsize": 14,
+    "xtick.labelsize": 13,
+    "ytick.labelsize": 13,
+    "legend.fontsize": 13,
+    "figure.titlesize": 18,
     "figure.dpi": 150,
     "savefig.dpi": 300,
     "savefig.bbox": "tight",

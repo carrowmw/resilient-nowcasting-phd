@@ -1,0 +1,510 @@
+{
+  "run_meta": {
+    "run_id": "rich-dust-15",
+    "wandb_run_id": "3725u0kn",
+    "generated_at": "2026-09-09T14:53:57+00:00",
+    "git_commit": "2be8aef047da2c19f9aef1beb290d56c515d41b4",
+    "n_dates": 31,
+    "elapsed_sec": 14.5
+  },
+  "results": {
+    "test1": {
+      "n_events": 135,
+      "class_counts": {
+        "network-wide": 11,
+        "multi-focal": 62,
+        "cluster": 16,
+        "isolated": 46
+      },
+      "total_flagged_steps": 5389,
+      "mean_pct_flagged": 3.482,
+      "max_pct_flagged": 61.538,
+      "catalogue": [
+        {
+          "rank": 1,
+          "event_id": 0,
+          "start": "2026-05-07T06:15",
+          "end": "2026-05-07T19:45",
+          "duration_steps": 55,
+          "n_affected": 49,
+          "peak_frac": 0.5577,
+          "classification": "network-wide",
+          "severity": 400.203,
+          "peak_residual": 524.19,
+          "peak_node": 9,
+          "peak_node_name": "NclCypressAveGreenway",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 2,
+          "event_id": 1,
+          "start": "2026-05-08T06:30",
+          "end": "2026-05-08T19:45",
+          "duration_steps": 54,
+          "n_affected": 49,
+          "peak_frac": 0.6154,
+          "classification": "network-wide",
+          "severity": 342.171,
+          "peak_residual": 484.1,
+          "peak_node": 9,
+          "peak_node_name": "NclCypressAveGreenway",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 3,
+          "event_id": 2,
+          "start": "2026-05-11T13:30",
+          "end": "2026-05-11T19:00",
+          "duration_steps": 23,
+          "n_affected": 39,
+          "peak_frac": 0.4038,
+          "classification": "network-wide",
+          "severity": 224.483,
+          "peak_residual": 456.79,
+          "peak_node": 45,
+          "peak_node_name": "NclStephensonRdHeatonRdNewtonRdSE1",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 4,
+          "event_id": 3,
+          "start": "2026-05-20T09:45",
+          "end": "2026-05-20T18:45",
+          "duration_steps": 37,
+          "n_affected": 35,
+          "peak_frac": 0.4423,
+          "classification": "network-wide",
+          "severity": 209.529,
+          "peak_residual": 473.71,
+          "peak_node": 45,
+          "peak_node_name": "NclStephensonRdHeatonRdNewtonRdSE1",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 5,
+          "event_id": 4,
+          "start": "2026-05-18T14:00",
+          "end": "2026-05-18T18:45",
+          "duration_steps": 20,
+          "n_affected": 36,
+          "peak_frac": 0.5385,
+          "classification": "network-wide",
+          "severity": 202.803,
+          "peak_residual": 474.21,
+          "peak_node": 45,
+          "peak_node_name": "NclStephensonRdHeatonRdNewtonRdSE1",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 6,
+          "event_id": 5,
+          "start": "2026-05-21T14:00",
+          "end": "2026-05-21T18:00",
+          "duration_steps": 17,
+          "n_affected": 35,
+          "peak_frac": 0.4423,
+          "classification": "network-wide",
+          "severity": 201.191,
+          "peak_residual": 495.04,
+          "peak_node": 45,
+          "peak_node_name": "NclStephensonRdHeatonRdNewtonRdSE1",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 7,
+          "event_id": 6,
+          "start": "2026-05-01T06:30",
+          "end": "2026-05-01T14:45",
+          "duration_steps": 34,
+          "n_affected": 42,
+          "peak_frac": 0.3269,
+          "classification": "network-wide",
+          "severity": 200.835,
+          "peak_residual": 469.18,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 8,
+          "event_id": 7,
+          "start": "2026-05-11T06:45",
+          "end": "2026-05-11T12:45",
+          "duration_steps": 25,
+          "n_affected": 32,
+          "peak_frac": 0.3269,
+          "classification": "network-wide",
+          "severity": 154.538,
+          "peak_residual": 344.29,
+          "peak_node": 9,
+          "peak_node_name": "NclCypressAveGreenway",
+          "calendar": "Monday"
+        },
+        {
+          "rank": 9,
+          "event_id": 8,
+          "start": "2026-05-06T14:00",
+          "end": "2026-05-06T19:00",
+          "duration_steps": 21,
+          "n_affected": 21,
+          "peak_frac": 0.2115,
+          "classification": "multi-focal",
+          "severity": 145.957,
+          "peak_residual": 476.79,
+          "peak_node": 9,
+          "peak_node_name": "NclCypressAveGreenway",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 10,
+          "event_id": 9,
+          "start": "2026-05-19T06:45",
+          "end": "2026-05-19T09:00",
+          "duration_steps": 10,
+          "n_affected": 29,
+          "peak_frac": 0.3846,
+          "classification": "network-wide",
+          "severity": 145.929,
+          "peak_residual": 207.82,
+          "peak_node": 35,
+          "peak_node_name": "NclShieldsRdEdwinStNorth",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 11,
+          "event_id": 10,
+          "start": "2026-05-14T11:15",
+          "end": "2026-05-14T18:15",
+          "duration_steps": 29,
+          "n_affected": 33,
+          "peak_frac": 0.2692,
+          "classification": "multi-focal",
+          "severity": 145.12,
+          "peak_residual": 343.91,
+          "peak_node": 27,
+          "peak_node_name": "NclQueenVictoriaRdPercyBuilding",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 12,
+          "event_id": 11,
+          "start": "2026-05-12T13:00",
+          "end": "2026-05-12T19:15",
+          "duration_steps": 26,
+          "n_affected": 30,
+          "peak_frac": 0.2308,
+          "classification": "multi-focal",
+          "severity": 142.28,
+          "peak_residual": 452.16,
+          "peak_node": 9,
+          "peak_node_name": "NclCypressAveGreenway",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 13,
+          "event_id": 12,
+          "start": "2026-05-13T13:30",
+          "end": "2026-05-13T18:30",
+          "duration_steps": 21,
+          "n_affected": 30,
+          "peak_frac": 0.2115,
+          "classification": "multi-focal",
+          "severity": 141.826,
+          "peak_residual": 439.96,
+          "peak_node": 9,
+          "peak_node_name": "NclCypressAveGreenway",
+          "calendar": "Wednesday"
+        },
+        {
+          "rank": 14,
+          "event_id": 13,
+          "start": "2026-05-15T10:45",
+          "end": "2026-05-15T18:15",
+          "duration_steps": 31,
+          "n_affected": 28,
+          "peak_frac": 0.1923,
+          "classification": "multi-focal",
+          "severity": 140.056,
+          "peak_residual": 438.9,
+          "peak_node": 18,
+          "peak_node_name": "NclJesmondRdAllSaintsCemeterySouth",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 15,
+          "event_id": 14,
+          "start": "2026-05-19T14:00",
+          "end": "2026-05-19T19:15",
+          "duration_steps": 22,
+          "n_affected": 30,
+          "peak_frac": 0.2692,
+          "classification": "multi-focal",
+          "severity": 132.164,
+          "peak_residual": 366.83,
+          "peak_node": 27,
+          "peak_node_name": "NclQueenVictoriaRdPercyBuilding",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 16,
+          "event_id": 15,
+          "start": "2026-05-22T11:15",
+          "end": "2026-05-22T19:15",
+          "duration_steps": 33,
+          "n_affected": 25,
+          "peak_frac": 0.3269,
+          "classification": "network-wide",
+          "severity": 128.078,
+          "peak_residual": 429.29,
+          "peak_node": 45,
+          "peak_node_name": "NclStephensonRdHeatonRdNewtonRdSE1",
+          "calendar": "Friday"
+        },
+        {
+          "rank": 17,
+          "event_id": 16,
+          "start": "2026-05-14T06:15",
+          "end": "2026-05-14T08:30",
+          "duration_steps": 10,
+          "n_affected": 24,
+          "peak_frac": 0.3654,
+          "classification": "network-wide",
+          "severity": 115.626,
+          "peak_residual": 196.49,
+          "peak_node": 35,
+          "peak_node_name": "NclShieldsRdEdwinStNorth",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 18,
+          "event_id": 17,
+          "start": "2026-05-05T06:30",
+          "end": "2026-05-05T11:45",
+          "duration_steps": 22,
+          "n_affected": 20,
+          "peak_frac": 0.2692,
+          "classification": "multi-focal",
+          "severity": 107.863,
+          "peak_residual": 254.92,
+          "peak_node": 14,
+          "peak_node_name": "NclHeatonRdGuildfordPl",
+          "calendar": "Tuesday"
+        },
+        {
+          "rank": 19,
+          "event_id": 18,
+          "start": "2026-05-21T06:45",
+          "end": "2026-05-21T08:15",
+          "duration_steps": 7,
+          "n_affected": 20,
+          "peak_frac": 0.2308,
+          "classification": "multi-focal",
+          "severity": 107.736,
+          "peak_residual": 215.9,
+          "peak_node": 8,
+          "peak_node_name": "NclConventRdOrdCtANPR",
+          "calendar": "Thursday"
+        },
+        {
+          "rank": 20,
+          "event_id": 19,
+          "start": "2026-05-10T08:00",
+          "end": "2026-05-10T15:15",
+          "duration_steps": 30,
+          "n_affected": 22,
+          "peak_frac": 0.1538,
+          "classification": "multi-focal",
+          "severity": 98.426,
+          "peak_residual": 411.48,
+          "peak_node": 9,
+          "peak_node_name": "NclCypressAveGreenway",
+          "calendar": "Sunday, weekend"
+        }
+      ],
+      "busiest_nodes": [
+        {
+          "node": 27,
+          "name": "NclQueenVictoriaRdPercyBuilding",
+          "n_outliers": 199
+        },
+        {
+          "node": 40,
+          "name": "NclShieldsRdSquareEast",
+          "n_outliers": 158
+        },
+        {
+          "node": 42,
+          "name": "NclStephensonRdHeatonRdNewtonRdNE1",
+          "n_outliers": 153
+        },
+        {
+          "node": 36,
+          "name": "NclShieldsRdMatthewStSouth",
+          "n_outliers": 151
+        },
+        {
+          "node": 37,
+          "name": "NclShieldsRdRabySt",
+          "n_outliers": 151
+        }
+      ],
+      "figures": [
+        "t1_network_activity.png",
+        "t1_spatial_burden.png"
+      ]
+    },
+    "test2": {
+      "outlier": {
+        "n": 5389,
+        "mean_variance": 15473.08811,
+        "mean_pi": 0.00019,
+        "mean_mu": 182.55533,
+        "mean_theta": 3.77952
+      },
+      "baseline": {
+        "n": 149363,
+        "mean_variance": 2004.5673,
+        "mean_pi": 0.05054,
+        "mean_mu": 35.85104,
+        "mean_theta": 3.11635
+      },
+      "variance_ratio": 7.71892,
+      "pi_ratio": 0.00376,
+      "coverage": {
+        "50": {
+          "outlier": 0.03414,
+          "baseline": 0.56335,
+          "nominal": 0.5
+        },
+        "90": {
+          "outlier": 0.31063,
+          "baseline": 0.8632,
+          "nominal": 0.9
+        },
+        "99": {
+          "outlier": 0.69419,
+          "baseline": 0.9615,
+          "nominal": 0.99
+        }
+      },
+      "figures": [
+        "t2_zinb_behaviour.png"
+      ]
+    },
+    "test3": {
+      "sim_outgoing_edges": 0,
+      "sim_incoming_edges": 1587,
+      "sim_nodes_with_incoming": 50,
+      "mean_incoming_neighbours": 31.74,
+      "n_att_pairs": 2014,
+      "attention_shift_median": -0.00849,
+      "attention_shift_pos_frac": 0.47517,
+      "n_mu_pairs": 2014,
+      "mu_shift_median_abs": 0.52589,
+      "mu_shift_frac_gt_0p5z": 0.53873,
+      "median_lag_steps": 0.0,
+      "figures": [
+        "t3_propagation.png"
+      ]
+    },
+    "test4": {
+      "n_events_used": 25,
+      "pre_event_slopes_per_hour": {
+        "mu": 5.5646,
+        "theta": 0.24837,
+        "pi": -0.00779,
+        "impute_res": 2.40251,
+        "att_entropy": 1.46171
+      },
+      "mu_recovery_hours": null,
+      "figures": [
+        "t4_buildup.png"
+      ]
+    },
+    "test5": {
+      "kriging_rmse_normal": 120.0226,
+      "kriging_rmse_exposed": 206.49442,
+      "kriging_rmse_normal_ci": [
+        117.8253,
+        122.094
+      ],
+      "kriging_rmse_exposed_ci": [
+        203.62566,
+        209.31912
+      ],
+      "impute_rmse_normal": 66.56261,
+      "impute_rmse_exposed": 110.24323,
+      "n_normal": 29301,
+      "n_exposed": 9387,
+      "kriging_degradation_ratio": 1.72046,
+      "impute_degradation_ratio": 1.65623,
+      "figures": [
+        "t5_kriging.png"
+      ]
+    },
+    "test6": {
+      "by_type": {
+        "PI_CLAMP": {
+          "count": 92860,
+          "mean_gt": 28.66377,
+          "median_gt": 17.0,
+          "frac_at_night": 0.02698,
+          "frac_coincide_outlier": 0.06309,
+          "node_gini": 0.48951,
+          "n_distinct_nodes": 100
+        }
+      },
+      "total": 92860,
+      "figures": [
+        "t6_tripwire.png"
+      ]
+    },
+    "test7": {
+      "high_node": {
+        "node": 5,
+        "name": "NclBarrasBridgeCivicCentre",
+        "mean_count": 78.9291,
+        "n_outliers": 146,
+        "mean_msle_outlier": 1.28097,
+        "mean_se_outlier": 84868.0402,
+        "peak_gt": 1004.0
+      },
+      "low_node": {
+        "node": 18,
+        "name": "NclJesmondRdAllSaintsCemeterySouth",
+        "mean_count": 1.21774,
+        "n_outliers": 134,
+        "mean_msle_outlier": 20.65322,
+        "mean_se_outlier": 93984.27677,
+        "peak_gt": 17.0
+      },
+      "msle_ratio_high_over_low": 0.06202,
+      "se_ratio_high_over_low": 0.903,
+      "n_high_candidates": 2,
+      "n_low_candidates": 9,
+      "figures": [
+        "t7_scale.png"
+      ]
+    },
+    "test8": {
+      "median_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "mean_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "spearman_gap_vs_outliers": null,
+      "n_node_days": 3162,
+      "n_real_node_days_with_gap": 1612,
+      "nonzero_gap_frac": 0.0,
+      "degenerate_export": true,
+      "figures": [
+        "t8_two_extremes.png"
+      ]
+    }
+  }
+}

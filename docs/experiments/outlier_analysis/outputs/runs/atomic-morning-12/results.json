@@ -1,0 +1,212 @@
+{
+  "run_meta": {
+    "run_id": "atomic-morning-12",
+    "wandb_run_id": "xixdyuwj",
+    "generated_at": "2026-09-09T14:55:59+00:00",
+    "git_commit": "2be8aef047da2c19f9aef1beb290d56c515d41b4",
+    "n_dates": 31,
+    "elapsed_sec": 120.8
+  },
+  "results": {
+    "test1": {
+      "n_events": 1,
+      "class_counts": {
+        "network-wide": 1
+      },
+      "total_flagged_steps": 8022,
+      "mean_pct_flagged": 5.184,
+      "max_pct_flagged": 75.0,
+      "catalogue": [
+        {
+          "rank": 1,
+          "event_id": 0,
+          "start": "2026-05-01T00:00",
+          "end": "2026-05-31T23:45",
+          "duration_steps": 2976,
+          "n_affected": 52,
+          "peak_frac": 0.75,
+          "classification": "network-wide",
+          "severity": 535.825,
+          "peak_residual": 1853.23,
+          "peak_node": 15,
+          "peak_node_name": "NclHeberSt",
+          "calendar": "Friday"
+        }
+      ],
+      "busiest_nodes": [
+        {
+          "node": 47,
+          "name": "NclStephensonRdHeatonRdNewtonRdSE3",
+          "n_outliers": 2906
+        },
+        {
+          "node": 18,
+          "name": "NclJesmondRdAllSaintsCemeterySouth",
+          "n_outliers": 159
+        },
+        {
+          "node": 24,
+          "name": "NclQuaysideMarinersWharfHadriansWallPath",
+          "n_outliers": 150
+        },
+        {
+          "node": 49,
+          "name": "NclSwingBridgeWest",
+          "n_outliers": 145
+        },
+        {
+          "node": 36,
+          "name": "NclShieldsRdMatthewStSouth",
+          "n_outliers": 144
+        }
+      ],
+      "figures": [
+        "t1_network_activity.png",
+        "t1_spatial_burden.png"
+      ]
+    },
+    "test2": {
+      "outlier": {
+        "n": 8022,
+        "mean_variance": 1.54232,
+        "mean_pi": 0.44687,
+        "mean_mu": 0.7386,
+        "mean_theta": 0.69442
+      },
+      "baseline": {
+        "n": 146730,
+        "mean_variance": 1.7277,
+        "mean_pi": 0.44644,
+        "mean_mu": 0.78652,
+        "mean_theta": 0.66825
+      },
+      "variance_ratio": 0.8927,
+      "pi_ratio": 1.00096,
+      "coverage": {
+        "50": {
+          "outlier": 0.362,
+          "baseline": 0.2549,
+          "nominal": 0.5
+        },
+        "90": {
+          "outlier": 0.36225,
+          "baseline": 0.44214,
+          "nominal": 0.9
+        },
+        "99": {
+          "outlier": 0.39279,
+          "baseline": 0.55286,
+          "nominal": 0.99
+        }
+      },
+      "figures": [
+        "t2_zinb_behaviour.png"
+      ]
+    },
+    "test3": {
+      "sim_outgoing_edges": 0,
+      "sim_incoming_edges": 1810,
+      "sim_nodes_with_incoming": 50,
+      "mean_incoming_neighbours": 36.2,
+      "n_att_pairs": 0,
+      "attention_shift_median": null,
+      "attention_shift_pos_frac": null,
+      "n_mu_pairs": 0,
+      "mu_shift_median_abs": null,
+      "mu_shift_frac_gt_0p5z": null,
+      "median_lag_steps": null,
+      "figures": [
+        "t3_propagation.png"
+      ]
+    },
+    "test4": {
+      "n_events_used": 0,
+      "pre_event_slopes_per_hour": {
+        "mu": 0.0,
+        "theta": 0.0,
+        "pi": 0.0,
+        "impute_res": 0.0,
+        "att_entropy": 0.0
+      },
+      "mu_recovery_hours": null,
+      "figures": [
+        "t4_buildup.png"
+      ]
+    },
+    "test5": {
+      "kriging_rmse_normal": 34.44254,
+      "kriging_rmse_exposed": 47.4706,
+      "kriging_rmse_normal_ci": [
+        28.06463,
+        40.6219
+      ],
+      "kriging_rmse_exposed_ci": [
+        46.33039,
+        48.42593
+      ],
+      "impute_rmse_normal": 30.25437,
+      "impute_rmse_exposed": 40.33887,
+      "n_normal": 599,
+      "n_exposed": 38089,
+      "kriging_degradation_ratio": 1.37825,
+      "impute_degradation_ratio": 1.33332,
+      "figures": [
+        "t5_kriging.png"
+      ]
+    },
+    "test6": {
+      "by_type": {},
+      "total": 0,
+      "figures": [
+        "t6_tripwire.png"
+      ]
+    },
+    "test7": {
+      "high_node": {
+        "node": 5,
+        "name": "NclBarrasBridgeCivicCentre",
+        "mean_count": 78.9291,
+        "n_outliers": 67,
+        "mean_msle_outlier": 27.97583,
+        "mean_se_outlier": 141379.17073,
+        "peak_gt": 1004.0
+      },
+      "low_node": {
+        "node": 18,
+        "name": "NclJesmondRdAllSaintsCemeterySouth",
+        "mean_count": 1.21774,
+        "n_outliers": 159,
+        "mean_msle_outlier": 1.95423,
+        "mean_se_outlier": 36.14696,
+        "peak_gt": 17.0
+      },
+      "msle_ratio_high_over_low": 14.31553,
+      "se_ratio_high_over_low": 3911.23267,
+      "n_high_candidates": 2,
+      "n_low_candidates": 9,
+      "figures": [
+        "t7_scale.png"
+      ]
+    },
+    "test8": {
+      "median_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "mean_gap_by_role": {
+        "observed": 0.0,
+        "holdout": 0.0,
+        "simulated": null
+      },
+      "spearman_gap_vs_outliers": null,
+      "n_node_days": 3162,
+      "n_real_node_days_with_gap": 1612,
+      "nonzero_gap_frac": 0.0,
+      "degenerate_export": true,
+      "figures": [
+        "t8_two_extremes.png"
+      ]
+    }
+  }
+}
