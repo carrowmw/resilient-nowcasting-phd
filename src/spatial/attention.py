@@ -79,7 +79,7 @@ def attention_seed_agreement(records: List[AttentionRecord]) -> dict:
     assert len(records) >= 2, "CRITICAL: seed agreement needs >= 2 records"
     e0 = records[0].edge_index
     for r in records[1:]:
-        assert (r.edge_index == e0).all(), \
+        assert r.edge_index.shape == e0.shape and (r.edge_index == e0).all(), \
             "CRITICAL: attention records disagree on the edge set"
     rhos = []
     for a in range(len(records)):
