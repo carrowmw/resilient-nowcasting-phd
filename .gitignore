@@ -1,7 +1,7 @@
 /data/*
 !/data/external/
 wandb/
-models/
+/models/
 digest.txt
 node_modules/
 build/
