@@ -138,6 +138,30 @@ models:
     patience: 5
     scheduler_step_size: 5
     scheduler_gamma: 0.7
+  gru_uv:
+    type: gru
+    feature_groups: [count]
+    hidden_dim: 64
+    num_layers: 1
+    dropout: 0.1
+    lr: 0.001
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
+  gru_mv:
+    type: gru
+    feature_groups: [count, half_day, day, week, quarter, year, timestamp]
+    hidden_dim: 64
+    num_layers: 2
+    dropout: 0.1
+    lr: 0.0005
+    batch_size: 128
+    epochs: 30
+    patience: 5
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
 
 ablation:
   model: lstm_mv                # base spec whose feature set is substituted
@@ -155,7 +179,8 @@ run:
   output_dir: "artifacts/quality_full_v2"
   sensors: "all"                # 'all' (viable per manifest) or explicit list
   models: [persistence, snaive_daily, snaive_weekly, arima, lstm_uv, lstm_mv,
-           transformer_uv, transformer_mv, transformer_masked_uv, transformer_masked_mv]
+           transformer_uv, transformer_mv, transformer_masked_uv, transformer_masked_mv,
+           gru_uv, gru_mv]
   horizons: [8, 24]
   interpolation_variants: [none, night_zero, linear, spline, knn]
   run_ablations: true             # the ablation experiment sets true
