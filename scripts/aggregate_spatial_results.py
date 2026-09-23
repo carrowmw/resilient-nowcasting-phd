@@ -190,8 +190,14 @@ def run_attention_analysis(out_dir: Path, agg_dir: Path, fig_dir: Path,
         top_edges_table(records[0], node_ids).to_csv(
             agg_dir / f"attention_top_edges_{model}_{graph}.csv", index=False)
         if len(records) >= 2:
-            stab_rows.append({"model": model, "graph_variant": graph,
-                              **attention_seed_agreement(records)})
+            is_learned = any(m.get("capabilities", {}).get("learns_topology", False)
+                             for m in manifests.values()
+                             if m["model"] == model and m["graph_variant"] == graph)
+            if is_learned:
+                logger.info(f"Attention for {model}|{graph}: learns topology — seed agreement skipped")
+            else:
+                stab_rows.append({"model": model, "graph_variant": graph,
+                                  **attention_seed_agreement(records)})
         plotting.plot_attention_graph(
             records[0], dist, node_ids,
             str(fig_dir / f"attention_graph_{model}_{graph}.png"),
