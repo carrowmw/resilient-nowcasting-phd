@@ -31,7 +31,9 @@ class RealIoTDataset(Dataset):
                  end_date: str,
                  seq_len: int = 12,
                  target_veh_class: str = 'person',
-                 target_dir: str = 'all'):
+                 target_dir: str = 'all',
+                 train_split: Optional[float] = None,
+                 ablate_masks: bool = False):
 
         logger.info(f"Loading data via connector {type(connector).__name__} "
                     f"between {start_date} and {end_date}")
@@ -66,9 +68,10 @@ class RealIoTDataset(Dataset):
             )
 
         if target_dir == 'all':
-            # Group by dt and location, sum values, take first for weather/static features
+            # Group by dt and location.
+            # Using min_count=1 ensures all-null station slots remain NaN (F-C03 fix)
             agg_funcs = {
-                'value': 'sum',
+                'value': lambda s: np.nan if s.isna().all() else s.sum(min_count=1),
                 'Humidity': 'first',
                 'Solar Radiation': 'first',
                 'transit_count': 'first',
@@ -126,7 +129,7 @@ class RealIoTDataset(Dataset):
         total_mnar_mask = val_df.isna().values.astype(np.float32)
         
         # Extract hours from the DatetimeIndex to build the night heuristic mask
-        # Broadast hour comparison to the shape of the data
+        # Broadcast hour comparison to the shape of the data
         hours = val_df.index.get_level_values('dt').hour.values[:, None]
         is_night_arr = (hours >= 0) & (hours < 5)
         night_mnar_mask = (val_df.isna().values & is_night_arr).astype(np.float32)
@@ -136,6 +139,10 @@ class RealIoTDataset(Dataset):
         
         logger.info(f"MNAR Masks Generated. Total missing: {(total_mnar_mask.mean()*100):.2f}%. Night missing: {(night_mnar_mask.mean()*100):.2f}%")
         
+        if ablate_masks:
+            self.structural_masks = torch.zeros_like(self.structural_masks)
+            logger.info("ABLATION: Explicit MNAR masks zeroed out.")
+
         # Explicitly apply 0.0 imputation to resolve nulls upstream
         val_df = val_df.fillna(0.0)
         hum_df = hum_df.fillna(0.0)
@@ -150,16 +157,31 @@ class RealIoTDataset(Dataset):
         # convert these to signed floats and corrupt the loss domain.
         self.unscaled_traffic = val_arr.copy()  # [num_times, num_nodes]
 
-        # PHASE 1: Separate scaling for traffic (ch 0) vs weather (ch 1-2)
+        # PHASE 1 & F-C02: Separate scaling for traffic (ch 0) vs weather (ch 1-2)
         # to enable TRUE MSLE on raw counts via inverse transform in loss computation.
+        # Scalers are fitted EXCLUSIVELY on the training slice (F-C02 fix).
 
         num_times = len(self.times)
         num_nodes_d = len(self.locations)
 
-        # Traffic channel: Fit dedicated scaler and expose statistics
-        traffic_flat = val_arr.reshape(-1, 1)  # [T*N, 1]
+        if train_split is not None and 0.0 < train_split < 1.0:
+            train_t_end = int(train_split * num_times)
+        else:
+            train_t_end = num_times
+
+        # Traffic channel: Fit dedicated scaler on observed training counts only (excluding null fill-zeros)
+        val_train_slice = val_arr[:train_t_end]  # [train_T, N]
+        mnar_train_slice = total_mnar_mask[:train_t_end]  # [train_T, N]
+        observed_mask = (mnar_train_slice == 0.0)
+
+        observed_counts = val_train_slice[observed_mask].reshape(-1, 1)
+        assert len(observed_counts) > 0, "CRITICAL: No observed counts in training slice to fit scaler"
+
         self.traffic_scaler = StandardScaler()
-        traffic_scaled_flat = self.traffic_scaler.fit_transform(traffic_flat)
+        self.traffic_scaler.fit(observed_counts)
+
+        traffic_flat = val_arr.reshape(-1, 1)  # [T*N, 1]
+        traffic_scaled_flat = self.traffic_scaler.transform(traffic_flat)
         traffic_scaled = traffic_scaled_flat.reshape(num_times, num_nodes_d)  # [T, N]
 
         # Extract and expose scaler statistics for pipeline buffers
@@ -171,11 +193,13 @@ class RealIoTDataset(Dataset):
         assert not np.isnan(self.traffic_mean), "CRITICAL: Traffic mean is NaN"
         assert not np.isnan(self.traffic_std), "CRITICAL: Traffic std is NaN"
 
-        # Weather channels: Separate scaler for humidity and solar radiation
+        # Weather channels: Fit scaler strictly on training slice
         weather_arr = np.stack([hum_arr, sol_arr], axis=-1)  # [T, N, 2]
         weather_flat = weather_arr.reshape(-1, 2)  # [T*N, 2]
+        weather_train = weather_flat[:train_t_end * num_nodes_d]
         self.weather_scaler = StandardScaler()
-        weather_scaled_flat = self.weather_scaler.fit_transform(weather_flat)
+        self.weather_scaler.fit(weather_train)
+        weather_scaled_flat = self.weather_scaler.transform(weather_flat)
         weather_scaled = weather_scaled_flat.reshape(num_times, num_nodes_d, 2)  # [T, N, 2]
 
         # Stack: [T, N, 3] where dim 0=traffic, dim 1-2=weather
@@ -191,7 +215,7 @@ class RealIoTDataset(Dataset):
 
         self.time_series_dim = self.dynamic_data.shape[-1]
 
-        logger.info(f"Traffic scaler: mean={self.traffic_mean:.2f}, std={self.traffic_std:.2f}")
+        logger.info(f"Traffic scaler (train-only): mean={self.traffic_mean:.2f}, std={self.traffic_std:.2f}")
         logger.info(f"Dynamic features scaled separately: traffic (ch0) + weather (ch1-2) over {num_times * num_nodes_d} samples.")
 
         # Static features

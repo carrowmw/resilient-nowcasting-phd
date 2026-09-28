@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 # Perform early GPU selection before ANY PyTorch or W&B bindings are loaded
 if __name__ == "__main__":
@@ -72,6 +72,12 @@ def parse_args():
         action="store_true",
         help="Use mock data instead of real parquet data",
     )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Custom run name for W&B and checkpoint directory",
+    )
     return parser.parse_args()
 
 
@@ -79,12 +85,21 @@ def load_config(config_path: str) -> dict:
     with open(config_path, "r") as f:
         cfg = yaml.safe_load(f)
 
-    # Merge configs/infra.yaml as defaults (one directory level above the training config dir).
-    # The training config always wins on any conflict, so per-run overrides are safe.
-    infra_path = os.path.normpath(
-        os.path.join(os.path.dirname(os.path.abspath(config_path)), "..", "infra.yaml")
-    )
-    if os.path.exists(infra_path):
+    # Search for configs/infra.yaml as defaults.
+    # Checks 1 and 2 directory levels above the training config, plus repo-relative configs/infra.yaml.
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    infra_path = None
+    for candidate in [
+        os.path.join(config_dir, "..", "infra.yaml"),
+        os.path.join(config_dir, "..", "..", "infra.yaml"),
+        os.path.join(os.getcwd(), "configs", "infra.yaml"),
+    ]:
+        norm = os.path.normpath(candidate)
+        if os.path.exists(norm):
+            infra_path = norm
+            break
+
+    if infra_path and os.path.exists(infra_path):
         with open(infra_path, "r") as f:
             infra = yaml.safe_load(f) or {}
         for key, val in infra.items():
@@ -142,6 +157,53 @@ def create_mock_dataloader(
     return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate), dataset
 
 
+def chronological_purged_split(
+    full_dataset,
+    train_split: float = 0.7,
+    val_split: float = 0.15,
+    purge_steps: int = 13,
+) -> Tuple[torch.utils.data.Subset, torch.utils.data.Subset, Optional[torch.utils.data.Subset]]:
+    """
+    Chronological train/val/test split with purge buffers (F-C01 remediation).
+    Prevents temporal window overlap leakage between train, validation, and test partitions.
+    """
+    total_len = len(full_dataset)
+    train_size = int(train_split * total_len)
+    val_size = int(val_split * total_len)
+
+    train_end = train_size
+    val_start = min(train_end + purge_steps, total_len)
+    val_end = min(val_start + val_size, total_len)
+    test_start = min(val_end + purge_steps, total_len)
+    test_end = total_len
+
+    if train_end <= 0 or val_end <= val_start:
+        # Fallback if dataset is very short (e.g. mock test): split without purge
+        train_end = max(1, int(train_split * total_len))
+        val_start = train_end
+        val_end = total_len
+        test_start = val_end
+        test_end = total_len
+
+    train_dataset = torch.utils.data.Subset(full_dataset, list(range(0, train_end)))
+    val_dataset = torch.utils.data.Subset(full_dataset, list(range(val_start, val_end)))
+    test_dataset = (
+        torch.utils.data.Subset(full_dataset, list(range(test_start, test_end)))
+        if test_end > test_start
+        else None
+    )
+
+    for subset in [train_dataset, val_dataset, test_dataset]:
+        if subset is not None:
+            subset.num_nodes = getattr(full_dataset, "num_nodes", None)
+            subset.static_feat_dim = getattr(full_dataset, "static_feat_dim", None)
+            subset.time_series_dim = getattr(full_dataset, "time_series_dim", None)
+            subset.traffic_mean = getattr(full_dataset, "traffic_mean", None)
+            subset.traffic_std = getattr(full_dataset, "traffic_std", None)
+
+    return train_dataset, val_dataset, test_dataset
+
+
 def run_training(
     config: dict,
     init_wandb: bool = True,
@@ -171,10 +233,14 @@ def run_training(
 
     amp_enabled: bool = config["amp"]
     if amp_enabled:
-        assert torch.cuda.is_bf16_supported(), \
-            "CRITICAL: amp=true requested but this device does not support bf16. " \
-            "Set amp: false in train.yaml or use a bf16-capable GPU."
-        logger.info("bf16 autocast ENABLED (amp=true)")
+        if device.type == "cuda":
+            assert torch.cuda.is_bf16_supported(), \
+                "CRITICAL: amp=true requested but this device does not support bf16. " \
+                "Set amp: false in train.yaml or use a bf16-capable GPU."
+            logger.info("bf16 autocast ENABLED (amp=true)")
+        else:
+            logger.info("Device is CPU: bf16 autocast disabled for execution")
+            amp_enabled = False
     else:
         logger.info("bf16 autocast DISABLED (amp=false)")
 
@@ -184,9 +250,10 @@ def run_training(
     wandb_project = wandb_cfg["project"]
     wandb_sweep_project = wandb_cfg["sweep_project"]
     wandb_collection = wandb_cfg["collection"]
+    run_name_cfg = wandb_cfg.get("run_name") or wandb_cfg.get("name") or wandb_collection
 
     if init_wandb:
-        wandb.init(project=wandb_project, config=config)
+        wandb.init(project=wandb_project, name=run_name_cfg, config=config)
 
     # ------------------------------------------------------------------ #
     # Directory Namespacing Strategy (Robust Model Versioning)           #
@@ -251,29 +318,22 @@ def run_training(
     kriging_active = spatial_holdout_prob > 0.0
     loss_weights = {"w_impute": w_impute, "w_forecast": w_forecast, "w_kriging": w_kriging}
 
-    train_split = config["train_split"]
+    train_split = config.get("train_split", 0.7)
+    val_split = config.get("val_split", 0.15)
+    test_loader = None
+    test_dataset = None
 
     if train_loader is not None and val_loader is not None:
         logger.info("Using provided data loaders.")
         train_dataset = train_loader.dataset
     elif full_dataset is not None:
-        logger.info("Using provided full_dataset.")
-        train_size = int(train_split * len(full_dataset))
-        val_size = len(full_dataset) - train_size
-
-        train_dataset, val_dataset = torch.utils.data.random_split(
-            full_dataset, [train_size, val_size]
+        logger.info("Using provided full_dataset with chronological purged splitting (F-C01 fix).")
+        train_dataset, val_dataset, test_dataset = chronological_purged_split(
+            full_dataset,
+            train_split=train_split,
+            val_split=val_split,
+            purge_steps=data_cfg["seq_len"] + 1,
         )
-        # Propagate dataset-level attributes
-        train_dataset.num_nodes = full_dataset.num_nodes
-        train_dataset.static_feat_dim = full_dataset.static_feat_dim
-        train_dataset.time_series_dim = full_dataset.time_series_dim
-
-        # Propagate scaler statistics for scale-invariant loss
-        train_dataset.traffic_mean = full_dataset.traffic_mean
-        train_dataset.traffic_std = full_dataset.traffic_std
-        val_dataset.traffic_mean = full_dataset.traffic_mean
-        val_dataset.traffic_std = full_dataset.traffic_std
 
         train_loader = DataLoader(
             train_dataset,
@@ -297,6 +357,17 @@ def run_training(
             prefetch_factor=4 if num_workers > 0 else None,
             worker_init_fn=_worker_init_fn,
         )
+        if test_dataset is not None and len(test_dataset) > 0:
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=train_cfg["batch_size"],
+                collate_fn=custom_collate_real,
+                num_workers=num_workers,
+                pin_memory=torch.cuda.is_available(),
+                persistent_workers=num_workers > 0,
+                prefetch_factor=4 if num_workers > 0 else None,
+                worker_init_fn=_worker_init_fn,
+            )
     elif use_mock_data:
         logger.info("Using mock dataloader.")
         train_loader, train_dataset = create_mock_dataloader(
@@ -307,7 +378,15 @@ def run_training(
             static_feat_dim=model_cfg["static_feat_dim"],
             dataset_size=20,
         )
-        val_loader, _ = create_mock_dataloader(
+        val_loader, val_dataset = create_mock_dataloader(
+            batch_size=train_cfg["batch_size"],
+            num_nodes=model_cfg["num_nodes"],
+            seq_len=data_cfg["seq_len"],
+            time_series_dim=model_cfg["time_series_dim"],
+            static_feat_dim=model_cfg["static_feat_dim"],
+            dataset_size=8,
+        )
+        test_loader, test_dataset = create_mock_dataloader(
             batch_size=train_cfg["batch_size"],
             num_nodes=model_cfg["num_nodes"],
             seq_len=data_cfg["seq_len"],
@@ -326,35 +405,20 @@ def run_training(
                 seq_len=data_cfg["seq_len"],
                 target_veh_class=data_cfg["target_veh_class"],
                 target_dir=data_cfg["target_dir"],
+                train_split=train_split,
+                ablate_masks=data_cfg.get("ablate_masks", False),
             )
         finally:
             # RealIoTDataset.__init__ loads all data into memory; the connector is
             # no longer needed after construction whether it succeeded or failed.
             connector.close()
 
-        train_size = int(train_split * len(full_dataset))
-        val_size = len(full_dataset) - train_size
-
-        if train_size == 0 or val_size == 0:
-            raise ValueError(
-                "Not enough data to split into train and val. Try a wider date range."
-            )
-
-        train_dataset, val_dataset = torch.utils.data.random_split(
-            full_dataset, [train_size, val_size]
+        train_dataset, val_dataset, test_dataset = chronological_purged_split(
+            full_dataset,
+            train_split=train_split,
+            val_split=val_split,
+            purge_steps=data_cfg["seq_len"] + 1,
         )
-
-        # Propagate dataset-level attributes to the Subset wrapper so the
-        # model initializer below can read them uniformly.
-        train_dataset.num_nodes = full_dataset.num_nodes
-        train_dataset.static_feat_dim = full_dataset.static_feat_dim
-        train_dataset.time_series_dim = full_dataset.time_series_dim
-
-        # PHASE 1: Propagate scaler statistics for scale-invariant loss
-        train_dataset.traffic_mean = full_dataset.traffic_mean
-        train_dataset.traffic_std = full_dataset.traffic_std
-        val_dataset.traffic_mean = full_dataset.traffic_mean
-        val_dataset.traffic_std = full_dataset.traffic_std
 
         train_loader = DataLoader(
             train_dataset,
@@ -378,6 +442,17 @@ def run_training(
             prefetch_factor=4 if num_workers > 0 else None,
             worker_init_fn=_worker_init_fn,
         )
+        if test_dataset is not None and len(test_dataset) > 0:
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=train_cfg["batch_size"],
+                collate_fn=custom_collate_real,
+                num_workers=num_workers,
+                pin_memory=torch.cuda.is_available(),
+                persistent_workers=num_workers > 0,
+                prefetch_factor=4 if num_workers > 0 else None,
+                worker_init_fn=_worker_init_fn,
+            )
 
     # ------------------------------------------------------------------ #
     # Model                                                                #
@@ -399,10 +474,10 @@ def run_training(
             dropout=model_cfg["dropout"],
             dim_feedforward=model_cfg["dim_feedforward"],
             zinb_eps=model_cfg["zinb_eps"],
-            # PHASE 3: physical edge features cache (None for mock data / learned-only fallback).
             edge_features_cache_path=(
                 None if use_mock_data else model_cfg.get("edge_features_cache_path")
             ),
+            use_positional_encoding=model_cfg.get("use_positional_encoding", True),
         ).to(device)
     else:
         baseline_cls = LSTMForecaster if model_type == "lstm" else GRUForecaster
@@ -776,6 +851,94 @@ def run_training(
     logger.info("Training complete.")
 
     # ------------------------------------------------------------------ #
+    # Final Evaluation on Held-Out Test Set (F-C01 / Forensic Audit)     #
+    # ------------------------------------------------------------------ #
+    test_metrics = None
+    if os.path.exists(checkpoint_path):
+        logger.info(f"Restoring best checkpoint from {checkpoint_path} for final evaluation.")
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+    if test_loader is not None and len(test_loader) > 0:
+        logger.info(f"Running final evaluation on held-out test partition ({len(test_dataset)} samples)...")
+        model.eval()
+        test_loss_total = torch.zeros((), device=device)
+        test_loss_kriging_total = torch.zeros((), device=device)
+        test_accum = MetricAccumulator()
+
+        with torch.no_grad():
+            for batch in test_loader:
+                batch = {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
+                if static_features_dev is not None:
+                    batch["static_features"] = static_features_dev
+                    batch["location_ids"] = _batch_loc_ids
+
+                clean_dyn_test = batch["dynamic_features"]
+                node_mask_test = torch.rand(clean_dyn_test.shape, device=device) < mask_prob
+                batch["target_impute"] = clean_dyn_test.clone()
+                batch["dynamic_features"] = clean_dyn_test.masked_fill(node_mask_test, float("nan"))
+                batch["node_mask"] = node_mask_test
+
+                if val_holdout_mask is not None:
+                    batch["spatial_holdout_mask"] = val_holdout_mask
+                    batch["dynamic_features"] = apply_spatial_holdout(
+                        batch["dynamic_features"], val_holdout_mask
+                    )
+
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
+                    losses, preds = adapter.step(
+                        batch, loss_weights, loss_node_mask=loss_node_mask
+                    )
+                test_loss_kriging_total += losses.kriging.detach()
+
+                if eval_mode == "inductive":
+                    test_loss_total += losses.total.detach() - w_kriging * losses.kriging.detach()
+                else:
+                    test_loss_total += losses.total.detach()
+
+                test_accum.update(
+                    evaluate_batch(
+                        adapter.capabilities, preds, batch, holdout_mask=val_holdout_mask
+                    )
+                )
+
+        avg_test_loss = (test_loss_total / len(test_loader)).item()
+        avg_test_kriging = (test_loss_kriging_total / len(test_loader)).item()
+        test_metrics = test_accum.summary()
+        test_metrics["test_loss"] = avg_test_loss
+        test_metrics["test_loss_kriging"] = avg_test_kriging
+
+        def _fmt(v, p=4):
+            return "N/A" if v is None else f"{v:.{p}f}"
+
+        logger.info(
+            f"Final Test Metrics -> "
+            f"Loss: {avg_test_loss:.4f} | "
+            f"RMSE: {_fmt(test_metrics['rmse'], 2)} | "
+            f"MAE: {_fmt(test_metrics['mae'], 2)} | "
+            f"ZeroAcc: {_fmt(test_metrics['zero_acc'], 4)} | "
+            f"Kriging RMSE: {_fmt(test_metrics['kriging_rmse'], 2)} | "
+            f"Kriging MAE: {_fmt(test_metrics['kriging_mae'], 2)}"
+        )
+        if init_wandb or (wandb.run is not None):
+            test_payload = {f"final_test_{k}": v for k, v in test_metrics.items() if v is not None}
+            wandb.log(test_payload)
+            for k, v in test_metrics.items():
+                if v is not None:
+                    wandb.run.summary[f"test_{k}"] = v
+
+        save_results_manifest(checkpoint_dir, {
+            "model_type": model_type,
+            "eval_mode": eval_mode,
+            "best_val_loss": best_val_loss,
+            "seed": train_cfg["random_seed"],
+            "holdout_manifest_sha": manifest_sha(holdout_manifest),
+            "val_loss_total": best_val_loss,
+            "metrics": val_metrics,
+            "test_metrics": test_metrics,
+            "mask_rng": "cuda",
+        })
+
+    # ------------------------------------------------------------------ #
     # W&B Artifact Upload (Phase 1)                                      #
     # ------------------------------------------------------------------ #
     logger.info(f"Uploading model artifact to W&B from {checkpoint_path}")
@@ -822,6 +985,8 @@ def main():
     logger = setup_logger("train_pipeline")
     args = parse_args()
     config = load_config(args.config)
+    if args.run_name:
+        config.setdefault("wandb", {})["run_name"] = args.run_name
 
     # CUDA_VISIBLE_DEVICES is already set by the early setup block
     if not args.use_mock_data:

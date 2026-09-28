@@ -1,0 +1,53 @@
+# ============================================================================
+# RIoT Architecture v4: Ablation 3 - No Missingness Indicator Masks
+# ============================================================================
+
+wandb:
+  project: "resilient-iot-v4"
+  sweep_project: "resilient-iot-sweeps-v4"
+  collection: "riot-v4-ablation-no-masks"
+
+data:
+  start_date: "2023-04-02"
+  end_date: "2026-04-02"
+  seq_len: 12
+  target_veh_class: "person"
+  target_dir: "all"
+  mask_prob: 0.15
+  spatial_holdout_prob: 0.2
+  inductive_holdout_frac: 0.2
+  ablate_masks: true
+
+model:
+  num_nodes: 81
+  static_feat_dim: 15
+  time_series_dim: 5
+  embedding_dim: 32
+  hidden_dim: 64
+  sparsity_threshold: 0.5
+  num_layers: 3
+  num_heads: 4
+  dropout: 0.1
+  dim_feedforward: null
+  zinb_eps: 1.0e-6
+  use_positional_encoding: true
+
+training:
+  epochs: 100
+  batch_size: 128
+  lr: 0.0003
+  grad_clip_max_norm: 1.0
+  early_stop_patience: 10
+  early_stop_min_delta: 0.001
+  random_seed: 42
+
+loss:
+  w_forecast: 1.0
+  w_impute: 1.0
+  w_kriging: 0.5
+
+model_type: gnn
+eval_mode: inductive
+train_split: 0.70
+val_split: 0.15
+amp: true

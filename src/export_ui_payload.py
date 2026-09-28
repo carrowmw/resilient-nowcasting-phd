@@ -284,19 +284,30 @@ def build_model_and_adapter(
     logger.info(f"Model loaded (eval mode). Capabilities: {adapter.capabilities}")
     return adapter
 
-def compute_std_dev(mu: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+def compute_std_dev(
+    mu: torch.Tensor,
+    theta: torch.Tensor,
+    pi: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     """
-    Variance of the Negative Binomial marginal of the ZINB distribution:
+    Standard deviation of the ZINB distribution:
+        Var(Y) = (1 - pi) * (mu + mu² / theta) + pi * (1 - pi) * mu²
+    If pi is None, evaluates the standard Negative Binomial variance:
         Var = mu + mu² / theta
 
     Args:
         mu:    [batch_size, num_nodes]  — mean parameter (already softplus'd + eps)
         theta: [batch_size, num_nodes]  — dispersion parameter (already softplus'd + eps)
+        pi:    [batch_size, num_nodes]  — optional zero-inflation probability parameter
 
     Returns:
         std_dev: [batch_size, num_nodes]
     """
-    variance = mu + (mu ** 2) / theta
+    nb_var = mu + (mu ** 2) / theta
+    if pi is not None:
+        variance = (1.0 - pi) * nb_var + pi * (1.0 - pi) * (mu ** 2)
+    else:
+        variance = nb_var
     # Tripwire: variance must be strictly positive (guaranteed by softplus+eps on mu, theta)
     assert (variance > 0).all(), "TRIPWIRE: Non-positive variance detected."
     return torch.sqrt(variance)
@@ -508,13 +519,16 @@ def compute_zero_inflation_reliability(
     pi_series: List[List[float]],
     num_real_nodes: int,
     num_bins: int = 10,
+    mu_series: Optional[List[List[float]]] = None,
+    theta_series: Optional[List[List[float]]] = None,
 ) -> List[Dict]:
     """
     Compute the zero-inflation reliability diagram.
 
-    For each valid (non-None, non-NaN) observation, pairs the predicted pi (zero-inflation
-    probability) with whether the observed count is a true structural zero (y_obs == 0).
-    Bins pi into num_bins equal-width buckets across [0, 1] and computes the actual
+    For each valid (non-None, non-NaN) observation, calculates the theoretical probability
+    of observing zero: P(Y = 0) = pi + (1 - pi) * (theta / (theta + mu))^theta.
+    When mu_series/theta_series are not supplied, falls back to using the mixture weight pi directly.
+    Bins this probability into num_bins equal-width buckets across [0, 1] and computes the actual
     fraction of true zeros in each bucket.
 
     Returns a list of dicts (one per non-empty bin):
@@ -528,18 +542,33 @@ def compute_zero_inflation_reliability(
     zero_counts = np.zeros(num_bins, dtype=np.int64)
     total_counts = np.zeros(num_bins, dtype=np.int64)
 
+    use_full_zinb = mu_series is not None and theta_series is not None
+
     for node_id in range(num_real_nodes):
         gt_seq = ground_truth_series[node_id]
         pi_seq = pi_series[node_id]
+        mu_seq = mu_series[node_id] if use_full_zinb else None
+        th_seq = theta_series[node_id] if use_full_zinb else None
+
         assert len(gt_seq) == len(pi_seq), (
             f"Reliability: length mismatch node {node_id}: gt={len(gt_seq)} pi={len(pi_seq)}"
         )
-        for gt, pi_val in zip(gt_seq, pi_seq):
+        for idx, (gt, pi_val) in enumerate(zip(gt_seq, pi_seq)):
             if gt is None or math.isnan(gt):
                 continue
             pi_f = float(pi_val)
-            assert 0.0 < pi_f < 1.0, f"Reliability: pi={pi_f} outside (0,1) — ZINB decoder must guarantee this"
-            bin_idx = min(int(pi_f * num_bins), num_bins - 1)
+            assert 0.0 <= pi_f <= 1.0, f"Reliability: pi={pi_f} outside [0,1]"
+
+            if use_full_zinb:
+                mu_f = float(mu_seq[idx])
+                th_f = float(th_seq[idx])
+                nb_p0 = (th_f / (th_f + mu_f)) ** th_f
+                p_zero = pi_f + (1.0 - pi_f) * nb_p0
+            else:
+                p_zero = pi_f
+
+            p_zero = max(0.0, min(1.0, p_zero))
+            bin_idx = min(int(p_zero * num_bins), num_bins - 1)
             total_counts[bin_idx] += 1
             if gt == 0.0:  # noqa: comparing float to 0.0 is intentional (raw count)
                 zero_counts[bin_idx] += 1
@@ -964,6 +993,7 @@ def main() -> None:
     # Accumulators — pre-allocate for efficiency
     # timeseries_data[node_id] = list of {t, prediction, uncertainty}
     timeseries_data: List[List[Dict]] = [[] for _ in range(num_nodes_total)]
+    mu_data: List[List[float]] = [[] for _ in range(num_nodes_total)]
     # Imputation analytics: three parallel arrays per node, each length=num_timesteps.
     # ground_truth_series uses (number | null) — None for simulated nodes (no physical sensor).
     ground_truth_series: List[List] = [[] for _ in range(num_nodes_total)]
@@ -1020,27 +1050,34 @@ def main() -> None:
             mu: torch.Tensor = preds.mu[0]  # [num_nodes_total]
             assert not torch.isnan(mu).any(), f"t={t}: NaN in mu"
 
+            # -------- Zero-inflation probability — gated on the capability --------
+            pi_raw = preds.pi[0] if caps.zero_inflation else None
+
             # -------- Uncertainty (ZINB dispersion) — gated on the capability --------
             if caps.uncertainty:
-                theta = preds.theta[0]                                 # [num_nodes_total]
-                std_dev = compute_std_dev(preds.mu, preds.theta)[0]    # [num_nodes_total]
+                theta = preds.theta[0]                                                    # [num_nodes_total]
+                std_dev = compute_std_dev(preds.mu, preds.theta, preds.pi)[0]            # [num_nodes_total]
                 assert not torch.isnan(std_dev).any(), f"t={t}: NaN in std_dev"
             else:
                 theta = None
                 std_dev = None
 
-            # -------- Zero-inflation probability — gated on the capability --------
-            pi_raw = preds.pi[0] if caps.zero_inflation else None
+            # For ZINB models, E[Y] = mu * (1 - pi). For standard models, E[Y] = mu.
+            if caps.zero_inflation and pi_raw is not None:
+                point_pred = mu * (1.0 - pi_raw)
+            else:
+                point_pred = mu
 
             # Store per-node prediction (+ uncertainty/theta/pi when available).
             # A baseline reports uncertainty=None rather than a fabricated band.
             for node_id in range(num_nodes_total):
                 timeseries_data[node_id].append({
                     "t": t,
-                    "prediction": round(float(mu[node_id]), 4),
+                    "prediction": round(float(point_pred[node_id]), 4),
                     "uncertainty": (None if std_dev is None
                                     else round(float(std_dev[node_id]), 4)),
                 })
+                mu_data[node_id].append(round(float(mu[node_id]), 4))
                 if caps.uncertainty:
                     theta_data[node_id].append(round(float(theta[node_id]), 4))
                 if caps.zero_inflation:
@@ -1153,7 +1190,7 @@ def main() -> None:
         logger.info("Computing PIT histogram …")
         pit_histogram = compute_pit_histogram(
             ground_truth_series=ground_truth_series,
-            mu_series=[[ts["prediction"] for ts in timeseries_data[n]] for n in range(num_nodes_total)],
+            mu_series=mu_data,
             theta_series=theta_data,
             pi_series=pi_data,
             num_real_nodes=num_nodes_real,
@@ -1169,6 +1206,8 @@ def main() -> None:
             ground_truth_series=ground_truth_series,
             pi_series=pi_data,
             num_real_nodes=num_nodes_real,
+            mu_series=mu_data if caps.uncertainty else None,
+            theta_series=theta_data if caps.uncertainty else None,
         )
         logger.info(f"  Reliability diagram: {len(zero_inflation_reliability)} non-empty bins")
     else:

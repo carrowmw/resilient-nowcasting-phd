@@ -31,7 +31,8 @@ class ResilientIoTPipeline(nn.Module):
                  dim_feedforward: Optional[int] = None,
                  zinb_eps: float = 1.0e-6,
                  edge_features_cache_path: str = None,
-                 simulated_edge_features_cache_path: str = None):
+                 simulated_edge_features_cache_path: str = None,
+                 use_positional_encoding: bool = True):
         super(ResilientIoTPipeline, self).__init__()
 
         # None is a documented API default (hidden_dim * 4); <= 0 is an invalid caller error.
@@ -65,9 +66,10 @@ class ResilientIoTPipeline(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             dim_feedforward=dim_feedforward,
-            edge_dim=encoder_edge_dim
+            edge_dim=encoder_edge_dim,
+            use_positional_encoding=use_positional_encoding,
         )
-        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, num_heads={num_heads}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
+        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, num_heads={num_heads}, use_pe={use_positional_encoding}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
 
         # 3. Multi-Task Decoders
         self.decoders = DecoupledDecoders(
@@ -150,7 +152,14 @@ class ResilientIoTPipeline(nn.Module):
         # structural_masks shape: [batch_size, num_nodes, seq_len, 2]
         structural_masks = batch.get('structural_masks')
         if structural_masks is not None:
-            encoder_input = torch.cat([dynamic_features_clean, structural_masks], dim=-1)
+            # F-C05: If spatial holdout is applied, heldout nodes should signal Channel 3 = 1.0 (unobserved)
+            # rather than leaking their fine-grained missingness pattern.
+            if holdout_mask is not None and holdout_mask.any():
+                masks_clone = structural_masks.clone()
+                masks_clone[:, holdout_mask, :, 0] = 1.0
+                encoder_input = torch.cat([dynamic_features_clean, masks_clone], dim=-1)
+            else:
+                encoder_input = torch.cat([dynamic_features_clean, structural_masks], dim=-1)
         else:
             encoder_input = dynamic_features_clean
         # 1. Graph Learner — PHASE 3 returns enriched edge_attr [E, 10] (or [E, 1] fallback).
@@ -158,12 +167,18 @@ class ResilientIoTPipeline(nn.Module):
             static_features, location_ids=location_ids
         )
 
-        # --- Strict Topology Masking ---
+        # --- Strict Topology Masking (F-C04 fix) ---
         # Prevent "ghost clustering" and pollution by dropping outgoing edges from simulated nodes
+        # AND from spatial holdout nodes during training / kriging evaluation
+        drop_mask = None
         if 'simulated_nodes_mask' in batch:
-            sim_mask = batch['simulated_nodes_mask']
+            drop_mask = batch['simulated_nodes_mask']
+        if holdout_mask is not None and holdout_mask.any():
+            drop_mask = holdout_mask if drop_mask is None else (drop_mask | holdout_mask)
+
+        if drop_mask is not None:
             sources = edge_index[0]
-            valid_edges = ~sim_mask[sources]
+            valid_edges = ~drop_mask[sources]
             edge_index = edge_index[:, valid_edges]
             edge_weight = edge_weight[valid_edges]
             # PHASE 3: keep edge_attr row-aligned with the filtered edges.

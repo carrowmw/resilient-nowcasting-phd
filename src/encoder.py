@@ -1,8 +1,37 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv
 from typing import Optional, Tuple, Union
+
+
+class SinusoidalPositionalEncoding(nn.Module):
+    """
+    Sinusoidal positional encoding for the temporal sequence dimension (F-C08 remediation).
+    Maps positions t in [0, max_len) to harmonic embeddings of dimension hidden_dim.
+    Input layout: [Seq_len, Batch, Dim].
+    """
+    def __init__(self, hidden_dim: int, max_len: int = 100):
+        super(SinusoidalPositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, hidden_dim)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, hidden_dim, 2).float() * (-math.log(10000.0) / hidden_dim))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        # Register buffer so it moves across devices with the module
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [Seq_len, Batch, Dim]
+        Returns:
+            Tensor of shape [Seq_len, Batch, Dim] with positional encoding added.
+        """
+        seq_len = x.size(0)
+        return x + self.pe[:seq_len].unsqueeze(1)
+
 
 class MaskedSpatiotemporalEncoder(nn.Module):
     """
@@ -10,7 +39,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
     
     Architecture:
     1. Spatial: GATv2Conv layers applied independently across each time step.
-    2. Temporal: TransformerEncoder to capture dependencies across the sequence.
+    2. Temporal: Sinusoidal Positional Encoding + TransformerEncoder across the sequence.
     """
     def __init__(self, 
                  num_nodes: int, 
@@ -22,7 +51,8 @@ class MaskedSpatiotemporalEncoder(nn.Module):
                  dropout: float = 0.1,
                  dim_feedforward: int = 256,
                  edge_dim: int = 1,
-                 mask_dim: int = 2):
+                 mask_dim: int = 2,
+                 use_positional_encoding: bool = True):
         super(MaskedSpatiotemporalEncoder, self).__init__()
 
         self.num_nodes = num_nodes
@@ -30,6 +60,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         self.time_series_dim = time_series_dim
         self.mask_dim = mask_dim
         self.hidden_dim = hidden_dim
+        self.use_positional_encoding = use_positional_encoding
         # PHASE 3: edge_dim=1 -> learned similarity only; edge_dim=10 -> enriched
         # physical + learned edge features from the cache.
         self.edge_dim = edge_dim
@@ -45,7 +76,12 @@ class MaskedSpatiotemporalEncoder(nn.Module):
             edge_dim=edge_dim  # PHASE 3: 1 (learned-only) or 10 (enriched edge_attr)
         )
 
-        # 2. Temporal Processing: Transformer
+        # 2. Temporal Processing: Positional Encoding + Transformer
+        if use_positional_encoding:
+            self.pos_encoder = SinusoidalPositionalEncoding(hidden_dim, max_len=max(seq_len * 2, 64))
+        else:
+            self.pos_encoder = None
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
@@ -135,6 +171,10 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         # Seq dimension: T
         x_temporal = x_temporal.permute(1, 0, 2, 3).contiguous() # [T, B, N, H]
         x_temporal = x_temporal.view(seq_len, batch_size * num_nodes, self.hidden_dim)
+
+        # Inject harmonic positional encoding (F-C08 fix)
+        if self.use_positional_encoding and self.pos_encoder is not None:
+            x_temporal = self.pos_encoder(x_temporal)
 
         # Pass through Transformer
         # x_out: [T, B * N, H]
