@@ -298,9 +298,9 @@ def main():
                     title=f"{model} h{h}: RMSE vs traffic volume",
                 )
 
-            # --- RF exploratory (unchanged) ---
+            # --- RF exploratory (changed to CV-RMSE) ---
             if model in lstm_models:
-                rf = rf_quality_to_error(qdf, sub["mae_raw"])
+                rf = rf_quality_to_error(qdf, sub["cv_rmse_raw"])
                 with open(analysis_dir / f"rf_exploratory_{model}_h{h}.json", "w") as f:
                     json.dump(rf, f, indent=2)
                 plot_importances(

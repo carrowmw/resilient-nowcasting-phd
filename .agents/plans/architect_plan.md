@@ -1,38 +1,54 @@
-# Architectural Design: Configurable Simulated Nodes & Map Toggle
+# Architectural Design: RIoT Architecture v4 & Experiment 3 Audit Remediation
 
-## 1. Overview
-The current system hardcodes five simulated node coordinates in `configs/analysis/analysis.yaml`. To support scale-testing and robust zero-shot topological inference visualizations, we must dynamically sample up to 100 simulated nodes directly from the physical road graph intersections, ensuring mathematical reproducibility via a global seed. A frontend toggle will allow the user to isolate physical sensor observations from synthetic simulations in the map view.
+## 1. Executive Summary & Objective
+This architectural specification details the comprehensive remediation of the Experiment 3 (RIoT) pipeline to transition from v3 to **v4**. It directly addresses the mathematical and procedural vulnerabilities identified in the thesis forensic audit (F-C01 through F-C12), implements strict container-safe chronological data partitioning, resolves the pandas MNAR aggregation defect, integrates sinusoidal positional temporal encoding, enforces topological masking consistency, and constructs a resilient multi-GPU batch execution harness capable of running the complete suite of thesis ablation studies across GPU 0 and GPU 1 on the remote server.
 
-## 2. Alignment with North Stars
-- **NSTAR_FRONTEND_ARCHITECTURE.md (Decoupled Systems):** The simulated layer toggle must be managed by the centralized `useTimeStore` (Zustand), maintaining a reactive data flow to the `MapVisualizer`'s Deck.gl layers without triggering full React DOM re-renders during playback.
-- **NSTAR_MLOPS.md (Reproducibility):** The selection of intersection coordinates must be strictly deterministic. We will enforce the global Python `random.seed(42)` immediately before sampling the `osmnx` graph nodes.
-- **NSTAR_BACKEND_ARCHITECTURE.md (Offensive Programming):** We must validate that the configured `num_simulated_nodes` is within bounds (0 to 100). If the OSMnx graph fails to load or lacks sufficient nodes, the system must fail fast with a `RuntimeError`, avoiding silent degradation.
+## 2. Alignment with North Star Guidelines
+1. **NSTAR_BACKEND_ARCHITECTURE.md (Offensive Programming / Mathematical Rigor):**
+   - **Tripwires:** All tensor operations must assert shapes, type stability, and absence of NaN/Inf before feeding decoders.
+   - **ZINB Rigor:** Expected value point metrics must compute $\hat{y} = \hat{\mu} \cdot (1 - \hat{\pi})$. Reliability diagrams must calibrate against total zero probability $P(Y=0) = \pi + (1-\pi)(\frac{\theta}{\theta+\mu})^\theta$.
+   - **Zero Leakage:** Training, validation, and test datasets must be chronologically segregated with a purge buffer of $\ge T + h = 13$ steps. Scalers must strictly fit on the training slice only.
+2. **NSTAR_MLOPS.md (Reproducibility & Experiment Tracking):**
+   - **Version 4 Namespacing:** Isolated W&B namespace (`project: resilient-iot-v4`, `collection: resilient-iot-model-v4`).
+   - **Ledger Mandate:** Every executed ablation and run outcome must be documented in `EXPERIMENTS.md`.
+3. **NSTAR_PHASES.md (Temporal Consistency):**
+   - Respects Phase 3 multi-task dynamic reconstruction with 10-dimensional edge attributes and learned spatial topology.
 
-## 3. High-Level Step-by-Step Architecture
+## 3. High-Level Architectural Components
 
-### Phase 1: Configuration Updates
-1. **Remove Hardcoded Coords:** In `configs/analysis/analysis.yaml` (and `configs/train/train.yaml` if applicable), remove `simulated_node_coords`.
-2. **Introduce Parameter:** Add `num_simulated_nodes: 50` (or another default) under the `export` block.
+### Component 1: Data Pipeline & MNAR Integrity (`src/dataset.py`)
+- **Direction Aggregation Bugfix:** Replace `'value': 'sum'` with `min_count=1` inside `groupby.agg`. If all directions at location $i$ and timestep $t$ are null, the aggregated value remains `NaN`.
+- **Mask Channel Fidelity:** `total_mnar_mask` accurately assigns `1.0` to all true non-reports (36.3% of station-slots) and `0.0` only to valid observations.
+- **Train-Only Scaler Isolation:** Implement explicit chronological train-cutoff logic. `StandardScaler` instances for traffic, weather, and static features fit strictly on the train period `[start_date, train_end_date]`.
 
-### Phase 2: Dynamic Sampling (Backend)
-1. **OSMnx Graph Extraction:** In `src/export_ui_payload.py`, rather than iterating over a config list, invoke `osmnx` to load the walking network within the target bounding box or using the `features.py`'s `OSM_CENTER` and `OSM_DIST`.
-2. **Deterministic Sampling:**
-   - Extract the `(lat, lon)` coordinates of all nodes in the OSM graph.
-   - Enforce `random.seed(42)`.
-   - Use `random.sample()` to select `num_simulated_nodes` coordinates.
-3. **Tripwires:** Assert that `num_simulated_nodes <= 100` and `num_simulated_nodes <= len(graph_nodes)`. Crash immediately if bounds are violated.
+### Component 2: Chronological Purged Split (`src/train.py`)
+- **Eliminate `torch.utils.data.random_split`:** Replace with chronological contiguous slicing:
+  - Train: First 70% of timeline
+  - Val: Next 15% of timeline
+  - Test: Final 15% of timeline
+- **Purge Boundaries:** Enforce a buffer gap of $T + h = 12 + 1 = 13$ timesteps (3.25 hours) between Train/Val and Val/Test to prevent any sliding window from sharing observations across partitions.
 
-### Phase 3: Frontend Interactive Toggle
-1. **State Management (`useTimeStore.ts`):** 
-   - Add `showSimulatedNodes` (boolean, default `true`).
-   - Add `setShowSimulatedNodes(visible: boolean)` action.
-2. **Deck.gl Integration (`MapVisualizer.tsx`):**
-   - Bind the `visible` property of `simLayer` (for `nodes-simulated`) to `showSimulatedNodes`.
-   - Ensure the visibility toggle updates the GPU-side layer without recreating the data array or causing React thrashing.
-3. **UI Controls:** Add a checkbox or toggle switch to the map control panel (e.g., `ModelInfoOverlay` or a dedicated control overlay) to manipulate `showSimulatedNodes`.
+### Component 3: Spatio-Temporal Positional Encoding (`src/encoder.py`)
+- **Temporal Sequence Awareness:** Implement `SinusoidalPositionalEncoding` module adding harmonic positional embeddings $\mathbf{PE} \in \mathbb{R}^{T \times H}$ to GATv2 spatial node embeddings before ingestion by `nn.TransformerEncoder`.
+- **Mathematical Form:** $PE(t, 2i) = \sin(t / 10000^{2i/H})$, $PE(t, 2i+1) = \cos(t / 10000^{2i/H})$.
 
-## 4. Desk Check Mandate
-**Required Desk Check:** Before execution, verify that:
-1. `random.sample` correctly yields deterministic arrays across multiple runs.
-2. `export_ui_payload.py` cleanly builds the ego-graph for the randomly sampled simulated nodes without crashing, especially since they lack physical traffic data.
-3. Ensure no `NaN` coordinates are emitted into the payload.
+### Component 4: Topology Masking Protocol (`src/pipeline.py`)
+- **Bidirectional Isolation:** Outgoing edge filtering is extended from `simulated_nodes_mask` to include `spatial_holdout_mask` during training and evaluation.
+- **Dynamic Mask Attenuation:** Null-state nodes (`structural_masks[:, :, -1, 0] == 1`) are prevented from transmitting corrupted zero-imputed features into neighbouring node attention.
+- **Kriging Mask Blanking:** Mask channels for held-out kriging nodes are neutralized to prevent leaking target dropout status.
+
+### Component 5: Point Prediction & Uncertainty Metrics (`src/harness/evaluate.py`, `src/export_ui_payload.py`)
+- Point forecasts evaluate the exact ZINB mean: $\hat{y} = \hat{\mu} \cdot (1 - \hat{\pi})$.
+- Conditional active-state mean $\hat{\mu}$ is logged as a secondary diagnostic.
+- ZINB calibration diagram calculates true total zero probability.
+
+### Component 6: Multi-GPU Automated Ablation Harness (`scripts/run_v4_server_suite.py`)
+- Dual-GPU dispatcher allocating independent ablation runs across GPU 0 and GPU 1 concurrently, or queuing long sequential epochs with GPU-affinity.
+- Suite covers:
+  1. Full RIoT v4 Model (`train_riot_v4_full_inductive.yaml`)
+  2. Ablation A: Without Reconstruction Loss (`w_impute = 0.0`)
+  3. Ablation B: Without Kriging Loss (`w_kriging = 0.0`)
+  4. Ablation C: Without Missingness Masks (Channel 3 & 4 ablated)
+  5. Ablation D: Without Positional Encoding (isolating the exact contribution of PE)
+  6. Ablation E: Inductive LSTM Baseline Comparator
+- Automated payload export (`export_ui_payload.py`) post-training to generate LaTeX tables for Chapter 7.

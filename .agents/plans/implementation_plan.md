@@ -1,154 +1,175 @@
-# Generic Evaluation Harness & Cross-Model Standardization
+# Detailed Implementation Plan: RIoT v4 & Full Ablation Suite
 
-This plan builds a single evaluation harness shared by **three consumers** — `train.py` (train/val loops), and the two payload exporters (`export_ui_payload.py`, `export_paginated_payload.py`) — so that every model produces a standardized, reproducible set of results, and so that spatially held-out nodes flow through to the frontend as a first-class node category.
+## Proposed Changes
 
-## User Review Required
-> [!IMPORTANT]
-> **Dummy values must never become numbers.** The original idea (baselines emit `dispersion=1`, `P(zero)=0`) crashes inference today — `export_paginated_payload.py:478` asserts `pi > 0` strictly — and worse, dummy-derived metrics and uncertainty bands would render on the frontend as if real. This plan replaces "dummy values" with two honest alternatives per capability: a **genuine naive attempt** (real, deliberately bad numbers) or a **null** (metric reported as `N/A`). Dummy tensors exist only internally to satisfy shape contracts and are never scored or exported.
-
-> [!IMPORTANT]
-> **Three node roles reach the frontend.** `observed` (normal sensors), `holdout` (real sensors masked throughout training — genuine zero-shot predictions *with* ground truth available for display), and `simulated` (zero-baseline synthetic nodes — predictions with *no* ground truth). This requires a payload schema change and coordinated frontend work.
+### 1. Git Branching & Safety Pre-flight
+- **Branch:** Create and switch to new branch `feat/riot-v4`.
+- **Pre-flight Commit:** Stage and commit any outstanding changes on the previous branch before branching.
+- **Rollback point:** Tag previous state as `pre-v4-checkpoint`.
 
 ---
 
-## 0. The Contracts
-
-### 0.1 Contract In — the batch schema
-The harness guarantees the batch dict contains exactly these **data** keys (matching `custom_collate_real`, `dataset.py:277-287`):
-`static_features [N, S]`, `dynamic_features [B, N, T, D]`, `target_impute [B, N, T, D]`, `target_forecast [B, N]`, `node_mask [B, N, T, D]`, `location_ids`, and optionally `spatial_holdout_mask [N]` and `simulated_nodes_mask [N]`.
-
-Loss weights (`w_impute`, `w_forecast`, `w_kriging`) are **removed from the batch** at the harness boundary — they are hyperparameters, not data. The RIoT wrapper (§0.3) re-injects them into the batch it hands to the unmodified `ResilientIoTPipeline.forward()`, absorbing the impedance mismatch so `pipeline.py` needs no signature change.
-
-### 0.2 Contract Out — predictions, not internals
-#### [NEW] `src/harness/contract.py`
-```python
-class Predictions(NamedTuple):
-    mu: torch.Tensor                        # [B, N] point forecast (all models)
-    theta: Optional[torch.Tensor]           # [B, N] dispersion — None if no uncertainty
-    pi: Optional[torch.Tensor]              # [B, N] zero-inflation prob — None if unsupported
-    imputed: Optional[torch.Tensor]         # [B, N, T, D] reconstruction — None if unsupported
-    kriging_pred: Optional[torch.Tensor]    # [B, K, T, D] holdout reconstruction — None if unsupported
-    edge_index: Optional[torch.Tensor]      # graph models only
-    attention: Optional[torch.Tensor]       # graph models only
-    tripwires: list                         # always present, may be empty
-
-class Losses(NamedTuple):
-    total: torch.Tensor                     # backprop target — always a device tensor
-    impute: torch.Tensor                    # zero TENSOR (never a float) when unsupported
-    forecast: torch.Tensor
-    kriging: torch.Tensor
-```
-Absence is expressed as `None` in `Predictions`, and as a **device-placed zero tensor** in `Losses` (the train loop calls `.item()` on every component — `train.py:437-439`).
-
-### 0.3 The ModelAdapter protocol
-#### [NEW] `src/harness/adapters.py`
-Every model participates through a thin wrapper — this is where model-specific wrangling lives, keeping the harness and exporters model-agnostic:
-```python
-class ModelAdapter(ABC):
-    capabilities: Capabilities   # frozen dataclass of bools:
-                                 # uncertainty, zero_inflation, imputation, kriging, graph
-    def step(self, batch, weights, loss_node_mask=None) -> (Losses, Predictions): ...
-    def predict(self, batch: dict) -> Predictions: ...   # inference-only (exporters)
-```
-(`step()` produces losses and predictions in a single forward — separate
-`predict()`/`loss()` calls would double the compute for the RIoT pipeline.)
-- **`RIoTAdapter`**: wraps `ResilientIoTPipeline` unchanged. `predict()` calls `forward(batch, return_analysis=True)` semantics; `loss()` calls the existing forward and repacks the 10-tuple. All capabilities `True`.
-- **`RecurrentBaselineAdapter`** (LSTM/GRU): see §1.
-- Loss functions legitimately differ per model (ZINB NLL vs MSE). Therefore `val_loss` is **per-model only** (used for early stopping / checkpointing within a run) and is explicitly excluded from cross-model comparison — cross-model comparison happens exclusively through the metrics manifest (§4).
-
-### 0.4 Capability-gated metrics
-#### [NEW] `src/harness/evaluate.py`
-One function, used verbatim by the val loop and the exporters:
-```python
-def evaluate(adapter, batch, holdout_mask) -> dict
-```
-- Computes each metric **only if the adapter's capability supports it**; otherwise emits `None` (serialized as `null` in the manifest, rendered as "N/A" downstream, logged to W&B as absent — never as `0.0`).
-  - `rmse`/`mae`: always (from `mu`).
-  - `zero_acc`: gated on `zero_inflation` — a baseline with dummy `pi` must show `null`, not a fabricated 0%.
-  - `impute_mse`: gated on `imputation`.
-  - `kriging_msle/rmse/mae`: gated on `kriging` (a *naive* kriging head — §1 — counts as capable: real numbers, honestly bad).
-- The existing ZINB tripwire assertions in the exporters (`mu > 0`, `0 < pi < 1`, attention NaN checks) move here and fire **only when the corresponding capability is claimed**. This is the change that stops dummy values from crashing inference.
+### 2. Data Ingestion & Preprocessing (`src/dataset.py`)
+#### Proposed Edits:
+1. **Fix Direction Aggregation Bug:**
+   - In `target_dir == 'all'` aggregation block, change:
+     ```python
+     agg_funcs = {
+         'value': lambda x: np.nan if x.isna().all() else x.sum(min_count=1),
+         ...
+     }
+     ```
+   - If all directional channels at a station are `NaN`, the sum is `NaN`.
+   - If partial directions report, sum valid directions and flag partial reporting if configured.
+2. **True Missingness Mask Generation:**
+   - `total_mnar_mask = val_df.isna().values.astype(np.float32)` now captures all true 36.3% nulls instead of 5.5%.
+   - Night mask correctly isolates 00:00–05:00 nulls on genuine missing values.
+3. **Train-Only Scaler Isolation:**
+   - Add parameter `train_cutoff_date: Optional[str] = None` to `RealIoTDataset.__init__`.
+   - Split dynamic dataframe into `train_slice = dyn_df.loc[:train_cutoff_date]` before fitting.
+   - `traffic_scaler.fit(train_slice['value'].values[~train_mask])` (fit only on observed non-null training counts).
+   - Fit `weather_scaler` on `train_slice[['Humidity', 'Solar Radiation']]`.
+   - Apply `transform` to the entire timeline using the train-fitted statistics.
 
 ---
 
-## 1. Simple Baselines (LSTM / GRU)
-
-#### [NEW] `src/baselines.py`
-`LSTMForecaster` / `GRUForecaster`: per-node recurrent encoders over `dynamic_features`, ignoring all spatial structure.
-- **Forecast head** → `mu [B, N]`. Trained with MSE against `target_forecast`.
-- **Reconstruction head** (small linear head over per-timestep hidden states) → `imputed [B, N, T, D]`, trained with masked MSE. This makes the imputation and kriging attempts **genuine**: `kriging_pred` is `imputed` sliced at the holdout mask. Because the harness blanked those nodes' inputs, the reconstruction is honestly terrible — which is the ablation story we want, backed by real numbers instead of fabricated ones.
-- `theta = None`, `pi = None`, `edge_index = None`, `attention = None`. **No dummy `theta=1`/`pi=0`** — those produced fabricated ZINB variance (`mu + mu²` uncertainty bands on the frontend) and tripwire crashes.
-- Capabilities: `uncertainty=False, zero_inflation=False, imputation=True (naive), kriging=True (naive), graph=False`.
-- `Losses`: `forecast` = MSE, `impute` = masked reconstruction MSE, `kriging` = zero tensor (the reconstruction loss already covers it), `total` = weighted sum — all device tensors.
-
-#### [MODIFY] `src/train.py`
-- `model_type: gnn | lstm | gru` selects the adapter; the train/val loops talk **only** to the adapter + `evaluate()`. The val-loop metric block (`train.py:446-501`) is replaced by the shared `evaluate()` call.
-
-#### [MODIFY] `configs/train/train_lstm.yaml`
-- `spatial_holdout_prob: 0.0` and `w_kriging: 0.0` (currently 0.2 / 0.5 — this would blank 20% of the LSTM's *inputs* per batch and corrupt the baseline). Transductive kriging pressure is a GNN-training concern; inductive evaluation is governed by `eval_mode` (§2), not this knob.
-
----
-
-## 2. Inductive Spatial Holdout (Task 3)
-
-IGNNK-style fixed holdout; the disjoint `allowed_locations` approach stays abandoned (it crashes `encoder.py:87` and breaks scaler propagation).
-
-#### [MODIFY] `src/train.py` + [NEW] `src/harness/holdout.py`
-- `eval_mode: temporal | inductive` config flag (explicit, not "a mechanism").
-- **`temporal`** (default): current behavior, unchanged.
-- **`inductive`**:
-  - All nodes stay in every batch (`num_nodes`, scaler stats, and edge caches all remain valid).
-  - A **fixed, seeded** holdout mask (~20% of nodes) is generated once per run and applied via `apply_spatial_holdout` to **train and val** inputs.
-  - **No target leakage — the zero-shot guarantee.** In inductive mode, *every* training loss term (forecast, impute, kriging) is masked to exclude holdout nodes; their ground truth is used at **evaluation time only**. Without this, `compute_loss` fits the model against holdout targets each step and Task 3's claim is void. Implemented as a `loss_node_mask` the adapters must respect (`compute_loss` gains an optional node-mask argument; the baseline losses apply it directly).
-  - The GNN's kriging **training** signal comes from per-batch re-rolled holdouts drawn *only from the visible ~80%* (the existing `train.py:412-422` re-roll, restricted). The fixed 20% is scored but never trained on. In `temporal` mode the re-roll behavior is unchanged.
-  - **Holdout manifest**: the resolved held-out `location_ids` (not just the seed — node ordering could drift) are written to `<checkpoint_dir>/holdout_manifest.json` alongside the existing co-located `config.yaml`. This file is the bridge to inference (§3) and to cross-model comparability: comparing two models requires *identical* manifests, which the harness asserts when loading.
+### 3. Chronological Purged Split (`src/train.py`)
+#### Proposed Edits:
+1. **Remove `random_split`:**
+   - Eliminate `torch.utils.data.random_split(full_dataset, [train_size, val_size])`.
+2. **Implement Chronological Sliding-Window Partitions:**
+   - Calculate chronological cutoff indices:
+     - `train_end_idx = int(train_split * len(full_dataset))`
+     - `purge_steps = seq_len + 1` (13 steps = 3.25 hours)
+     - `val_start_idx = train_end_idx + purge_steps`
+     - `val_end_idx = val_start_idx + int(val_split * len(full_dataset))`
+     - `test_start_idx = val_end_idx + purge_steps`
+   - Create explicit subset datasets using contiguous index ranges:
+     - `train_dataset = torch.utils.data.Subset(full_dataset, range(0, train_end_idx))`
+     - `val_dataset = torch.utils.data.Subset(full_dataset, range(val_start_idx, val_end_idx))`
+     - `test_dataset = torch.utils.data.Subset(full_dataset, range(test_start_idx, len(full_dataset)))`
+   - Propagate scaler and metadata attributes to all subsets.
+3. **Evaluation Loop Logging:**
+   - Compute and log both point forecast metrics:
+     - `rmse_zinb = sqrt(mean((y - mu * (1 - pi))**2))`
+     - `mae_zinb = mean(|y - mu * (1 - pi)|)`
+     - `rmse_mu = sqrt(mean((y - mu)**2))` (active-state conditional mean)
 
 ---
 
-## 3. Frontend Pathway — Holdout Nodes in the Payload
+### 4. Architecture & Temporal Positional Encoding (`src/encoder.py`)
+#### Proposed Edits:
+1. **Implement `SinusoidalPositionalEncoding` Module:**
+   ```python
+   class SinusoidalPositionalEncoding(nn.Module):
+       def __init__(self, hidden_dim: int, max_len: int = 100):
+           super().__init__()
+           pe = torch.zeros(max_len, hidden_dim)
+           position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+           div_term = torch.exp(torch.arange(0, hidden_dim, 2).float() * (-math.log(10000.0) / hidden_dim))
+           pe[:, 0::2] = torch.sin(position * div_term)
+           pe[:, 1::2] = torch.cos(position * div_term)
+           self.register_buffer('pe', pe) # [max_len, hidden_dim]
 
-#### [MODIFY] `src/export_ui_payload.py`, `src/export_paginated_payload.py`
-- Load `holdout_manifest.json` from the checkpoint directory of the model being served. At inference, holdout nodes' dynamic features are blanked exactly as in training, so their displayed predictions are genuine zero-shot reconstructions.
-- Replace `is_simulated: bool` in node metadata with `node_role: "observed" | "holdout" | "simulated"` (keep `is_simulated` temporarily for backward compatibility, derived from `node_role`).
-  - `observed`: prediction + ground truth, normal display.
-  - `holdout`: prediction + ground truth — the frontend can show predicted-vs-actual on nodes the model provably never trained on.
-  - `simulated`: prediction, `ground_truth_series: null` (unchanged).
-- Holdout nodes keep their graph edges (they are real sensors with real static features) — only `simulated` nodes get the outgoing-edge drop via `simulated_nodes_mask`. This mirrors training exactly.
-- Payload fields backed by capabilities become **nullable**: `uncertainty`, `theta_data`, `pi_data`, and the whole graph/attention section are `null` for baseline-generated payloads. The per-timestep tripwire assertions are replaced by the capability-gated checks in `evaluate()`.
-- **[COORDINATE] `frontend/`**: render `node_role: holdout` distinctly; handle `null` uncertainty/graph sections. This is a cross-repo change and should be sequenced after the payload schema is frozen.
-
----
-
-## 4. Reproducibility — the Results Manifest
-
-#### [NEW] emitted by the harness at the end of every val epoch and every export run
-`<checkpoint_dir>/results.json`:
-```json
-{
-  "model_type": "lstm",
-  "eval_mode": "inductive",
-  "seed": 42,
-  "holdout_manifest_sha": "…",
-  "config_sha": "…",
-  "metrics": { "rmse": 12.3, "mae": 8.1, "zero_acc": null, "impute_mse": 0.041,
-               "kriging_msle": 2.9, "kriging_rmse": 44.0, "kriging_mae": 31.2 }
-}
-```
-- `null` means "model cannot produce this," never 0. Cross-model tables are a join over these files keyed on `holdout_manifest_sha` — identical hash ⇒ identical evaluation conditions ⇒ comparable rows. W&B logging mirrors this payload.
+       def forward(self, x: torch.Tensor) -> torch.Tensor:
+           # x: [T, B * N, H]
+           seq_len = x.size(0)
+           return x + self.pe[:seq_len].unsqueeze(1)
+   ```
+2. **Integrate into `UnifiedSpatioTemporalEncoder`:**
+   - Instantiate `self.pos_encoder = SinusoidalPositionalEncoding(hidden_dim, max_len=32)`.
+   - Apply `x_seq = self.pos_encoder(x_seq)` immediately after GATv2 aggregation and reshaping to `[T, B * N, H]`, prior to `self.temporal_transformer(x_seq)`.
+   - Gate positional encoding with a boolean flag `use_positional_encoding: bool = True` in config to enable explicit ablation testing (Ablation D).
 
 ---
 
-## Verification Plan
+### 5. Topology Masking & Kriging Protection (`src/pipeline.py`)
+#### Proposed Edits:
+1. **Extend Outgoing Edge Dropping:**
+   - In `forward()`, modify edge filtering:
+     ```python
+     drop_mask = None
+     if 'simulated_nodes_mask' in batch:
+         drop_mask = batch['simulated_nodes_mask']
+     if self.training and 'spatial_holdout_mask' in batch:
+         sh_mask = batch['spatial_holdout_mask']
+         drop_mask = sh_mask if drop_mask is None else (drop_mask | sh_mask)
+     
+     if drop_mask is not None:
+         sources = edge_index[0]
+         valid_edges = ~drop_mask[sources]
+         edge_index = edge_index[:, valid_edges]
+         edge_weight = edge_weight[valid_edges]
+         edge_attr = edge_attr[valid_edges]
+     ```
+2. **Sanitize Kriging Dynamic Input Channels:**
+   - For nodes in `spatial_holdout_mask`, ensure missingness channels (Channel 3 & 4) do not leak ground-truth outage status to the kriging decoder.
 
-### Automated Tests
-- `RIoTAdapter` and `RecurrentBaselineAdapter` both return `Predictions`/`Losses` with harness-consumable shapes and device tensors (no floats) — the contract test, shared via a fixture, not duplicated per model.
-- `evaluate()` returns `null` (not 0.0) for capability-gated metrics on a baseline adapter, and full metrics for the RIoT adapter.
-- Inductive loss masking: with `eval_mode: inductive`, assert zero gradient flows from holdout-node targets (finite-difference or `grad` inspection on a tiny mock batch) — this is the test that protects the zero-shot claim.
-- Holdout manifest round-trip: train writes it, exporter loads it, node roles in the payload match.
-- Capability-gated tripwires: baseline predictions with `pi=None` pass through `evaluate()` without assertion errors.
+---
 
-### Manual Verification
-1. **Baseline transductive**: run `train_lstm.yaml` end-to-end; `results.json` shows real `rmse`/`mae`/`impute_mse`, `zero_acc: null`; no `.item()` or tripwire crashes.
-2. **Inductive comparability**: run GNN and LSTM with `eval_mode: inductive`, same seed; assert identical `holdout_manifest_sha`; confirm LSTM `kriging_rmse` ≫ GNN `kriging_rmse` (the honest ablation number).
-3. **GNN inductive**: trains without triggering the `encoder.py:87` num_nodes assertion; W&B shows kriging metrics on the fixed holdout only.
-4. **Payload**: export from a GNN checkpoint with a holdout manifest; verify nodes carry all three `node_role` values, holdout nodes have both prediction and ground truth, and a baseline-generated payload has `null` uncertainty/graph sections without crashing the exporter.
+### 6. Metric Evaluation & UI Export (`src/export_ui_payload.py` & `src/harness/evaluate.py`)
+#### Proposed Edits:
+1. **`evaluate.py` Point Metrics:**
+   - Replace `target_forecast - preds.mu` with `target_forecast - (preds.mu * (1.0 - preds.pi))` as the primary point evaluation.
+   - Retain `preds.mu` error as `rmse_active_state` for secondary diagnosis.
+2. **`export_ui_payload.py` Calibration & Residuals:**
+   - Evaluate `arr_fill_p = np.array(mu_predictions) * (1.0 - np.array(pi_predictions))` for residual calculations.
+   - Update zero-reliability calculation:
+     $$\hat{P}(Y=0) = \hat{\pi} + (1 - \hat{\pi})\left(\frac{\hat{\theta}}{\hat{\theta} + \hat{\mu}}\right)^{\hat{\theta}}$$
+   - Compare $\hat{P}(Y=0)$ against observed zero frequency across confidence bins.
+
+---
+
+### 7. Version 4 Configuration Suite (`configs/train/v4/`)
+Create modular configuration files for the full model and all ablation variants:
+1. `train_v4_full_inductive.yaml`: Full RIoT v4 model with all audit remediations enabled.
+2. `train_v4_ablation_no_impute.yaml`: Set `loss.w_impute: 0.0`.
+3. `train_v4_ablation_no_kriging.yaml`: Set `loss.w_kriging: 0.0`.
+4. `train_v4_ablation_no_masks.yaml`: Set `data.ablate_masks: true` (zero out Channel 3 & 4).
+5. `train_v4_ablation_no_pe.yaml`: Set `model.use_positional_encoding: false`.
+6. `train_v4_baseline_lstm.yaml`: Inductive non-graph LSTM comparator.
+7. `train_v4_spatial_small_batch.yaml`: Batch size = 32 for spatial integration tuning.
+8. `train_v4_spatial_high_dropout.yaml`: Dropout = 0.3 for regularization sweep.
+
+All configs will target:
+- `wandb.project: "resilient-iot-v4"`
+- `wandb.collection: "resilient-iot-model-v4"`
+
+---
+
+### 8. Multi-GPU Automated Server Execution Suite (`scripts/run_v4_server_suite.py`)
+#### Specifications:
+- **Dual-GPU Orchestrator:**
+  - Manages concurrent or sequential execution across `cuda:0` and `cuda:1`.
+  - Queue system assigning jobs with `CUDA_VISIBLE_DEVICES` affinity.
+  - Automatically isolates memory and monitors GPU temperatures / memory utilization.
+- **Fault-Tolerant Execution:**
+  - Saves individual run logs to `logs/v4_suite/<job_name>.log`.
+  - Catches process exit codes; on failure, captures stack trace and continues remaining suite without halting.
+- **Post-Run Automatic Evaluation & Export:**
+  - Automatically invokes `export_ui_payload.py` upon completion of each model training.
+  - Evaluates on the held-out test partition.
+  - Aggregates final metrics into `artifacts/v4_ablation_results.csv` and renders a formatted LaTeX table ready to paste directly into Chapter 7 Table 7.3.
+
+---
+
+## Desk Checks & Mathematical Verification
+1. **Desk Check 1 (MNAR Aggregation):**
+   - Create mock DataFrame with 2 locations and 2 directions.
+   - Location 1: Direction A = NaN, Direction B = NaN. Verify sum = NaN, mask = 1.0.
+   - Location 2: Direction A = 5.0, Direction B = NaN. Verify sum = 5.0, mask = 0.0.
+2. **Desk Check 2 (Chronological Purge Boundary):**
+   - Verify index bounds: `max(train_indices) + 13 <= min(val_indices)` and `max(val_indices) + 13 <= min(test_indices)`.
+   - Verify no timestamp overlap exists across subsets.
+3. **Desk Check 3 (Positional Encoding Tensor Shapes):**
+   - Feed tensor of shape $[T=12, B\cdot N=128\cdot 81, H=64]$. Verify output shape is identical $[12, 10368, 64]$ and values are non-zero.
+4. **Desk Check 4 (ZINB Expected Value Limit Cases):**
+   - Case A: $\mu = 100, \pi = 1.0 \implies \hat{y} = 0.0$.
+   - Case B: $\mu = 100, \pi = 0.0 \implies \hat{y} = 100.0$.
+   - Case C: $\mu = 100, \pi = 0.2 \implies \hat{y} = 80.0$.
+
+---
+
+## Verification & Approval Gate
+- **Pre-execution requirement:** This implementation plan must be reviewed and approved by the USER before functional execution code is applied.
+- **Git checkpoint:** All changes will be developed on branch `feat/riot-v4`.
