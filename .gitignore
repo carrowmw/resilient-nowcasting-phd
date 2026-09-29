@@ -6,6 +6,7 @@ digest.txt
 node_modules/
 build/
 logs/
+symlinks/
 .next/
 .pytest_cache/
 
@@ -14,9 +15,12 @@ __pycache__/
 .DS_Store
 .vscode/
 
+cache/
+
 venv/
 .venv/
 *.ipynb
+*.pyc
 
 .env
 *.parquet
