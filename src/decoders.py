@@ -54,10 +54,12 @@ class DecoupledDecoders(nn.Module):
         last_step_embedding = latent_embeddings[:, :, -1, :] # [batch_size, num_nodes, hidden_dim]
         forecast_logits = self.forecast_layer(last_step_embedding) # [batch_size, num_nodes, 3]
 
-        # Split raw logits
-        mu_logits = forecast_logits[:, :, 0]
-        theta_logits = forecast_logits[:, :, 1]
-        pi_logits = forecast_logits[:, :, 2]
+        # Split raw logits and cast to float32 so parameter activations (sigmoid, softplus)
+        # and clamp boundaries (1.0 - zinb_eps) are evaluated at full precision,
+        # preventing bfloat16 precision limits (mantissa eps ~ 0.0078) from rounding 1.0 - eps to 1.0.
+        mu_logits = forecast_logits[:, :, 0].float()
+        theta_logits = forecast_logits[:, :, 1].float()
+        pi_logits = forecast_logits[:, :, 2].float()
 
         # Apply ZINB constraints (Tripwires from NSTAR_BACKEND_ARCHITECTURE.md)
         pi = torch.clamp(torch.sigmoid(pi_logits), min=self.zinb_eps, max=1.0 - self.zinb_eps)
@@ -229,11 +231,15 @@ def compute_zinb_nll(y_true: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor
     If y=0: P(y) = pi + (1-pi) * (theta / (theta + mu))^theta
     If y>0: P(y) = (1-pi) * [Gamma(y+theta)/(y!Gamma(theta))] * (theta/(theta+mu))^theta * (mu/(theta+mu))^y
     """
+    eps = 1e-6
+    mu = mu.float()
+    theta = theta.float()
+    pi = pi.float().clamp(min=eps, max=1.0 - eps)
+    y_true = y_true.float()
+
     assert (mu > 0).all(), "CRITICAL: mu must be strictly positive before safe_log"
     assert (theta > 0).all(), "CRITICAL: theta must be strictly positive before safe_log"
     assert (pi > 0).all() and (pi < 1).all(), "CRITICAL: pi must be in (0, 1)"
-    eps = 1e-6
-    y_true = y_true.float()
 
     # Clamp log operations to eps
     def safe_log(x):
