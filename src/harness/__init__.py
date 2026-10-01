@@ -4,7 +4,7 @@ exporters. Models participate through ModelAdapter wrappers that emit the
 Predictions/Losses contract; metrics are capability-gated so a model that cannot
 produce a quantity reports null, never a fabricated number.
 """
-from harness.adapters import ModelAdapter, RIoTAdapter, RecurrentBaselineAdapter, build_adapter
+from harness.adapters import ModelAdapter, NaiveAdapter, RIoTAdapter, RecurrentBaselineAdapter, build_adapter
 from harness.contract import Capabilities, Predictions, Losses, BATCH_DATA_KEYS
 from harness.evaluate import validate_predictions, MetricAccumulator, evaluate_batch
 from harness.holdout import (
@@ -20,6 +20,7 @@ __all__ = [
     "ModelAdapter",
     "RIoTAdapter",
     "RecurrentBaselineAdapter",
+    "NaiveAdapter",
     "build_adapter",
     "Capabilities",
     "Predictions",

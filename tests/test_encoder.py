@@ -19,7 +19,8 @@ def test_masked_spatiotemporal_encoder():
         hidden_dim=hidden_dim
     )
 
-    dynamic_features = torch.randn(batch_size, num_nodes, seq_len, time_series_dim)
+    # encoder input = dynamic channels + the 2 structural mask channels
+    dynamic_features = torch.randn(batch_size, num_nodes, seq_len, time_series_dim + 2)
     adj = torch.ones((num_nodes, num_nodes))
     edge_index, edge_weight = dense_to_sparse(adj)
 
@@ -57,7 +58,8 @@ def test_masked_spatiotemporal_encoder_edge_dim_10():
         edge_dim=edge_dim,
     )
 
-    dynamic_features = torch.randn(batch_size, num_nodes, seq_len, time_series_dim)
+    # encoder input = dynamic channels + the 2 structural mask channels
+    dynamic_features = torch.randn(batch_size, num_nodes, seq_len, time_series_dim + 2)
     adj = torch.ones((num_nodes, num_nodes))
     edge_index, _ = dense_to_sparse(adj)
     E = edge_index.shape[1]

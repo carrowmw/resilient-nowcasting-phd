@@ -14,6 +14,8 @@ import torch
 import torch.nn.functional as F
 
 from harness.contract import Capabilities, Losses, Predictions
+from likelihoods import nb_log_p0, nb_logpmf
+from losses import TrafficScale, compute_v5_losses, masked_mean
 
 
 class ModelAdapter(ABC):
@@ -44,13 +46,51 @@ class ModelAdapter(ABC):
 
 class RIoTAdapter(ModelAdapter):
     """Wraps ResilientIoTPipeline unchanged. Absorbs the pipeline's
-    weights-in-batch convention so the harness batch stays a pure data contract."""
+    weights-in-batch convention so the harness batch stays a pure data contract.
+
+    config=None -> legacy v4 tuple path (exporters, legacy tests).
+    config=<resolved run config> -> v5 dict path: batches come from
+    harness.batch_prep.BatchPreparer and losses from losses.compute_v5_losses."""
 
     capabilities = Capabilities(
         uncertainty=True, zero_inflation=True, imputation=True, kriging=True, graph=True,
     )
 
+    def __init__(self, module, config: Optional[dict] = None):
+        super().__init__(module)
+        self.config = config
+        if config is not None:
+            lik = config["loss"]["forecast_likelihood"]
+            # Instance attribute shadows the class default: only a ZINB head has a
+            # genuine zero-inflation pi; only the mixture has an outage probability.
+            self.capabilities = Capabilities(
+                uncertainty=True, zero_inflation=lik == "zinb", imputation=True,
+                kriging=True, graph=True, outage=lik == "outage_mixture",
+            )
+
+    def _predictions(self, out) -> Predictions:
+        return Predictions(
+            mu=out["mu"], theta=out["theta"], pi=out["pi"], imputed=out["imputed"],
+            kriging_pred=out["kriging_pred"], edge_index=out["edge_index"],
+            attention=out["attention"], tripwires=tuple(out["tripwires"]),
+            point=out["point"], p_zero=out["p_zero"], outage_q=out["q"],
+            quantiles=out["quantiles"], quantile_levels=tuple(out["quantile_levels"]),
+            imputed_raw=out["imputed_raw"],
+            nll_params={
+                "likelihood": self.config["loss"]["forecast_likelihood"],
+                "mu": out["mu"], "theta": out["theta"], "pi": out["pi"], "q": out["q"],
+            },
+        )
+
     def step(self, batch, weights, loss_node_mask=None):
+        if self.config is not None:
+            out = self.module(batch, return_outputs=True)
+            with torch.autocast(device_type=out["mu"].device.type, enabled=False):
+                v5 = compute_v5_losses(out, batch, self.config["loss"], self.module.scale, weights, loss_node_mask)
+            losses = Losses(total=v5.total, impute=v5.impute, forecast=v5.forecast,
+                            kriging=v5.kriging, components=v5.components)
+            return losses, self._predictions(out)
+
         model_batch = dict(batch)
         model_batch["w_impute"] = weights["w_impute"]
         model_batch["w_forecast"] = weights["w_forecast"]
@@ -70,6 +110,8 @@ class RIoTAdapter(ModelAdapter):
         return losses, preds
 
     def predict(self, batch):
+        if self.config is not None:
+            return self._predictions(self.module(batch, return_outputs=True, return_analysis=True))
         result = self.module(dict(batch), return_analysis=True)
         return Predictions(
             mu=result["mu"],
@@ -93,15 +135,100 @@ class RecurrentBaselineAdapter(ModelAdapter):
         uncertainty=False, zero_inflation=False, imputation=True, kriging=True, graph=False,
     )
 
-    def _forward(self, batch):
+    def __init__(self, module, config: Optional[dict] = None, scale: Optional[TrafficScale] = None):
+        """config=None -> v4 behaviour. With a resolved config the adapter honours
+        model.baseline_inputs / model.baseline_head and loss.target_mask /
+        loss.impute_positions (the less-confounded baseline of report Phase 7)."""
+        super().__init__(module)
+        self.config = config
+        self.scale = scale
+        if config is not None:
+            assert scale is not None, "CRITICAL: v5 baseline adapter needs the traffic scale"
+            self.inputs = config["model"]["baseline_inputs"]
+            self.head = config["model"]["baseline_head"]
+            assert self.head == module.head, \
+                f"CRITICAL: baseline_head={self.head} but module head={module.head}"
+            self.capabilities = Capabilities(
+                uncertainty=self.head == "nb", zero_inflation=False, imputation=True,
+                kriging=True, graph=False,
+            )
+
+    def _inputs(self, batch):
         dynamic = torch.nan_to_num(batch["dynamic_features"], nan=0.0)
-        mu, recon = self.module(dynamic)
+        if self.config is None or self.inputs == "dynamic":
+            return dynamic
+        B, N, T, _ = dynamic.shape
+        masks = batch["structural_masks"].to(dynamic.dtype)
+        blank = batch["blank_mask"]
+        if blank is not None:
+            masks = masks.clone()
+            masks[:, blank, :, 0] = 1.0
+        parts = [dynamic, masks]
+        if batch["covariates"] is not None:
+            parts.append(batch["covariates"][:, :, :T].to(dynamic.dtype))
+        static = batch["static_features"].to(dynamic.dtype)
+        parts.append(static.view(1, N, 1, -1).expand(B, N, T, static.shape[-1]))
+        return torch.cat(parts, dim=-1)
+
+    def _forward(self, batch):
+        mu, theta, recon = self.module.forward_heads(self._inputs(batch))
         holdout_mask = batch.get("spatial_holdout_mask")
         kriging_pred = recon[:, holdout_mask, :, :] if holdout_mask is not None else None
-        return mu, recon, kriging_pred
+        return mu, theta, recon, kriging_pred
+
+    def _predictions(self, mu, theta, recon, kriging_pred) -> Predictions:
+        if self.config is None:
+            return Predictions(mu=mu, imputed=recon, kriging_pred=kriging_pred)
+        nb = self.head == "nb"
+        return Predictions(
+            mu=mu, theta=theta, imputed=recon, kriging_pred=kriging_pred, point=mu,
+            p_zero=torch.exp(nb_log_p0(mu, theta)) if nb else None,
+            imputed_raw=self.scale.to_raw(recon[..., 0].float()),
+            nll_params={"likelihood": "nb", "mu": mu, "theta": theta, "pi": None, "q": None} if nb else None,
+        )
+
+    def _step_v5(self, batch, weights, loss_node_mask):
+        mu, theta, recon, kriging_pred = self._forward(batch)
+        loss_cfg = self.config["loss"]
+        y = batch["target_forecast"]
+        obs = batch["target_observed"]
+        target_impute = batch["target_impute"]
+        art, in_obs, node_mask = batch["art"], batch["input_observed"], batch["node_mask"]
+        sel = loss_node_mask if loss_node_mask is not None else torch.ones_like(obs[0])
+        assert sel.any(), "CRITICAL: loss_node_mask excludes every node"
+
+        with torch.autocast(device_type=mu.device.type, enabled=False):
+            mu_f, y_f = mu[:, sel].float(), y[:, sel].float()
+            participate = obs[:, sel] if loss_cfg["target_mask"] == "observed" else torch.ones_like(obs[:, sel])
+            if self.head == "nb":
+                elem = -nb_logpmf(y_f, mu_f, theta[:, sel].float())
+            else:
+                elem = (mu_f - y_f) ** 2
+            loss_forecast = masked_mean(elem, participate)
+            nll_obs = masked_mean(elem, obs[:, sel])
+
+            recon_l, tgt_l = recon[:, sel].float(), target_impute[:, sel].float()
+            sq = (recon_l - tgt_l) ** 2
+            if loss_cfg["impute_positions"] == "all":
+                loss_impute = sq.mean()
+            else:
+                traffic_mask = art[:, sel] & in_obs[:, sel]
+                loss_impute = masked_mean(sq[..., 0], traffic_mask) + masked_mean(sq[..., 1:], node_mask[:, sel][..., 1:])
+                if loss_cfg["impute_positions"] == "masked_observed_plus_aux":
+                    aux = in_obs[:, sel] & ~art[:, sel]
+                    loss_impute = loss_impute + loss_cfg["impute_aux_weight"] * masked_mean(sq[..., 0], aux)
+        loss_kriging = torch.zeros((), device=mu.device)
+        total = weights["w_forecast"] * loss_forecast + weights["w_impute"] * loss_impute
+        assert not torch.isnan(total), "CRITICAL: baseline total loss is NaN"
+        losses = Losses(total=total, impute=loss_impute, forecast=loss_forecast, kriging=loss_kriging,
+                        components={"forecast_lik": loss_forecast, "forecast_nll_obs": nll_obs,
+                                    "kriging": loss_kriging})
+        return losses, self._predictions(mu, theta, recon, kriging_pred)
 
     def step(self, batch, weights, loss_node_mask=None):
-        mu, recon, kriging_pred = self._forward(batch)
+        if self.config is not None:
+            return self._step_v5(batch, weights, loss_node_mask)
+        mu, _, recon, kriging_pred = self._forward(batch)
 
         target_forecast = batch["target_forecast"]
         target_impute = batch["target_impute"]
@@ -135,13 +262,74 @@ class RecurrentBaselineAdapter(ModelAdapter):
         return losses, preds
 
     def predict(self, batch):
-        mu, recon, kriging_pred = self._forward(batch)
-        return Predictions(mu=mu, imputed=recon, kriging_pred=kriging_pred)
+        return self._predictions(*self._forward(batch))
 
 
-def build_adapter(model_type: str, module: torch.nn.Module) -> ModelAdapter:
+class NaiveAdapter(ModelAdapter):
+    """Non-learned floor (baselines.NaiveBaseline). Needs a v5 prepared batch.
+
+    profile:  forecast = seasonal slot-of-week median (train slice) of the node;
+              blanked nodes get the inductive substitute (never their own data).
+    last_obs: last traffic value visible to the model in the input window,
+              falling back to the profile when nothing is visible.
+    Imputation / kriging output = the profile over the input window. Losses are
+    zero tensors (there is nothing to train); the harness skips the train loop.
+    """
+
+    capabilities = Capabilities(
+        uncertainty=False, zero_inflation=False, imputation=True, kriging=True, graph=False,
+    )
+
+    def __init__(self, module, scale: TrafficScale, covariates):
+        super().__init__(module)
+        self.kind = module.kind
+        self.scale = scale
+        self.covariates = covariates
+
+    def _predict(self, batch) -> Predictions:
+        clean = batch["target_impute"]
+        B, N, T, D = clean.shape
+        profile = self.covariates.profile_raw(batch["time_idx"], batch["blank_mask"])   # [B, N, T + 1]
+        point = profile[..., T]
+        if self.kind == "last_obs":
+            visible = ~batch["input_missing"]                                    # [B, N, T]
+            steps = torch.arange(T, device=clean.device).view(1, 1, T)
+            last = torch.where(visible, steps, torch.full_like(steps, -1)).max(dim=-1).values
+            raw = self.scale.to_raw(clean[..., 0].float())
+            last_val = raw.gather(-1, last.clamp_min(0).unsqueeze(-1)).squeeze(-1)
+            point = torch.where(last >= 0, last_val, point)
+        imputed = torch.zeros_like(clean, dtype=torch.float32)  # weather: scaled mean
+        imputed[..., 0] = self.scale.to_scaled(profile[..., :T])
+        holdout = batch["spatial_holdout_mask"]
+        kriging_pred = imputed[:, holdout] if holdout is not None else None
+        return Predictions(mu=point, imputed=imputed, kriging_pred=kriging_pred, point=point,
+                           imputed_raw=profile[..., :T])
+
+    def step(self, batch, weights, loss_node_mask=None):
+        preds = self._predict(batch)
+        zero = torch.zeros((), device=preds.mu.device)
+        return Losses(total=zero, impute=zero, forecast=zero, kriging=zero,
+                      components={"forecast_nll_obs": zero, "kriging": zero}), preds
+
+    def predict(self, batch):
+        return self._predict(batch)
+
+
+def build_adapter(
+    model_type: str,
+    module: torch.nn.Module,
+    config: Optional[dict] = None,
+    scale: Optional[TrafficScale] = None,
+    covariates=None,
+) -> ModelAdapter:
+    """config=None keeps the v4 adapters (exporters, legacy tests); train.py
+    passes the resolved run config, the dataset traffic scale and the
+    BatchPreparer's CovariateBuilder."""
     if model_type == "gnn":
-        return RIoTAdapter(module)
+        return RIoTAdapter(module, config)
     if model_type in ("lstm", "gru"):
-        return RecurrentBaselineAdapter(module)
-    raise ValueError(f"Unknown model_type: {model_type!r} (expected gnn | lstm | gru)")
+        return RecurrentBaselineAdapter(module, config, scale)
+    if model_type == "naive":
+        assert config is not None and covariates is not None, "CRITICAL: naive baseline is v5-only"
+        return NaiveAdapter(module, scale, covariates)
+    raise ValueError(f"Unknown model_type: {model_type!r} (expected gnn | lstm | gru | naive)")

@@ -12,9 +12,8 @@ import yaml
 from optuna.integration.wandb import WeightsAndBiasesCallback
 
 from logger import setup_logger
-from train import load_config, run_training
-from dataset import RealIoTDataset
-from db_connector import create_connector
+from train import build_dataset, load_config, run_training
+from run_config import resolve_config
 
 
 def set_nested_value(d: dict, keys: list, value):
@@ -474,17 +473,10 @@ if __name__ == "__main__":
 
     full_dataset = None
     if not cli_args.use_mock_data:
-        data_cfg = base_config["data"]
         logger.info(f"Worker level: Pre-loading RealIoTDataset once...")
-        connector = create_connector(base_config)
-        full_dataset = RealIoTDataset(
-            connector,
-            data_cfg["start_date"],
-            data_cfg["end_date"],
-            seq_len=data_cfg["seq_len"],
-            target_veh_class=data_cfg["target_veh_class"],
-            target_dir=data_cfg["target_dir"],
-        )
+        # build_dataset fits scalers / v5 tables on the training split only (the old
+        # inline construction omitted train_split, so they were fitted on all data).
+        full_dataset = build_dataset(resolve_config(base_config), use_mock_data=False)
 
     # Execute study
     study.optimize(

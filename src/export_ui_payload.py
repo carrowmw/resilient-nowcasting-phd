@@ -62,6 +62,7 @@ from harness import (
     validate_predictions,
 )
 from pipeline import ResilientIoTPipeline
+from run_config import LEGACY_V4_EQUIVALENTS, resolve_config
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -947,6 +948,22 @@ def main() -> None:
     logger.info(f"ARCHITECT TWINNING: Resolving adjacent configuration from: {config_path}")
     with open(config_path, "r") as f:
         loaded_config_data = yaml.safe_load(f)
+    # The exporter rebuilds the v4 architecture and v4 input encoding. A v5 run whose
+    # resolved options differ from LEGACY_V4_EQUIVALENTS (likelihood heads, covariates,
+    # log1p, unified encoding, ...) would load wrongly or be served with the wrong
+    # inputs, so refuse it until the v5 payload path exists.
+    resolved = resolve_config(loaded_config_data)
+    non_legacy = [
+        f"{section}.{key}"
+        for section, defaults in LEGACY_V4_EQUIVALENTS.items()
+        for key, value in defaults.items()
+        if section in ("data", "model", "loss") and key != "inductive_holdout_seed"
+        and resolved[section][key] != value
+    ]
+    assert not non_legacy, (
+        f"CRITICAL: export_ui_payload serves v4-equivalent checkpoints only; this run "
+        f"sets non-legacy v5 options {non_legacy}"
+    )
     model_type = loaded_config_data["model_type"]
     model_cfg = loaded_config_data["model"]
     logger.info(f"Loaded model_type={model_type}, hyperparameters: {model_cfg}")

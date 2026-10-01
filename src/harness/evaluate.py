@@ -59,7 +59,10 @@ def evaluate_batch(
 
     # Forecast RMSE / MAE — point prediction evaluated as E[Y] = mu * (1 - pi) (F-C06 fix)
     target_forecast = batch["target_forecast"]
-    if caps.zero_inflation and preds.pi is not None:
+    if preds.point is not None:
+        # v5: the likelihood-specific scored point (likelihoods.point_forecast).
+        point_pred = preds.point
+    elif caps.zero_inflation and preds.pi is not None:
         point_pred = preds.mu * (1.0 - preds.pi)
     else:
         point_pred = preds.mu

@@ -11,6 +11,7 @@ services:
     volumes:
       - .:/workspace
       - ~/.config/gcloud:/root/.config/gcloud  # Required for ADC authentication
+      - ~/.claude:/root/.claude
     stdin_open: true
     tty: true
     networks:
