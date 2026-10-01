@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import pandas as pd
+import pyarrow.parquet as pq
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 
@@ -259,31 +260,50 @@ class ParquetConnector(DataConnector):
         return df
 
     def load_weather(self, start_dt, end_dt, sensor_ids: List[str]) -> pd.DataFrame:
+        weather_cache_path = Path(self._static_cache_dir) / "weather_cache.parquet"
+        weather_source = weather_cache_path if weather_cache_path.exists() else Path(self._parquet_path)
+
+        schema = pq.read_schema(weather_source)
+        dt_type = schema.field('dt').type
+        is_tz_aware = getattr(dt_type, 'tz', None) is not None
+
+        ts_start = pd.Timestamp(start_dt)
+        ts_end = pd.Timestamp(end_dt)
+        if is_tz_aware:
+            ts_start = ts_start.tz_localize('UTC') if ts_start.tz is None else ts_start.tz_convert('UTC')
+            ts_end = ts_end.tz_localize('UTC') if ts_end.tz is None else ts_end.tz_convert('UTC')
+        else:
+            ts_start = ts_start.tz_localize(None) if ts_start.tz is not None else ts_start
+            ts_end = ts_end.tz_localize(None) if ts_end.tz is not None else ts_end
+
         filters = [
-            ('dt', '>=', pd.Timestamp(start_dt)),
-            ('dt', '<', pd.Timestamp(end_dt)),
+            ('dt', '>=', ts_start),
+            ('dt', '<', ts_end),
         ]
         df = pd.read_parquet(
-            self._parquet_path,
+            weather_source,
             filters=filters,
             columns=['dt', 'location', 'Humidity', 'Solar Radiation'],
         )
+        if df['dt'].dt.tz is not None:
+            df['dt'] = df['dt'].dt.tz_localize(None)
+
         df = df[df['location'].isin(sensor_ids)]
         df = df.drop_duplicates(subset=['dt', 'location'])
         df = df[['dt', 'location', 'Humidity', 'Solar Radiation']]
         assert not df['Humidity'].isna().any(), \
-            "CRITICAL: ParquetConnector.load_weather: NaN in Humidity — parquet must have real weather data"
+            f"CRITICAL: ParquetConnector.load_weather: NaN in Humidity — {weather_source} must have real weather data"
         assert not df['Solar Radiation'].isna().any(), \
-            "CRITICAL: ParquetConnector.load_weather: NaN in Solar Radiation — parquet must have real weather data"
+            f"CRITICAL: ParquetConnector.load_weather: NaN in Solar Radiation — {weather_source} must have real weather data"
 
         assert not df.empty, (
             f"CRITICAL: ParquetConnector.load_weather returned no rows for "
-            f"{start_dt} to {end_dt}"
+            f"{start_dt} to {end_dt} from {weather_source}"
         )
         assert df[['dt', 'location']].notna().all().all(), \
             "CRITICAL: NaN in primary key columns from load_weather"
 
-        logger.info(f"load_weather (parquet): {len(df):,} rows")
+        logger.info(f"load_weather (parquet from {weather_source.name}): {len(df):,} rows")
         return df
 
     def load_static_features(self, sensor_ids: List[str]) -> pd.DataFrame:
