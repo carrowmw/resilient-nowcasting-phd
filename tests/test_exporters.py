@@ -28,6 +28,7 @@ def _predict_batch():
     return {
         "static_features": torch.randn(N, S),
         "dynamic_features": dyn,
+        "structural_masks": torch.zeros(1, N, T, 2),
         "simulated_nodes_mask": torch.zeros(N, dtype=torch.bool),
         "location_ids": [f"loc_{i}" for i in range(N)],
     }

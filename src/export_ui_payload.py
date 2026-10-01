@@ -263,6 +263,7 @@ def build_model_and_adapter(
             zinb_eps=model_cfg["zinb_eps"],
             edge_features_cache_path=edge_cache,
             simulated_edge_features_cache_path=sim_edge_cache,
+            use_positional_encoding=model_cfg.get("use_positional_encoding", True),
         ).to(device)
     elif model_type in ("lstm", "gru"):
         baseline_cls = LSTMForecaster if model_type == "lstm" else GRUForecaster
