@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Every street has its own rhythm: weekly profiles of 53 stations</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/profiles.js"></script>
+<style>
+  #top { position: absolute; left: 0; top: 0; display: flex; gap: 12px; align-items: center; font-size: 16px; color: var(--text-2); }
+  #top canvas { width: 200px; height: 14px; }
+</style>
+</head>
+<body>
+<div id="top"><span>Hourly mean, scaled to each station's busiest hour</span><span>0</span><canvas id="ramp" width="200" height="14"></canvas><span>peak</span></div>
+<svg id="chart" role="img" aria-label="Heat map of hour-of-week activity profiles for 53 stations, sorted from weekday-dominated to weekend-dominated"></svg>
+<script>
+const { C } = Fig;
+const D = window.DATA_PROFILES.stations;
+const { w: W, h: H } = Fig.size();
+const color = d3.scaleLinear().domain([0, 1]).range(["#f3f2f1", "#003078"]).interpolate(d3.interpolateLab);
+const cv = document.getElementById("ramp").getContext("2d");
+for (let i = 0; i < 200; i++) { cv.fillStyle = color(i / 199); cv.fillRect(i, 0, 1, 14); }
+
+const M = { l: 20, r: 250, t: 70, b: 46 };
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const x = d3.scaleBand().domain(d3.range(168)).range([M.l, W - M.r]);
+const y = d3.scaleBand().domain(d3.range(D.length)).range([M.t, H - M.b]).paddingInner(0.1);
+const cells = [];
+D.forEach((s, i) => s.profile.forEach((v, j) => cells.push({ i, j, v })));
+svg.append("g").selectAll("rect").data(cells).join("rect")
+  .attr("x", (d) => x(d.j)).attr("y", (d) => y(d.i)).attr("width", x.bandwidth() + 0.4).attr("height", y.bandwidth())
+  .attr("fill", (d) => color(d.v));
+const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+days.forEach((d, k) => {
+  svg.append("line").attr("x1", x(k * 24)).attr("x2", x(k * 24)).attr("y1", M.t - 6).attr("y2", H - M.b + 4).attr("stroke", "#fff").attr("stroke-width", 3);
+  svg.append("text").attr("class", "annot").attr("x", x(k * 24 + 12)).attr("y", H - M.b + 28).attr("text-anchor", "middle").text(d);
+});
+svg.append("text").attr("class", "annot").attr("x", M.l).attr("y", M.t - 16).text(`${D.length} stations, September 2024 onwards · one row per station`);
+
+// Annotate the two ends of the ordering.
+const ax = W - M.r + 24;
+svg.append("text").attr("class", "annot-strong").attr("x", ax).attr("y", M.t + 20).text("Weekday-led");
+svg.append("text").attr("class", "annot").attr("x", ax).attr("y", M.t + 46).text("twin weekday peaks");
+svg.append("text").attr("class", "annot").attr("x", ax).attr("y", M.t + 70).text("(school, commute)");
+svg.append("text").attr("class", "annot-strong").attr("x", ax).attr("y", H - M.b - 64).text("Weekend-led");
+svg.append("text").attr("class", "annot").attr("x", ax).attr("y", H - M.b - 40).text("retail and");
+svg.append("text").attr("class", "annot").attr("x", ax).attr("y", H - M.b - 16).text("leisure")
+svg.append("line").attr("x1", ax + 6).attr("x2", ax + 6).attr("y1", M.t + 90).attr("y2", H - M.b - 92).attr("stroke", C.rule).attr("stroke-width", 2);
+
+const hl = svg.append("rect").attr("fill", "none").attr("stroke", C.text).attr("stroke-width", 1.5).attr("opacity", 0);
+svg.append("rect").attr("x", M.l).attr("y", M.t).attr("width", W - M.l - M.r).attr("height", H - M.t - M.b).attr("fill", "transparent")
+  .on("pointermove", (ev) => {
+    const [mx, my] = d3.pointer(ev);
+    const j = Math.max(0, Math.min(167, Math.floor((mx - M.l) / x.step())));
+    const i = Math.max(0, Math.min(D.length - 1, Math.floor((my - M.t) / y.step())));
+    const s = D[i];
+    hl.attr("x", M.l).attr("y", y(i) - 1).attr("width", W - M.l - M.r).attr("height", y.bandwidth() + 2).attr("opacity", 1);
+    Fig.showTip(ev, s.name.replace(/^Ncl/, ""), [
+      { value: d3.format(".0%")(s.profile[j]), name: `of peak, ${days[Math.floor(j / 24)]} ${String(j % 24).padStart(2, "0")}:00` },
+      { value: s.mean.toFixed(0), name: "mean count per 15 min" },
+      { value: s.weekendRatio.toFixed(2), name: "weekend ÷ weekday level" },
+    ]);
+  })
+  .on("pointerleave", () => { hl.attr("opacity", 0); Fig.hideTip(); });
+Fig.onStep(() => {}, 0);
+</script>
+</body>
+</html>

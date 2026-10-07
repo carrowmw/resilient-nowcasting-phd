@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Intelligence from Imperfect Sensors — DSTL Review</title>
+<meta name="description" content="Resilient spatiotemporal forecasting for urban digital twins. PhD progress presentation to Dstl, October 2026.">
+<link rel="stylesheet" href="vendor/reveal/reset.css">
+<link rel="stylesheet" href="vendor/reveal/reveal.css">
+<link rel="stylesheet" href="css/deck.css?v=2">
+<style>
+  .avatar {
+    width: 120px !important; height: 120px !important;
+    min-width: 120px !important; min-height: 120px !important;
+    max-width: 120px !important; max-height: 120px !important;
+    border-radius: 50% !important; overflow: hidden !important;
+    box-sizing: border-box !important;
+    -webkit-mask-image: -webkit-radial-gradient(white, black);
+  }
+  .avatar img {
+    width: 100% !important; height: 100% !important;
+    max-width: 100% !important; max-height: 100% !important;
+    object-fit: cover !important; border-radius: 50% !important;
+    display: block !important;
+  }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ════════════════════════════════════════════════════════════════════
+     1 · TITLE                                                     0:30
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="dark" data-background-color="#0b0c0c" data-background-iframe="figures/title-network.html" data-chrome="none">
+  <div class="title-block">
+    <div class="title-rule"></div>
+    <p class="kicker">DSTL Review · October 2026</p>
+    <h1>Intelligence from<br>imperfect sensors</h1>
+    <p class="subtitle">Resilient spatiotemporal forecasting for urban digital twins</p>
+    <p class="meta"><strong>Carrow Morris-Wiltshire</strong><br>PhD researcher, Newcastle University · Urban Observatory</p>
+  </div>
+  <aside class="notes">
+    [0:30] Thank you for the time. Over the next thirty minutes I want to show you where the thesis has got to,
+    and in particular what the third and largest experiment has established. The dots behind me are the 81 real
+    sensor locations the model runs on, in Newcastle. The central question is simple: can we get dependable
+    intelligence out of sensors that are, much of the time, not telling us anything?
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     2 · TEAM                                                       0:45
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="context">
+  <header class="slide-head">
+    <p class="kicker">Who</p>
+    <h2>Research team</h2>
+  </header>
+  <div class="cols cols-2" style="row-gap: 64px; margin-top: 30px;">
+    <div class="person">
+      <div class="avatar"><img src="images/carrow.jpeg" alt="Carrow Morris-Wiltshire"></div>
+      <div><h3>Carrow Morris-Wiltshire</h3><p>PhD researcher, School of Engineering<br>Deep learning, urban monitoring</p></div>
+    </div>
+    <div class="person">
+      <div class="avatar"><img src="images/phil-james.jpeg" alt="Phil James"></div>
+      <div><h3>Professor Phil James</h3><p>Professor of Data Science, School of Mathematics, Statistics and Physics<br>Environmental monitoring, urban sensing</p></div>
+    </div>
+    <div class="person">
+      <div class="avatar"><img src="images/sheen.jpeg" alt="Sheen Cabaneros"></div>
+      <div><h3><span>Dr Sheen Cabaneros</span></h3><p>Lecturer in Air Pollution, School of Engineering<br>Deep learning, air pollution</p></div>
+    </div>
+    <div class="person">
+      <div class="avatar">KH</div>
+      <div><h3><span>Keith Hermiston</span></h3><p>Defence Science and Technology Laboratory<br><span></span></p></div>
+    </div>
+    <div class="person">
+      <div class="avatar"><img src="images/stuart-barr.jpeg" alt="Stuart Barr"></div>
+      <div><h3><span>Professor Stuart Barr</span></h3><p>Professor of Geospatial Statistics, School of Engineering<br><span>Urban modelling, spatial statistics</span></p></div>
+    </div>
+  </div>
+  <p class="source-line">Data: Newcastle Urban Observatory pedestrian counting network, 2023–2026.</p>
+  <aside class="notes">
+    [0:45] Briefly, the team. [Introduce supervisors and the Dstl point of contact, and what each brings.]
+    The data come from the Newcastle Urban Observatory, which runs one of the larger open urban sensing networks in the UK.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     3 · THE IDEA                                                   1:30
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="context">
+  <header class="slide-head">
+    <p class="kicker">The idea</p>
+    <h2>Data in, whatever its quality. Intelligence out, with honest uncertainty.</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/degradation-concept.html" style="height: 560px;" title="Graceful degradation schematic"></iframe>
+  <div class="cols cols-3" style="margin-top: 22px; gap: 40px;">
+    <p class="inset neutral fragment" style="font-size: 25px;">When data are good, the estimate is sharp.</p>
+    <p class="inset neutral fragment" style="font-size: 25px;">When data degrade, the estimate continues, and says it is less sure.</p>
+    <p class="inset fragment" style="font-size: 25px;"><strong>Graceful degradation</strong> is what makes an estimate safe to act on.</p>
+  </div>
+  <aside class="notes">
+    [1:30] This is the whole thesis in one picture. It is a schematic, not data; the real equivalent comes later.
+    Most forecasting pipelines are built on the left: they assume complete inputs. When the sensor goes dark they
+    either stop, or, worse, carry on producing a confident answer that is wrong. The right is what we want:
+    the system keeps producing an estimate, the uncertainty widens as the evidence thins, and it tells the operator
+    that a sensor is down. [Advance twice: at the second takeaway the slider drops to 55%.]
+    This maps directly onto the MoD aim of operating in contested, degraded and denied environments. In that
+    setting, data quality is not something you can fix upstream; it is a condition you operate in. The gold standard
+    for operational intelligence is therefore not the most accurate model on clean data, it is the model whose
+    confidence you can trust as conditions change. The slider is live if anyone wants to try it afterwards.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     4 · WHY IT MATTERS FOR DEFENCE                                 1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="context">
+  <header class="slide-head">
+    <p class="kicker">Operational intelligence</p>
+    <h2>Situational awareness needs three things a sensor alone cannot give</h2>
+  </header>
+  <div class="flow" style="margin-top: 20px;">
+    <div class="node">
+      <p class="tag grey" style="margin-bottom: 18px !important;">Level 1 · Perception</p>
+      <h3>What is happening at the sensors?</h3>
+      <p>Raw reports, when they arrive. Gaps, dropouts and silent failures are normal.</p>
+    </div>
+    <div class="arrow">›</div>
+    <div class="node">
+      <p class="tag" style="margin-bottom: 18px !important;">Level 2 · Comprehension</p>
+      <h3>What is happening everywhere, now?</h3>
+      <p>Fill the silence at broken sensors; infer conditions where there is no sensor at all.</p>
+    </div>
+    <div class="arrow">›</div>
+    <div class="node">
+      <p class="tag" style="margin-bottom: 18px !important;">Level 3 · Projection</p>
+      <h3>What happens next, and how sure are we?</h3>
+      <p>A forecast with a calibrated range, and a flag when its inputs cannot be trusted.</p>
+    </div>
+  </div>
+  <div class="cols cols-2" style="margin-top: 56px; gap: 64px;">
+    <p class="inset">A <strong>geospatial digital twin</strong> is the place these three levels meet: a live, queryable model of the physical network.</p>
+    <p class="small" style="margin-top: 8px;">Defence relevance: decision support under <strong>denied, disrupted, intermittent and limited</strong> (DDIL) conditions; dependable, assured AI (Defence AI Strategy, 2022; JSP 936, Defence Investment Plan 2026). Urban pedestrian flow is an open, unclassified proxy with the same failure modes.</p>
+  </div>
+  <p class="source-line">Levels after Endsley (1995), <em>Toward a theory of situation awareness in dynamic systems</em>, Human Factors 37(1).</p>
+  <aside class="notes">
+    [1:15] Endsley's three levels of situational awareness are a useful frame. Sensors only give you level one, and
+    only when they are working. Level two, comprehension, means estimating the current state everywhere, including at
+    silent sensors and at places with no sensor. Level three is projection with an honest range.
+    The model I will describe has one output for each of those: imputation, spatial kriging and a probabilistic forecast.
+    Pedestrian counting is the testbed because it is open, large and messy in exactly the ways a deployed defence
+    sensor network is messy. Nothing here relies on the data being pedestrians.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     5 · STATE OF THE ART                                           1:30
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="context">
+  <header class="slide-head">
+    <p class="kicker">Where resilient forecasting stands</p>
+    <h2>The methods exist. The benchmarks are too clean.</h2>
+  </header>
+  <div class="cols cols-wide-left" style="gap: 64px;">
+    <iframe class="fig-frame" data-src="figures/benchmark-missingness.html" style="height: 600px;" title="Missingness in benchmark datasets"></iframe>
+    <div class="stack" style="margin-top: 10px;">
+      <div class="card"><h3>Impute, then forecast</h3><p>Two separate stages. Imputation errors pass silently into the forecast.</p></div>
+      <div class="card"><h3>Missingness-aware models</h3><p>GRU-D, BRITS, SAITS: learn from the mask itself. Mature in healthcare.</p></div>
+      <div class="card"><h3>Graph imputation and kriging</h3><p>IGNNK, GRIN: borrow from neighbouring sensors. Evaluated mostly on near-complete traffic data.</p></div>
+    </div>
+  </div>
+  <p class="source-line">Benchmark rates as reported by Cini et al., ICLR 2022 (GRIN) and Du et al., ESWA 2023 (SAITS). Newcastle rates computed from the raw archive.</p>
+  <aside class="notes">
+    [1:30] Resilient forecasting is not a new idea. Healthcare has handled heavy missingness for years, because
+    intensive-care measurements are irregular by design; GRU-D, BRITS and SAITS come from there. Graph methods such as
+    IGNNK and GRIN can infer unsensed locations from neighbours.
+    The gap is in the evaluation. The standard traffic benchmarks, PEMS-BAY and METR-LA, are almost complete;
+    missingness is usually injected at random afterwards. Our network is missing 59% of station-slots over the archive,
+    and 28% even while sensors are installed, and those gaps are not random. That difference matters, as we will see:
+    a method that looks robust on random masks can collapse on real outages.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     6 · WHY URBAN MOVEMENT IS HARD                                 1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="context">
+  <header class="slide-head">
+    <p class="kicker">Why this is difficult</p>
+    <h2>A city is a complex adaptive system of systems</h2>
+  </header>
+  <div class="cols cols-wide-left" style="gap: 64px;">
+    <iframe class="fig-frame" data-src="figures/complexity-profiles.html" style="height: 640px;" title="Weekly activity profiles for 53 stations"></iframe>
+    <div class="stack" style="margin-top: 20px;">
+      <p><strong>Coupled subsystems.</strong> Transport, retail, schools, events and weather all move pedestrians, on different clocks.</p>
+      <p><strong>No two streets alike.</strong> Every row is a station; rhythms differ even a few hundred metres apart.</p>
+      <p><strong>Adaptive.</strong> People reroute around closures and crowds, so behaviour shifts when conditions change.</p>
+      <p><strong>Rare surges dominate risk.</strong> On the stadium corridor, one 15-minute slot reached 23× the usual peak.</p>
+    </div>
+  </div>
+  <aside class="notes">
+    [1:15] Each row here is one of 53 stations; each column an hour of the week; darker means busier relative to that
+    station's own peak. The top rows have twin weekday peaks, school and commute. The bottom rows are weekend-led,
+    retail and leisure. This heterogeneity is why a single global pattern does not work, and why borrowing information
+    from neighbours is hard: the neighbour may obey a different rhythm. Add events, weather and people adapting to each
+    other and you have a complex adaptive system of systems. The same is true of any human-terrain picture.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     7 · THESIS PROPOSAL                                            1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="context">
+  <header class="slide-head">
+    <p class="kicker">The thesis</p>
+    <h2>Three experiments, each widening the question</h2>
+    <p class="lede">Can a single model ingest imperfect sensor data without prior imputation, and still deliver calibrated estimates at sensors, between sensors and into the future?</p>
+  </header>
+  <div class="flow" style="margin-top: 10px;">
+    <div class="node">
+      <p class="tag grey" style="margin-bottom: 14px !important;">Experiment 1 · one sensor</p>
+      <h3>How does data quality shape error?</h3>
+      <p>110 directional streams; classical and deep forecasters; gaps left as gaps.</p>
+      <p style="margin-top: 14px; color: var(--text);"><strong>Fragmentation, not just completeness, drives error.</strong></p>
+    </div>
+    <div class="arrow">›</div>
+    <div class="node">
+      <p class="tag grey" style="margin-bottom: 14px !important;">Experiment 2 · the network</p>
+      <h3>Does spatial context help?</h3>
+      <p>54 stations; graph attention vs temporal-only models; 3 seeds.</p>
+      <p style="margin-top: 14px; color: var(--text);"><strong>Neighbours cut error 5–12%; bigger models do not.</strong></p>
+    </div>
+    <div class="arrow">›</div>
+    <div class="node" style="background: #e8f1f8;">
+      <p class="tag" style="margin-bottom: 14px !important;">Experiment 3 · resilience</p>
+      <h3>Can one model do all three, under outages?</h3>
+      <p>81 stations, 24 held out; RIoT multi-task model; 103 runs.</p>
+      <p style="margin-top: 14px; color: var(--text);"><strong>Today's focus.</strong></p>
+    </div>
+  </div>
+  <div class="cols cols-2" style="margin-top: 56px; gap: 64px;">
+    <p class="inset">Common thread: <strong>no imputation before modelling</strong>. Gaps stay gaps; the model handles them, and error is scored only where data were observed.</p>
+    <p class="small" style="margin-top: 6px;">All three use the same Newcastle archive (2023–2026, 15-minute resolution). Each widens the scope: one stream, then the network, then the network under outages with stations held out.</p>
+  </div>
+  <aside class="notes">
+    [1:15] The thesis asks whether one model can take imperfect data as it arrives, with no separate imputation stage,
+    and still produce calibrated estimates at sensors, between sensors and into the future.
+    It builds in three steps. Experiment 1 looked at single sensors and asked how data quality shapes error.
+    Experiment 2 asked whether spatial context helps. Experiment 3, the bulk of today, puts it together in one
+    multi-task model and stress-tests it under outages.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     8 · THE DATA                                                   1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="data">
+  <header class="slide-head">
+    <p class="kicker">The data</p>
+    <h2>Newcastle's pedestrian network: rich, real and full of holes</h2>
+  </header>
+  <div class="cols cols-wide-left" style="gap: 64px;">
+    <iframe class="fig-frame" data-src="figures/availability-heatmap.html" style="height: 690px;" title="Weekly data availability heat map"></iframe>
+    <div class="stack" style="margin-top: 30px;">
+      <div class="stat"><div class="value">7.9 M</div><div class="label">raw directional count records, 2023–2026, at 15-minute resolution</div></div>
+      <div class="stat orange"><div class="value">59%</div><div class="label">of station-slots missing across the archive; 28% even while installed</div></div>
+      <div class="stat grey"><div class="value">0</div><div class="label">explicit zero counts: an empty street and a dead sensor both appear as silence</div></div>
+    </div>
+  </div>
+  <aside class="notes">
+    [1:15] One row per station, one column per week, darker means more complete. Three things to notice.
+    Sensors arrive in waves, so the network is never the same shape twice. Several stations die for months and come
+    back. And there are almost no complete rows. The orange marks are the 24 stations we hold out from training
+    entirely, to test inference where there is no sensor.
+    The third number is the subtle one. In 7.9 million records there is not a single zero. The feed simply stops
+    reporting when nobody walks past, which means an empty street and a broken sensor look identical.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     9 · TAXONOMY OF FAILURE                                        2:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="data">
+  <header class="slide-head" style="margin-bottom: 24px;">
+    <p class="kicker">Data quality</p>
+    <h2>Seven ways a sensor network fails, and their defence analogues</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/quality-taxonomy.html" style="height: 720px;" title="Taxonomy of data-quality failures"></iframe>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <aside class="notes">
+    [2:00] Each failure mode is a real snippet from the archive, paired with a defence analogue. Advance to step through.
+    1 Intermittent dropout: 339 thousand separate gaps; the median is one slot. Think packet loss on a contested link.
+    2 Zero or broken: nights go silent; we cannot tell quiet from failure. "No detection" versus "no report".
+    3 Fragmentation: gaps cluster; 78% chance the next slot is missing if this one is; half the missing time is in gaps
+      longer than three hours. Like ISR revisit gaps.
+    4 Prolonged failure: this station was dark for 300 days. Sensor destroyed or out of supply.
+    5 Degraded sensor: it reports, but implausibly low. Present is not the same as trustworthy; spoofing looks like this.
+    6 Rare surges: the busiest fifteen minutes on Heber Street, the stadium corridor, Sunday 23 February 2025 around 16:00, consistent with a crowd leaving St James' Park (check the fixture list before claiming it). Every model under-predicts the
+      top decile by 50 to 73 counts. The events that matter most have the least data.
+    7 Blind spots: 24 held-out stations where the model must infer from neighbours alone. Areas with no ISR coverage.
+    The point: these are not edge cases to clean away. They are the operating environment.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     10 · EXPERIMENT 1                                              1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="data">
+  <header class="slide-head" style="margin-bottom: 24px;">
+    <p class="kicker">Experiment 1 · single sensors</p>
+    <h2>How the data break matters as much as how much is missing</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/exp1-fragmentation.html" style="height: 615px;" title="Experiment 1 fragmentation and imputation"></iframe>
+  <p class="inset" style="margin-top: 16px;">Error falls steeply until contiguous runs reach about <strong>3 hours</strong>, then flattens. kNN imputation makes the deep models <strong>worse</strong>, not better.</p>
+  <aside class="notes">
+    [1:15] Experiment 1, single sensors; this is the MDPI Sensors paper. Each dot is a directional stream; the x-axis is how
+    long its unbroken runs of data are. Error falls steeply until runs reach about three hours, then flattens; the
+    segmented fit beats a straight line (delta AIC 7). In a random forest on the same features, the number and length of
+    fragments carry far more importance than overall completeness (out-of-bag R-squared 0.82).
+    Completeness still correlates with error, so I would not say it does not matter, but structure matters more.
+    On the right, filling the gaps with kNN before training made both deep models worse, from 56 to 66 percent CV-RMSE.
+    That result motivates the rest of the thesis: if imputation does not help, make the model handle gaps itself.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     11 · DIGITAL TWIN WALK-THROUGH                                 1:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="twin">
+  <header class="slide-head">
+    <p class="kicker">The geospatial digital twin</p>
+    <h2>From raw feeds to a (live), explorable picture</h2>
+  </header>
+  <div class="flow" style="margin-top: 30px;">
+    <div class="node fragment fade-up" data-fragment-index="0"><h3>Ingest</h3><p>Urban Observatory counts, Open-Meteo weather, OpenStreetMap context. Gaps preserved, never filled.</p></div>
+    <div class="arrow">›</div>
+    <div class="node fragment fade-up" data-fragment-index="1"><h3>Store</h3><p>TimescaleDB on a regular 15-minute grid; a station graph with walking-network edge features.</p></div>
+    <div class="arrow">›</div>
+    <div class="node fragment fade-up" data-fragment-index="2"><h3>Learn</h3><p>RIoT trained in containers; every run tracked with its exact data, config and held-out set.</p></div>
+    <div class="arrow">›</div>
+    <div class="node fragment fade-up" data-fragment-index="3"><h3>Serve</h3><p>Per-day payloads: forecasts, intervals, outage probability, attention weights.</p></div>
+    <div class="arrow">›</div>
+    <div class="node fragment fade-up" data-fragment-index="4" style="background: #e8f1f8;"><h3>See</h3><p>WebGL map with time slider, station inspector and uncertainty, for any model in the registry.</p></div>
+  </div>
+  <div class="cols cols-3" style="margin-top: 60px; gap: 48px;">
+    <div class="stat"><div class="value">81</div><div class="label">stations, plus 29 simulated "ghost" locations queried by kriging</div></div>
+    <div class="stat"><div class="value">15 min</div><div class="label">resolution; any day of the test period can be replayed</div></div>
+    <div class="stat"><div class="value">1 click</div><div class="label">to switch between models and compare their behaviour on the same day</div></div>
+  </div>
+  <aside class="notes">
+    [1:00] Before the results, a quick tour of the system they live in. Data are ingested with gaps preserved.
+    Everything sits on a regular 15-minute grid in TimescaleDB, with a station graph whose edges carry walking distance
+    and road type from OpenStreetMap. Models train in containers and every run is tracked with its exact held-out set.
+    Each run publishes daily payloads, and the front end renders them on a map. Let me show you.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     12 · LIVE DASHBOARD (full screen)                              2:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="twin" data-chrome="none" data-background-color="#0b0c0c"
+         data-background-iframe="http://localhost:3000" data-background-interactive>
+  <aside class="notes">
+    [2:00] LIVE DEMO. Requires the dashboard running on localhost:3000 (docker compose up frontend).
+    Suggested path: 1) pick the V5F reference run; 2) set the date to 1 May 2026 and scrub to late morning;
+    3) click Pilgrim Street: its sensor is offline from 09:45 to 17:15, yet the forecast and interval continue;
+    4) click a held-out station to show a kriged estimate; 5) switch model to show the difference.
+    If the demo fails, skip: slide 18 shows the same Pilgrim Street outage as a static figure.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     13 · LIMITS OF SMALLER MODELS                                  1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head">
+    <p class="kicker">Why a richer model</p>
+    <h2>Small models forecast well on clean data. That is not the job.</h2>
+  </header>
+  <div class="cols cols-wide-left" style="gap: 56px;">
+    <div>
+      <p class="small" style="margin-bottom: 8px !important;"><strong style="color: var(--text);">Experiment 2:</strong> 54 stations, three seeds</p>
+      <iframe class="fig-frame" data-src="figures/exp2-tiers.html" style="height: 600px;" title="Experiment 2 model tiers"></iframe>
+    </div>
+    <div>
+    <table class="gov" style="margin-top: 36px;">
+      <thead><tr><th>Capability</th><th>Single-sensor model</th><th>RIoT</th></tr></thead>
+      <tbody>
+        <tr><td>Forecast with clean history</td><td>✓</td><td>✓</td></tr>
+        <tr><td>Forecast while its sensor is down</td><td>✗</td><td>✓</td></tr>
+        <tr><td>Estimate where there is no sensor</td><td>✗</td><td>✓</td></tr>
+        <tr><td>Calibrated range</td><td>rarely</td><td>✓</td></tr>
+        <tr><td>Flag its own blindness</td><td>✗</td><td>✓</td></tr>
+      </tbody>
+    </table>
+    <p class="inset" style="margin-top: 36px; font-size: 25px;">Graph vs single-sensor LSTM: <strong>−5%</strong> at 15 min, <strong>−10%</strong> at 60 min. More heads or layers: within ±2%.</p>
+    </div>
+  </div>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <aside class="notes">
+    [1:15] Experiment 2 showed three tiers: naive baselines, temporal deep models, and spatial graph models.
+    Adding neighbours cuts error by about 5% at 15 minutes and 10% at an hour [advance through horizons].
+    But more heads or layers changed nothing (within 2%): the bottleneck is data and structure, not size.
+    So "a larger model" really means a model with more capabilities, not more parameters. RIoT is only 184 thousand
+    parameters; small enough for edge hardware. What it adds is the right-hand column: forecasting through outages,
+    estimates at unsensed places, a calibrated range and an outage flag.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     14 · RIoT ARCHITECTURE                                         1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 24px;">
+    <p class="kicker">The model</p>
+    <h2>RIoT: one network, three objectives</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/riot-architecture.html?zoom=1.1" style="height: 680px;" title="RIoT architecture"></iframe>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <aside class="notes">
+    [1:15] Inputs per station: counts over a three-hour window, with a unified encoding for missing values, plus weather,
+    calendar and static context. [Advance] During training we deliberately hide blocks of data shaped like real gaps.
+    A learned graph decides which stations inform each other, using walking distance and road type, never raw
+    coordinates. The encoder alternates graph attention across space with a Transformer across time.
+    [Advance] Three heads: imputation, kriging and a probabilistic forecast that also outputs an outage probability.
+    Each maps onto a situational-awareness level.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     15 · EXPERIMENT 3 DESIGN                                       1:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Experiment 3 · design</p>
+    <h2>103 controlled runs, 277 GPU-hours, one question each</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/exp3-design.html?zoom=1.1" style="height: 540px;" title="Experiment 3 design"></iframe>
+  <div class="cols cols-4" style="margin-top: 18px; gap: 36px;">
+    <div class="stat"><div class="value" style="font-size: 46px;">Observed only</div><div class="label">error scored on real counts, never on filled gaps</div></div>
+    <div class="stat"><div class="value" style="font-size: 46px;">15 min – 24 h</div><div class="label">synthetic outages on a quarter of sensors</div></div>
+    <div class="stat"><div class="value" style="font-size: 46px;">24 held out</div><div class="label">stations never seen in training</div></div>
+    <div class="stat grey"><div class="value" style="font-size: 46px;">±3% noise</div><div class="label">single seed so far; smaller effects are not claimed</div></div>
+  </div>
+  <span class="fragment" aria-hidden="true"></span>
+  <aside class="notes">
+    [1:00] Experiment 3 is 103 runs organised into 9 disciplined phases.
+    [Dot colors]:
+    - Blue dots: The pre-declared base model for that phase (the chain below: V4R → P2B → P3B → P4B → P5B → V5F).
+    - Light grey dots: Candidate runs testing one hypothesis against that base.
+    - Dark grey dots: Non-learned baselines (historical profile, neighbour average, persistence).
+
+    [Phases overview]:
+    1. Thesis re-run: Re-measuring past chapter ablations on true observed counts (debunking evaluation artefacts).
+    2. P1 Hygiene: Scored only observed data; removed false zero-targets.
+    3. P2 Masking: Real-gap training masks and unified missingness encoding (solved outage collapse).
+    4. P3 Inputs: Covariates screening (graph topology and seasonal priors help; many features add noise).
+    5. P4 Likelihood: Probabilistic intervals and the sensor outage health head.
+    6. P5 Peaks: Loss functions to counter extreme surge under-prediction.
+    7. P6 Multi-task: Verified joint heads (forecast, imputation, kriging) don't conflict.
+    8. V5 suite & Leave-one-out: Consolidated V5F model and systematic single-component ablations.
+
+    [Advance to reveal chain] Four protocol choices: observed-only scoring, 15m–24h synthetic outages, 24 held-out stations, and single-seed runs (±3% noise floor).
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     16 · STORY 1: THE METRIC REWARDED FAILURE                      1:45
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Finding 1</p>
+    <h2>Our original metric rewarded the model for predicting empty streets</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/collapse.html?zoom=1.05" style="height: 660px;" title="Zero collapse and the legacy metric"></iframe>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <p class="inset warn fragment" style="margin-top: 6px;">Scoring the 53% of slots that were missing as zero made collapse look like accuracy.</p>
+  <aside class="notes">
+    [1:45] The first finding is uncomfortable, and I think the most valuable. On the left, the same four models under
+    two scorecards. Under the legacy metric used in the thesis draft, which counted missing slots as zero, V4R looks
+    best and the final model looks dreadful. Scored only on real counts, the order flips: V4R is worst.
+    [Advance] Why? V4R had learnt to predict an empty street whenever data went missing: 79% of the time.
+    Scoring observed targets only removes that immediately. [Advance] But the volume predicted inside gaps stays at
+    only 13 to 21% of what it should be. It no longer predicts zero; it predicts nearly zero. Soft collapse.
+    [Advance] Only the unified missing encoding, next slide, fixes that.
+    The lesson for any evaluation of AI under degraded data: if the metric touches filled values, it can reward failure.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     17 · STORY 2: UNIFIED ENCODING                                 1:30
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Finding 2</p>
+    <h2>Make training gaps look exactly like real gaps</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/outage-length.html" style="height: 650px;" title="Outage length vs error and mass"></iframe>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <p class="inset fragment" style="margin-top: 10px;">V5F halves outage error against V4R (31.8 → 15.8 at 3 h) and keeps <strong>100%</strong> of the traffic volume through a 24-hour outage.</p>
+  <aside class="notes">
+    [1:30] Here we blank a quarter of sensors for increasing lengths. Left, error on those sensors; right, how much of
+    the true traffic the model still predicts. V4R, orange, collapses to zero after an hour.
+    [Advance] Loss hygiene, light blue, helps a little: it keeps about 13%.
+    [Advance] Then one change: encode artificial training gaps and real gaps identically, so what the model learns from
+    masked training data transfers to real outages. Turquoise keeps 88% of the volume.
+    [Advance] The final model, dark blue, keeps all of it at every length and beats the seasonal baseline, dashed, by 11%.
+    [Advance] Take unified encoding out of V5F, purple, and it collapses again once the window is fully dark.
+    That is the single most important design decision in the thesis.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     18 · STORY 2b: A REAL OUTAGE                                   1:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Finding 2, on real data</p>
+    <h2>A real seven-hour outage, as the model saw it</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/outage-example.html" style="height: 700px;" title="Pilgrim Street real outage"></iframe>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <aside class="notes">
+    [1:00] This is not synthetic. Pilgrim Street, Friday 1 May, in the test period. The sensor went offline from
+    09:45 to 17:15. [Advance] The final model continues along the plausible shape of a Friday, with an 80% interval.
+    [Advance] Underneath: the share of the model's input window that is missing. From 13:00 it has no data at all.
+    [Advance] Without unified encoding, the same architecture slides towards an empty street.
+    Notice the edges: counts drop to 15 and 11 just before 09:45, and restart low around 17:15. That working-hours
+    window suggests local roadworks or a contractor vehicle blocking the camera. This highlights the core operational dilemma:
+    is the sensor blind, or is the street truly empty? Without external road-closure feeds, a naive model collapses to zero
+    every time it loses signal—which looks right if the pavement was closed, but fails everywhere else. RIoT v5 maintains the
+    contextual prior with calibrated uncertainty. We cannot score the gap itself, because there is no ground truth there;
+    the synthetic outages on the previous slide are where error is formally measured.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     19 · WHAT V5F DEPENDS ON                                       1:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Finding 3</p>
+    <h2>Ablations reveal component contributions</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/loo-tornado.html" style="height: 660px;" title="Leave-one-out tornado"></iframe>
+  <p class="inset" style="margin-top: 10px;">Resilience rests on unified encoding and the spatial graph; the graph matters most for long outages (+47% error at 24 h without it).</p>
+  <aside class="notes">
+    [1:00] Leave-one-out from the final model: remove one component, measure the change. Blue bars mean the component
+    helps. Unified encoding dominates: removing it raises 3-hour outage error by 82%. The learned graph is second, and
+    its importance grows with outage length; switch the metric to 24 hours to see it. Grey bars are within noise:
+    eight components could be dropped without measurable change, which argues for a slimmer final model.
+    Note the trade-off on held-out stations: dropping messages from missing sensors helps outages but hurts held-out
+    accuracy, because held-out stations depend entirely on those messages.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     20 · UNCERTAINTY                                               1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Finding 4</p>
+    <h2>The model knows when it is blind, but its upper tail is too thin</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/uncertainty.html" style="height: 640px;" title="Calibration and outage awareness"></iframe>
+  <span class="fragment" aria-hidden="true"></span>
+  <p class="inset fragment" style="margin-top: 10px;">Outage probability rises from 0.004 to 0.97 as inputs vanish (detection AUC 0.91 at 3 h, 0.999 at 24 h), and the 80% interval keeps at least nominal coverage.</p>
+  <aside class="notes">
+    [1:15] Is the uncertainty honest? Left, calibration histograms: flat would be perfect. Both models pile up on the
+    right: the truth is often above the whole forecast distribution. V5F is flatter than V4R and its median is well
+    calibrated (q50 coverage 0.49), but the 90th percentile covers only 82%. That is the peak problem in another form.
+    [Advance] Right is the encouraging part. As the share of missing input grows, the outage probability rises
+    smoothly from near zero to 0.97, and the 80% interval keeps covering at or above 80%. In operational terms: the model
+    raises a sensor-health flag and does not become over-confident as evidence thins. That is graceful degradation,
+    measured.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     21 · LIMITS                                           1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Finding 5</p>
+    <h2>Where the model does not yet help</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/accuracy-resilience.html" style="height: 640px;" title="Accuracy vs resilience and held-out stations"></iframe>
+  <span class="fragment" aria-hidden="true"></span>
+  <div class="cols cols-2" style="margin-top: 10px; gap: 40px;">
+    <p class="inset warn" style="font-size: 25px;">No run yet combines the best normal accuracy with the best resilience.</p>
+    <p class="inset warn fragment" style="font-size: 25px;">At held-out stations V5F is 9% <strong>worse</strong> than a neighbour profile; the best screens beat it by 8%.</p>
+  </div>
+  <aside class="notes">
+    [1:15] Honest limits. Each dot is a run. Left to right is normal accuracy, bottom to top is error under a 3-hour
+    outage. The bottom-left corner is empty: E2.1 has the best normal accuracy, V5F the best resilience, and nothing has
+    both yet.
+    [Run context: E2.1 isolates unified missing encoding under standard i.i.d. masking—giving peak nominal accuracy, but lacking structured outage training. E3.3d adds historical seasonal-profile priors (zeroed out at held-out stations), which yields the strongest inductive transfer and lowest peak under-prediction.]
+    [Advance] Second view: known versus held-out stations. V5F is excellent where it has trained, and worse than a
+    simple neighbour profile where it has not. Held-out predictions collapse towards a city-wide average shape.
+    The best held-out configurations, E2.1 and E3.3d, beat the baseline by about 8%. So inference at unsensed locations
+    is an open problem, and I am presenting it as such.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     22 · SCALABILITY: LACK OF DATA                                 1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="outlook">
+  <header class="slide-head" style="margin-bottom: 20px;">
+    <p class="kicker">Scalability</p>
+    <h2>Data is the binding constraint, not compute</h2>
+  </header>
+  <iframe class="fig-frame" data-src="figures/scaling.html" style="height: 620px;" title="Data funnel and density scaling"></iframe>
+  <span class="fragment" aria-hidden="true"></span>
+  <div class="cols cols-3" style="margin-top: 14px; gap: 40px;">
+    <p class="small"><strong style="color: var(--text);">Compute is cheap.</strong> 184k parameters; 103 runs cost 277 GPU-hours. Seed replicates need about 260 more.</p>
+    <p class="small"><strong style="color: var(--text);">Data are scarce.</strong> The whole inductive test rests on 14 stations with any observed test data.</p>
+    <p class="small fragment"><strong style="color: var(--text);">Density sweep running.</strong> At full density the model beats the baseline by 8%; at 15–25 stations it does not reliably. 35 and 45 are training now.</p>
+  </div>
+  <aside class="notes">
+    [1:15] Scalability. On the left, how data requirements whittle the network down: 222 candidate streams, 110 usable
+    for single-sensor forecasting, 81 stations, 24 held out, and only 14 of those with any observed data in the test
+    window. That is the real ceiling on what we can claim about inference at unsensed locations.
+    [Advance] On the right, the density sweep: train on 15, 25, 35, 45 or 57 stations and test on the same 24.
+    At full density the model beats the neighbour baseline; at 15 and 25 the result is noisy and crosses it. 35 and 45
+    are training now. Compute is not the issue: the model is small and the whole suite cost 277 GPU-hours. More, and more
+    diverse, sensors would help most. A caveat: the 57-station point comes from the main suite, trained under the same
+    configuration but a longer epoch budget.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     23 · SUMMARY                                                   1:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="outlook">
+  <header class="slide-head">
+    <p class="kicker">Summary</p>
+    <h2>What we can now say</h2>
+  </header>
+  <div class="cols cols-2" style="row-gap: 44px; column-gap: 72px; margin-top: 10px;">
+    <div class="finding fragment fade-up"><div class="n">1</div><div><h3>Missingness is signal, not noise</h3><p>Encoding real and artificial gaps identically halves outage error and preserves 100% of volume through 24-hour outages.</p></div></div>
+    <div class="finding fragment fade-up"><div class="n">2</div><div><h3>The model knows when it is blind</h3><p>Outage probability tracks input loss (AUC 0.91–0.999); interval coverage holds as data degrade.</p></div></div>
+    <div class="finding fragment fade-up"><div class="n">3</div><div><h3>Evaluation can reward failure</h3><p>Scoring filled values made collapse look like accuracy.</p></div></div>
+    <div class="finding fragment fade-up"><div class="n">4</div><div><h3>Structure beats size</h3><p>Spatial context helps (5–12%); more capacity does not. RIoT is 184k parameters.</p></div></div>
+    <div class="finding fragment fade-up"><div class="n">5</div><div><h3>Unsensed locations remain open</h3><p>Held-out inference does not always beat a neighbour profile; peaks are often under-predicted.</p></div></div>
+    <div class="finding fragment fade-up"><div class="n">6</div><div><h3>Data, not compute, is the limit</h3><p>Fourteen held-out stations bound every inductive claim. Scaling estimates suggest large increase in inductive performance with increased density.</p></div></div>
+  </div>
+  <aside class="notes">
+    [1:00] Six things we can now say, in order of confidence. The first three are large effects that agree between
+    validation and test. The last three are limits that define the remaining work.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     24 · IMPLICATIONS AND NEXT STEPS                               1:00
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="outlook">
+  <header class="slide-head">
+    <p class="kicker">Handover</p>
+    <h2>Implications for defence</h2>
+  </header>
+  <div class="cols cols-2" style="gap: 72px;">
+    <div>
+      <h3>Operational Principles</h3>
+      <ul>
+        <li><strong>Treat missingness as signal:</strong> Exogenous gap encoding halves outage error under sustained communications denial.</li>
+        <li><strong>Coupled quality telemetry:</strong> Ship an explicit outage/sensor-health probability alongside every prediction.</li>
+        <li><strong>Structure beats scale for the edge:</strong> A 184k-parameter spatio-temporal graph model is deployable on constrained tactical hardware.</li>
+        <li><strong>Stress tested uncertainty:</strong> Ensure prediction interval coverage remains calibrated as sensor inputs degrade, not just in nominal conditions.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Operational Boundaries</h3>
+      <ul>
+        <li><strong>Spatial extrapolation is bounded:</strong> Held-out inference without local sensors does not reliably beat neighbour baselines without dense coverage.</li>
+        <li><strong>Surge / peak under-prediction:</strong> Extreme anomalous spikes are damped out unless paired with explicit tactical or environment triggers.</li>
+        <li><strong>Data density is the hard limit:</strong> Claims are constrained by physical station density, not model expressiveness or training compute</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Four principles that transfer directly to defence sensor networks, whatever they measure. And three boundaries.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     25 · THESIS OUTPUTS                                            0:45
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="outlook">
+  <header class="slide-head">
+    <p class="kicker">Outputs</p>
+    <h2>Headline thesis outputs</h2>
+  </header>
+  <table class="gov" style="font-size: 26px;">
+    <thead><tr><th style="width: 18%;">Type</th><th>Output</th><th style="width: 18%;">Status</th></tr></thead>
+    <tbody>
+      <tr><td>Journal</td><td>Quality-aware AIoT-enabled wireless urban sensor networks using deep-learning - <em>[MDPI Sensors]</em></td><td><span class="tag green">In Press</span></td></tr>
+      <tr><td>Conference</td><td>Resilience-First Graph Attention for Operational Urban IoT: Zero-Inflated Probabilistic Nowcasting under Ambiguous Zeros - <em>[IEEE WCCI 2026]</em></td><td><span class="tag green">Presented & In Press</span></td></tr>
+      <tr><td>Journal</td><td>Unified missing encoding and evaluation pitfalls for resilient multi-task forecasting - <em>[Target: IEEE]</em></td><td><span class="tag grey">In preparation</span></td></tr>
+      <tr><td>Thesis</td><td>Chapter 7 being finalised following RIoT v5 results.</td><td><span class="tag grey">In progress</span></td></tr>
+      <tr><td>Software</td><td>RIoT pipeline, experiment harness and the geospatial digital-twin dashboard.</td><td><span class="tag">Working system</span></td></tr>
+    </tbody>
+  </table>
+  <div class="cols cols-4" style="margin-top: 64px; gap: 36px;">
+    <div class="stat"><div class="value" style="font-size: 40px;">Oct 2026</div><div class="label">Seed replicates for the core Experiment 3 runs</div></div>
+    <div class="stat"><div class="value" style="font-size: 40px;">Oct 2026</div><div class="label">Chapter 7 updated on v5 results</div></div>
+    <div class="stat grey"><div class="value" style="font-size: 40px;">Nov 2026</div><div class="label">Experiment 3 journal submission</div></div>
+    <div class="stat grey"><div class="value" style="font-size: 40px;">Dec 2026</div><div class="label">Final thesis submission</div></div>
+  </div>
+  <aside class="notes">
+    The Experiment 1 paper, the WCCI presentation in Maastricht (exp 2), a journal paper on Experiment 3 in preparation, the thesis chapters, and the working software stack you saw.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     27 · THANK YOU                                                 0:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="dark" data-background-color="#0b0c0c" data-background-iframe="figures/title-network.html" data-chrome="none">
+  <div class="title-block">
+    <div class="title-rule"></div>
+    <h1>Thank you</h1>
+    <p class="subtitle">Questions and discussion</p>
+    <p class="meta"><strong>Carrow Morris-Wiltshire</strong><br>Newcastle University · <span>carrow.m.w@gmail.com</span></p>
+  </div>
+  <aside class="notes">Thank you. Happy to take questions, or to return to the live dashboard.</aside>
+</section>
+
+</div>
+</div>
+
+<script src="vendor/reveal/reveal.js"></script>
+<script src="vendor/reveal/plugin/notes/notes.js"></script>
+<script src="vendor/reveal/plugin/zoom/zoom.js"></script>
+<script src="js/deck.js"></script>
+</body>
+</html>

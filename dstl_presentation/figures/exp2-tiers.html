@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Experiment 2: naive, temporal and spatial models on 54 stations</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/exp2.js"></script>
+<style>#top { position: absolute; left: 0; top: 0; right: 0; display: flex; gap: 28px; align-items: center; justify-content: space-between; }</style>
+</head>
+<body>
+<div id="top">
+  <div class="controls"><span>Horizon</span><div class="seg" id="hz"></div></div>
+  <div id="legend"></div>
+</div>
+<svg id="chart" role="img" aria-label="Median absolute error of naive, temporal-only and spatial graph models at 15, 30 and 60 minutes ahead"></svg>
+<script>
+const { C } = Fig;
+const D = window.DATA_EXP2;
+const { w: W, h: H } = Fig.size();
+const TIER = { naive: { label: "Naïve baseline", color: C.rule }, temporal: { label: "Temporal deep model (one sensor)", color: C.lightBlue }, spatial: { label: "Spatial graph model (whole network)", color: C.blue } };
+const HZ = [[1, "15 min"], [2, "30 min"], [4, "60 min"]];
+let hz = 1;
+const segEl = document.getElementById("hz");
+HZ.forEach(([k, label]) => {
+  const b = document.createElement("button");
+  b.textContent = label; b.setAttribute("aria-pressed", k === hz);
+  b.onclick = () => setHz(k);
+  segEl.appendChild(b);
+});
+function setHz(k) { hz = k; segEl.querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-pressed", HZ[i][0] === k)); draw(); }
+Fig.legend(document.getElementById("legend"), Object.values(TIER).map((t) => ({ label: t.label, color: t.color, shape: "rect" })));
+
+const M = { l: 300, r: 70, t: 90, b: 60 };
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const x = d3.scaleLinear().domain([0, 8]).range([M.l, W - M.r]);
+const y = d3.scaleBand().range([M.t, H - M.b]).padding(0.35);
+const gx = svg.append("g").attr("class", "grid").attr("transform", `translate(0,${H - M.b})`);
+svg.append("text").attr("class", "axis-label").attr("x", (M.l + W - M.r) / 2).attr("y", H - 12).attr("text-anchor", "middle")
+  .text("Median absolute error per station, pedestrians per 15 min · lower is better");
+const gRows = svg.append("g");
+
+function draw() {
+  const rows = D.rows.map((r) => ({ ...r, v: r.mae[hz] })).sort((a, b) => b.v - a.v);
+  y.domain(rows.map((r) => r.label));
+  gx.call(d3.axisBottom(x).ticks(8).tickSize(-(H - M.t - M.b))).call((a) => a.select(".domain").remove())
+    .call((a) => a.selectAll(".tick text").attr("dy", 14));
+  const bw = Math.min(24, y.bandwidth());
+  const g = gRows.selectAll("g.row").data(rows, (r) => r.label).join((e) => {
+    const g = e.append("g").attr("class", "row");
+    g.append("text").attr("class", "label name").attr("text-anchor", "end");
+    g.append("path").attr("class", "bar");
+    g.append("text").attr("class", "annot val");
+    return g;
+  });
+  g.transition().duration(400).attr("transform", (r) => `translate(0,${y(r.label) + y.bandwidth() / 2})`);
+  g.select(".name").attr("x", M.l - 18).attr("y", 6).text((r) => r.label);
+  g.select(".bar").attr("fill", (r) => TIER[r.tier].color).transition().duration(400)
+    .attr("d", (r) => { const x0 = x(0), x1 = x(r.v), rr = 4; return `M${x0},${-bw / 2}H${x1 - rr}q${rr},0 ${rr},${rr}V${bw / 2 - rr}q0,${rr} ${-rr},${rr}H${x0}Z`; });
+  g.select(".val").transition().duration(400).attr("x", (r) => x(r.v) + 10).attr("y", 6).text((r) => r.v.toFixed(2));
+  g.on("pointermove", (ev, r) => Fig.showTip(ev, r.label, HZ.map(([k, l]) => ({ value: r.mae[k].toFixed(2), name: `MAE ${l} ahead` }))))
+    .on("pointerleave", Fig.hideTip);
+
+}
+draw();
+Fig.onStep((s) => setHz(HZ[Math.min(2, s)][0]), 2);
+</script>
+</body>
+</html>

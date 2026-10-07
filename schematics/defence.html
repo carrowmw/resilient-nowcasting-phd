@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pipeline schematic: defence audience</title>
+<style>html,body{margin:0;background:#fff}svg{display:block}</style>
+<script src="src/nodes.js"></script>
+<script src="src/schematic.js"></script>
+</head>
+<body>
+<svg id="schematic" role="img" aria-label="Schematic: imperfect sensor data in contested conditions feed a resilient model that produces a confidence-rated situational picture"></svg>
+<script>
+window.SCHEMATIC_CONTENT = {
+  title: "Assured situational awareness from imperfect sensor networks",
+  subtitle: "What this research sets out to do: keep producing a trustworthy picture when sensors fail, links drop and coverage is incomplete, and say how far each part of that picture can be trusted.",
+  stages: [
+    { title: "Sensor reality", lede: "In contested or degraded conditions, reports arrive late, patchy or not at all." },
+    { title: "Resilient model", lede: "One model takes the data exactly as they arrive. No manual clean-up first." },
+    { title: "Trustworthy picture", lede: "A complete, confidence-rated picture that supports the decision-maker." },
+  ],
+  mapCaption: "Illustrative sensor network",
+  pictureCaption: "Smaller halo = more confident",
+  failures: [
+    { symbol: "intermittent", title: "Intermittent links", text: "Reports drop in and out, as on a jammed or congested link." },
+    { symbol: "silent", title: "Silent sensors", text: "No report: is the area quiet, or is the sensor down?" },
+    { symbol: "lost", title: "Lost sensors", text: "Destroyed, captured or out of power for long periods." },
+    { symbol: "unsensed", title: "Coverage gaps", text: "Areas no sensor can see, however the network performs." },
+  ],
+  engine: {
+    title: "A model built for missing data",
+    lede: "Designed on the assumption that data will be incomplete, rather than treating gaps as an exception.",
+    principles: [
+      { title: "Reads the gaps", text: "Learns from when and where reports go missing, instead of guessing them away first." },
+      { title: "Borrows from neighbours", text: "Uses nearby sensors and the layout of the area to estimate what a silent sensor would see." },
+      { title: "Knows when it is blind", text: "Tracks how much evidence lies behind each estimate, and widens its range when evidence is thin." },
+    ],
+    footnote: "Trained by deliberately hiding data",
+  },
+  outputs: [
+    { symbol: "filled", title: "Silent sensors, now", tag: "Perception", text: "What a sensor would be reporting now, had it not gone quiet." },
+    { symbol: "between", title: "Between sensors", tag: "Comprehension", text: "A complete picture, including the coverage gaps." },
+    { symbol: "forecast", title: "What happens next", tag: "Projection", text: "Expected activity in the next period, with a confidence range." },
+    { symbol: "alert", title: "Sensor-health warnings", tag: "Assurance", text: "Flags estimates that rest on little or no direct data." },
+  ],
+  degradation: {
+    title: "Graceful degradation",
+    xLabel: "Data quality: good → poor",
+    yLabel: "Value of the output",
+    brittle: "Conventional pipeline: accurate on good days, then fails abruptly and often silently.",
+    resilient: "Aim of this pipeline: keeps producing an estimate; its confidence range widens and the operator is warned.",
+  },
+  audience: {
+    title: "Why it matters for defence",
+    text: "Decisions in denied, disrupted, intermittent or limited (DDIL) conditions need estimates whose confidence can be trusted, not just estimates that are accurate when everything works. The approach is developed on an open, unclassified urban sensor network that fails in the same ways a deployed sensor network does.",
+  },
+  footer: "Testbed: Newcastle Urban Observatory pedestrian sensors. Newcastle University PhD research, sponsored by Dstl.",
+};
+drawSchematic();
+</script>
+</body>
+</html>

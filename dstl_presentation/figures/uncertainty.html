@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Is the uncertainty honest? PIT calibration and outage awareness</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/v5_runs.js"></script>
+<script src="data/outage_awareness.js"></script>
+</head>
+<body>
+<svg id="chart" role="img" aria-label="Left: probability integral transform histograms for V4R and RIoT v5. Right: outage probability and 80% interval coverage against the fraction of the input window that is missing"></svg>
+<script>
+const { C, MODEL } = Fig;
+const runs = Fig.runsByExperiment();
+const A = window.DATA_OUTAGE_AWARENESS.bins;
+const { w: W, h: H } = Fig.size();
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const colW = (W - 120) / 2;
+
+// ── Left: PIT histograms ────────────────────────────────────────────────────
+const PIT = ["v4r_full", "v5_full"];
+const lx0 = 70, ph = (H - 120) / 2 - 50;
+svg.append("text").attr("class", "panel-title").attr("x", 0).attr("y", 26).text("Calibration on observed data");
+svg.append("text").attr("class", "panel-sub").attr("x", 0).attr("y", 52)
+  .text("PIT histogram · flat = calibrated · right-hand pile-up = truth above the forecast");
+PIT.forEach((k, i) => {
+  const g = svg.append("g").attr("transform", `translate(${lx0},${100 + i * (ph + 60)})`).attr("class", "step").attr("data-step", i === 0 ? 0 : 0);
+  const vals = d3.range(10).map((b) => runs[k][`test_pit_b${b}`]);
+  const x = d3.scaleBand().domain(d3.range(10)).range([0, colW - lx0 - 30]).paddingInner(0.08);
+  const y = d3.scaleLinear().domain([0, 0.27]).range([ph, 0]);
+  g.append("g").attr("class", "grid").call(d3.axisLeft(y).tickValues([0, 0.1, 0.2]).tickSize(-(colW - lx0 - 30)).tickFormat(d3.format(".1f")))
+    .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("x", -12));
+  const bw = Math.min(x.bandwidth(), 36);
+  g.selectAll("path.bar").data(vals).join("path").attr("class", "bar").attr("fill", MODEL[k].color)
+    .attr("d", (v, b) => {
+      const x0 = x(b) + (x.bandwidth() - bw) / 2, y0 = y(0), y1 = y(v), r = 4;
+      return `M${x0},${y0}V${y1 + r}q0,${-r} ${r},${-r}H${x0 + bw - r}q${r},0 ${r},${r}V${y0}Z`;
+    })
+    .on("pointermove", (ev, v) => Fig.showTip(ev, MODEL[k].label, [{ value: d3.format(".1%")(v), name: `of targets in PIT decile ${vals.indexOf(v) + 1}` }]))
+    .on("pointerleave", Fig.hideTip);
+  g.append("line").attr("x1", 0).attr("x2", colW - lx0 - 30).attr("y1", y(0.1)).attr("y2", y(0.1))
+    .attr("stroke", C.text).attr("stroke-width", 2).attr("stroke-dasharray", "6 6");
+  g.append("text").attr("class", "annot-strong").attr("x", 0).attr("y", -14).text(MODEL[k].label);
+  g.append("text").attr("class", "annot").attr("x", colW - lx0 - 30).attr("y", -14).attr("text-anchor", "end")
+    .text((runs[k].test_q50_coverage ? `q50 cover ${runs[k].test_q50_coverage.toFixed(2)} · ` : "") + `q90 cover ${runs[k].test_q90_coverage.toFixed(2)} · CRPS ${runs[k].test_crps.toFixed(1)}`);
+  if (i === 1) {
+    g.append("g").attr("transform", `translate(0,${ph})`)
+      .call(d3.axisBottom(x).tickFormat((b) => (b === 0 ? "0" : b === 9 ? "1" : "")).tickSize(0).tickPadding(10))
+      .call((a) => a.select(".domain").attr("stroke", C.rule));
+    g.append("text").attr("class", "axis-label").attr("x", (colW - lx0 - 30) / 2).attr("y", ph + 44).attr("text-anchor", "middle")
+      .text("Where the observed count falls in the predictive distribution");
+  }
+});
+
+// ── Right: does the model know when it is blind? ───────────────────────────
+const rx0 = colW + 160, rw = W - rx0 - 30, rph = (H - 150) / 2 - 50;
+const right = svg.append("g").attr("class", "step").attr("data-step", 1);
+right.append("text").attr("class", "panel-title").attr("x", rx0 - 90).attr("y", 26).text("Knowing when it is blind");
+right.append("text").attr("class", "panel-sub").attr("x", rx0 - 90).attr("y", 52)
+  .text("RIoT v5, 57 training sensors, every 15 min of May 2026 (test period)");
+const x = d3.scalePoint().domain(A.map((b) => b.missingSteps)).range([0, rw]).padding(0.3);
+
+function mini(y0, title, key, color, domain, ref, fmt, refLabel) {
+  const g = right.append("g").attr("transform", `translate(${rx0},${y0})`);
+  g.append("text").attr("class", "annot-strong").attr("x", -90).attr("y", -22).text(title);
+  const y = d3.scaleLinear().domain(domain).range([rph, 0]);
+  g.append("g").attr("class", "grid").call(d3.axisLeft(y).ticks(4).tickSize(-rw).tickFormat(fmt))
+    .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("x", -12));
+  if (ref != null) {
+    g.append("line").attr("x1", 0).attr("x2", rw).attr("y1", y(ref)).attr("y2", y(ref))
+      .attr("stroke", C.text).attr("stroke-width", 2).attr("stroke-dasharray", "6 6");
+    g.append("text").attr("class", "annot").attr("x", rw).attr("y", y(ref) + 24).attr("text-anchor", "end").text(refLabel);
+  }
+  const pts = A.filter((b) => b[key] != null);
+  g.append("path").attr("d", d3.line().x((b) => x(b.missingSteps)).y((b) => y(b[key]))(pts))
+    .attr("fill", "none").attr("stroke", color).attr("stroke-width", 3);
+  g.selectAll("circle").data(pts).join("circle").attr("cx", (b) => x(b.missingSteps)).attr("cy", (b) => y(b[key])).attr("r", 6.5)
+    .attr("fill", color).attr("stroke", "#fff").attr("stroke-width", 2);
+  g.selectAll("rect.hit").data(pts).join("rect").attr("class", "hit").attr("x", (b) => x(b.missingSteps) - x.step() / 2)
+    .attr("width", x.step()).attr("y", 0).attr("height", rph).attr("fill", "transparent")
+    .on("pointermove", (ev, b) => Fig.showTip(ev, `${b.missingSteps} of 12 input steps missing`, [
+      { color: C.blue, value: b.meanOutageQ.toFixed(3), name: "mean outage probability" },
+      { color: C.turquoise, value: b.coverage80 == null ? "–" : d3.format(".0%")(b.coverage80), name: `80% interval coverage (n = ${b.nObserved.toLocaleString()})` },
+    ]))
+    .on("pointerleave", Fig.hideTip);
+  return { g, y };
+}
+mini(110, "Mean outage probability", "meanOutageQ", C.blue, [0, 1], null, d3.format(".1f"));
+const cov = mini(110 + rph + 70, "Coverage of the 80% prediction interval", "coverage80", C.turquoise, [0.6, 1], 0.8, d3.format(".0%"), "nominal 80%");
+cov.g.append("g").attr("transform", `translate(0,${rph})`)
+  .call(d3.axisBottom(x).tickFormat((d) => (d % 3 === 0 ? `${Math.round((d / 12) * 100)}%` : "")).tickSize(0).tickPadding(10))
+  .call((a) => a.select(".domain").attr("stroke", C.rule));
+cov.g.append("text").attr("class", "axis-label").attr("x", rw / 2).attr("y", rph + 50).attr("text-anchor", "middle")
+  .text("Share of the 3-hour input window that is missing");
+
+Fig.onStep((s) => Fig.showSteps(document.body, s), 1);
+</script>
+</body>
+</html>

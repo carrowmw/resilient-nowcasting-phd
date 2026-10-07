@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zero collapse: the legacy metric and the hygiene staircase</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/v5_runs.js"></script>
+</head>
+<body>
+<svg id="chart" role="img" aria-label="Left: RMSE of four models under the legacy and observed-only metrics. Right: hard collapse rate and preserved gap mass across the loss-hygiene and unified-encoding steps"></svg>
+<script>
+const { C, MODEL } = Fig;
+const runs = Fig.runsByExperiment();
+const { w: W, h: H } = Fig.size();
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+
+// ── Left: two scorecards for the same four models ──────────────────────────
+const SLOPE = ["v4r_full", "e2_1_unify_iid", "v5_full", "naive_profile"];
+const lw = W * 0.42;
+const L = { l: 190, r: 160, t: 96, b: 70 };
+const gl = svg.append("g");
+gl.append("text").attr("class", "panel-title").attr("x", 0).attr("y", 26).text("Same models, two scorecards");
+gl.append("text").attr("class", "panel-sub").attr("x", 0).attr("y", 52).text("Forecast RMSE, test split · lower is better");
+const yl = d3.scaleLinear().domain([0, 70]).range([H - L.b, L.t]);
+const xa = L.l, xb = lw - L.r;
+gl.append("g").attr("class", "grid").attr("transform", `translate(${xa},0)`)
+  .call(d3.axisLeft(yl).ticks(7).tickSize(-(xb - xa)).tickFormat(""))
+  .call((a) => a.select(".domain").remove());
+for (const [xx, t1, t2] of [[xa, "Legacy metric", "gaps scored as zero"], [xb, "Observed-only", "real counts only"]]) {
+  gl.append("line").attr("x1", xx).attr("x2", xx).attr("y1", L.t).attr("y2", H - L.b).attr("stroke", C.rule);
+  gl.append("text").attr("class", "annot-strong").attr("x", xx).attr("y", H - L.b + 30).attr("text-anchor", "middle").text(t1);
+  gl.append("text").attr("class", "annot").attr("x", xx).attr("y", H - L.b + 54).attr("text-anchor", "middle").text(t2);
+}
+for (const k of SLOPE) {
+  const r = runs[k], m = MODEL[k];
+  const a = r.test_legacy_rmse, b = r.test_obs_all_rmse;
+  const g = gl.append("g");
+  g.append("line").attr("x1", xa).attr("x2", xb).attr("y1", yl(a)).attr("y2", yl(b)).attr("stroke", m.color).attr("stroke-width", k === "v5_full" || k === "v4r_full" ? 3.5 : 2);
+  g.append("circle").attr("cx", xa).attr("cy", yl(a)).attr("r", 7).attr("fill", m.color).attr("stroke", "#fff").attr("stroke-width", 2);
+  g.append("circle").attr("cx", xb).attr("cy", yl(b)).attr("r", 7).attr("fill", m.color).attr("stroke", "#fff").attr("stroke-width", 2);
+  g.append("text").attr("class", "label left-label").attr("x", xa - 16).attr("y", yl(a) + 6).attr("text-anchor", "end")
+    .text(`${m.short} ${a.toFixed(1)}`);
+  g.append("rect").attr("x", xa - 110).attr("y", Math.min(yl(a), yl(b)) - 12).attr("width", xb - xa + 220)
+    .attr("height", Math.abs(yl(a) - yl(b)) + 24).attr("fill", "transparent")
+    .on("pointermove", (ev) => Fig.showTip(ev, m.label, [
+      { value: a.toFixed(1), name: "legacy RMSE" }, { value: b.toFixed(1), name: "observed-only RMSE" },
+      { value: r.test_collapse_rate.toFixed(2), name: "collapse rate" },
+    ]))
+    .on("pointerleave", Fig.hideTip);
+}
+// Keep the left-hand labels from overprinting each other.
+const lefts = gl.selectAll("text.left-label").nodes().sort((p, q) => +p.getAttribute("y") - +q.getAttribute("y"));
+for (let i = 1; i < lefts.length; i++) {
+  const prev = +lefts[i - 1].getAttribute("y"), cur = +lefts[i].getAttribute("y");
+  if (cur - prev < 24) lefts[i].setAttribute("y", prev + 24);
+}
+// Right-hand labels: they sit close together, so stack them in value order with leader lines.
+const right = SLOPE.map((k) => ({ k, v: runs[k].test_obs_all_rmse })).sort((p, q) => q.v - p.v);
+right.forEach((p, i) => {
+  const ty = yl(42) + i * 30;
+  gl.append("line").attr("x1", xb + 8).attr("x2", xb + 34).attr("y1", yl(p.v)).attr("y2", ty - 6).attr("stroke", C.rule);
+  gl.append("text").attr("class", "label").attr("x", xb + 40).attr("y", ty).text(`${MODEL[p.k].short} ${p.v.toFixed(1)}`);
+});
+
+// ── Right: the staircase ────────────────────────────────────────────────────
+const STAIR = [
+  ["v4r_full", "V4R", 1],
+  ["e1_1_obs_forecast", "Observed targets", 1],
+  ["e1_2_obs_impute", "+ imputation", 1],
+  ["e1_3_obs_kriging", "+ kriging", 1],
+  ["e1_4_selection", "+ selection rule", 1],
+  ["e1_5_nb", "+ NB likelihood", 1],
+  ["e1_6_complete_weather", "+ weather fix (P2B)", 1],
+  ["e2_1_unify_iid", "+ unified encoding", 3],
+  ["e2_7_mixed_030", "+ structured masks", 3],
+  ["v5_full", "V5F", 3],
+];
+const R = { l: lw + 120, r: 130, t: 96 };
+const rw = W - R.l - R.r;
+const x = d3.scalePoint().domain(STAIR.map((s) => s[0])).range([0, rw]).padding(0.4);
+const XLAB = 120;
+const ph = (H - R.t - 60 - XLAB - 70) / 2;
+
+function panel(y0, title, sub, series, step) {
+  const g = svg.append("g").attr("transform", `translate(${R.l},${y0})`).attr("class", "step").attr("data-step", step);
+  g.append("text").attr("class", "panel-title").attr("x", 0).attr("y", -44).text(title);
+  g.append("text").attr("class", "panel-sub").attr("x", 0).attr("y", -18).text(sub);
+  const y = d3.scaleLinear().domain([0, 1.05]).range([ph - 20, 6]);
+  g.append("g").attr("class", "grid").call(d3.axisLeft(y).tickValues([0, 0.5, 1]).tickSize(-rw).tickFormat(d3.format(".1f")))
+    .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("x", -12));
+  for (const s of series) {
+    const pts = STAIR.map(([k, , st]) => ({ k, st, v: runs[k][s.key] }));
+    for (const st of [1, 3]) {
+      const seg = pts.filter((p) => p.st <= st && (st === 1 ? p.st === 1 : true));
+      const sg = g.append("g").attr("class", "step").attr("data-step", st === 1 ? step : 3);
+      const segPts = st === 1 ? seg : pts.slice(6);
+      sg.append("path").attr("d", d3.line().x((p) => x(p.k)).y((p) => y(p.v))(segPts))
+        .attr("fill", "none").attr("stroke", s.color).attr("stroke-width", 3);
+      sg.selectAll("circle").data(segPts).join("circle").attr("cx", (p) => x(p.k)).attr("cy", (p) => y(p.v)).attr("r", 6.5)
+        .attr("fill", s.color).attr("stroke", "#fff").attr("stroke-width", 2);
+    }
+  }
+  return { g, y };
+}
+const pA = panel(R.t + 60, "Hard collapse", "Share of gaps where the model predicts an empty street (< 1)",
+  [{ key: "test_collapse_rate", color: C.orange }], 1);
+const pB = panel(R.t + 60 + ph + 70, "Soft collapse", "Predicted ÷ expected volume inside gaps · 1.0 = nothing lost",
+  [{ key: "test_real_gap_mass_ratio", color: C.turquoise }, { key: "test_so_96_mass_ratio", color: C.purple }], 2);
+
+// Series keys for the two mass ratios: line keys beside the panel title, plus end labels.
+[["test_real_gap_mass_ratio", "real gaps", C.turquoise], ["test_so_96_mass_ratio", "24 h synthetic outage", C.purple]].forEach(([k, label, color], i) => {
+  const kx = 260 + i * 150;
+  pB.g.append("line").attr("x1", kx).attr("x2", kx + 24).attr("y1", -50).attr("y2", -50).attr("stroke", color).attr("stroke-width", 3);
+  pB.g.append("text").attr("class", "label").attr("x", kx + 32).attr("y", -44).text(label);
+  // End labels: the two lines finish close together, so push them apart.
+  const yk = pB.y(runs.v5_full[k]), yo = pB.y(runs.v5_full[i === 0 ? "test_so_96_mass_ratio" : "test_real_gap_mass_ratio"]);
+  const nudge = Math.abs(yk - yo) < 22 ? (yk > yo ? 11 : -11) : 0;
+  pB.g.append("text").attr("class", "label step").attr("data-step", 3).attr("x", x("v5_full") + 16)
+    .attr("y", yk + 6 + nudge).text(i === 0 ? "real gaps" : "24 h outage");
+});
+
+const ax = svg.append("g").attr("transform", `translate(${R.l},${R.t + 60 + 2 * ph + 70 - 6})`);
+STAIR.forEach(([k, label, st]) => {
+  const t = ax.append("text").attr("class", st === 3 ? "annot step" : "annot").attr("data-step", st === 3 ? 3 : null)
+    .attr("transform", `translate(${x(k)},0) rotate(-32)`).attr("text-anchor", "end").attr("dy", 18)
+    .attr("font-weight", k === "e2_1_unify_iid" ? 700 : 400).attr("fill", k === "e2_1_unify_iid" ? C.text : null).text(label);
+});
+// Hover per step
+STAIR.forEach(([k, label]) => {
+  svg.append("rect").attr("x", R.l + x(k) - x.step() / 2).attr("y", R.t).attr("width", x.step()).attr("height", H - R.t - 80)
+    .attr("fill", "transparent")
+    .on("pointermove", (ev) => Fig.showTip(ev, label, [
+      { color: C.orange, value: runs[k].test_collapse_rate.toFixed(3), name: "hard collapse" },
+      { color: C.turquoise, value: runs[k].test_real_gap_mass_ratio.toFixed(2), name: "real-gap volume ratio" },
+      { color: C.purple, value: runs[k].test_so_96_mass_ratio.toFixed(2), name: "24 h outage volume ratio" },
+    ]))
+    .on("pointerleave", Fig.hideTip);
+});
+
+Fig.onStep((s) => Fig.showSteps(document.body, s), 3);
+</script>
+</body>
+</html>

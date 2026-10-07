@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A real sensor outage: Pilgrim Street, 1 May 2026</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/outage_example.js"></script>
+<style>#legend { position: absolute; left: 0; top: 0; right: 0; }</style>
+</head>
+<body>
+<div id="legend"></div>
+<svg id="chart" role="img" aria-label="Observed pedestrian counts at Pilgrim Street on 1 May 2026 with a 7.5 hour sensor outage, the RIoT v5 forecast and 80% interval, and the forecast of the model without unified encoding"></svg>
+<script>
+const { C, MODEL } = Fig;
+const D = window.DATA_OUTAGE_EXAMPLE;
+const { w: W, h: H } = Fig.size();
+const parse = d3.utcParse("%Y-%m-%dT%H:%M:%S%Z");
+const t = D.timestamps.map((s) => parse(s.replace("+00:00", "+0000")));
+const n = t.length;
+const rows = d3.range(n).map((i) => ({
+  t: t[i],
+  truth: D.truth[i],
+  profile: D.profile[i],
+  v5: D.series.v5f.point[i], lo: D.series.v5f.lo[i], hi: D.series.v5f.hi[i],
+  nu: D.series.noUnify.point[i],
+  miss: D.inputMissingFrac[i],
+}));
+
+// Longest daytime gap in the observed series.
+let gs = 0, ge = 0, run = 0;
+rows.forEach((r, i) => {
+  if (r.truth == null) { run++; if (run > ge - gs) { ge = i + 1; gs = i + 1 - run; } } else run = 0;
+});
+const gapStart = t[gs], gapEnd = t[ge - 1];
+const step = 15 * 60 * 1000;
+
+Fig.legend(document.getElementById("legend"), [
+  { label: "Observed count", color: C.text, shape: "dot" },
+  { label: "Typical for this slot (station profile)", color: C.rule },
+  { label: "RIoT v5 forecast", color: MODEL.v5_full.color },
+  { label: "80% prediction interval", color: MODEL.v5_full.color, shape: "band" },
+  { label: "Without unified encoding", color: MODEL.loo_no_unify.color },
+]).querySelectorAll(".item").forEach((el, i) => { el.classList.add("step"); el.dataset.step = [0, 0, 1, 1, 3][i]; });
+
+const M = { l: 80, r: 40, t: 70 };
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const stripH = 92, gapY = 60;
+const mainH = H - M.t - stripH - gapY - 60;
+const x = d3.scaleUtc().domain([t[0], new Date(+t[n - 1] + step)]).range([M.l, W - M.r]);
+const y = d3.scaleLinear().domain([0, 340]).range([M.t + mainH, M.t]);
+
+const main = svg.append("g");
+main.append("g").attr("class", "grid").attr("transform", `translate(${M.l},0)`)
+  .call(d3.axisLeft(y).ticks(5).tickSize(-(W - M.l - M.r)))
+  .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("x", -12));
+main.append("text").attr("class", "axis-label").attr("x", M.l).attr("y", M.t - 18)
+  .text("Pedestrians per 15 min · " + D.station.replace(/^Ncl/, "").replace(/([a-z])([A-Z])/g, "$1 $2") + " · " + d3.utcFormat("%A %-d %B %Y")(t[0]));
+
+// Outage window
+const gapG = main.append("g");
+gapG.append("rect").attr("x", x(gapStart)).attr("width", x(new Date(+gapEnd + step)) - x(gapStart))
+  .attr("y", M.t).attr("height", mainH).attr("fill", C.panel);
+gapG.append("text").attr("class", "annot-strong").attr("x", x(gapStart) + 14).attr("y", M.t + 30)
+  .text(`Sensor offline ${d3.utcFormat("%H:%M")(gapStart)}–${d3.utcFormat("%H:%M")(new Date(+gapEnd + step))} (${((ge - gs) / 4).toFixed(1)} h)`);
+
+const line = (acc) => d3.line().defined((d) => acc(d) != null).x((d) => x(new Date(+d.t + step / 2))).y((d) => y(acc(d)));
+
+main.append("path").attr("d", line((d) => d.profile)(rows)).attr("fill", "none").attr("stroke", C.rule).attr("stroke-width", 2);
+
+const s1 = main.append("g").attr("class", "step").attr("data-step", 1);
+s1.append("path").attr("fill", MODEL.v5_full.color).attr("opacity", 0.14)
+  .attr("d", d3.area().x((d) => x(new Date(+d.t + step / 2))).y0((d) => y(d.lo)).y1((d) => y(d.hi))(rows));
+s1.append("path").attr("d", line((d) => d.v5)(rows)).attr("fill", "none").attr("stroke", MODEL.v5_full.color).attr("stroke-width", 3);
+
+const s3 = main.append("g").attr("class", "step").attr("data-step", 3);
+s3.append("path").attr("d", line((d) => d.nu)(rows)).attr("fill", "none").attr("stroke", MODEL.loo_no_unify.color).attr("stroke-width", 2.5);
+
+main.append("g").selectAll("circle").data(rows.filter((d) => d.truth != null)).join("circle")
+  .attr("cx", (d) => x(new Date(+d.t + step / 2))).attr("cy", (d) => y(d.truth)).attr("r", 4.5)
+  .attr("fill", C.text).attr("stroke", "#fff").attr("stroke-width", 1.5);
+
+// Mass retained inside the gap, as the story's number.
+const sum = (k) => d3.sum(rows.slice(gs, ge), (d) => d[k]);
+const prof = sum("profile");
+const annV5 = main.append("g").attr("class", "step").attr("data-step", 1);
+annV5.append("text").attr("class", "annot-strong").attr("x", x(gapStart) + 14).attr("y", M.t + 62)
+  .text(`RIoT v5 keeps ${Math.round((100 * sum("v5")) / prof)}% of the typical volume, with an interval`);
+const annNU = main.append("g").attr("class", "step").attr("data-step", 3);
+annNU.append("text").attr("class", "annot-strong").attr("x", x(gapStart) + 14).attr("y", M.t + 92)
+  .attr("fill", C.text).text(`Without unified encoding: ${Math.round((100 * sum("nu")) / prof)}%, heading for an empty street`);
+
+// Strip: how much of the model's 3-hour input window is missing.
+const sy0 = M.t + mainH + gapY;
+const sy = d3.scaleLinear().domain([0, 1]).range([sy0 + stripH, sy0]);
+const strip = svg.append("g").attr("class", "step").attr("data-step", 2);
+strip.append("text").attr("class", "axis-label").attr("x", M.l).attr("y", sy0 - 14)
+  .text("Share of the model's 3-hour input window that is missing");
+strip.append("g").attr("class", "grid").attr("transform", `translate(${M.l},0)`)
+  .call(d3.axisLeft(sy).tickValues([0, 1]).tickFormat(d3.format(".0%")).tickSize(-(W - M.l - M.r)))
+  .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("x", -12));
+strip.append("path").attr("fill", C.text2).attr("opacity", 0.25)
+  .attr("d", d3.area().x((d) => x(new Date(+d.t + step / 2))).y0(sy(0)).y1((d) => sy(d.miss)).curve(d3.curveStepAfter)(rows));
+strip.append("path").attr("fill", "none").attr("stroke", C.text2).attr("stroke-width", 2)
+  .attr("d", d3.line().x((d) => x(new Date(+d.t + step / 2))).y((d) => sy(d.miss)).curve(d3.curveStepAfter)(rows));
+
+svg.append("g").attr("transform", `translate(0,${sy0 + stripH})`)
+  .call(d3.axisBottom(x).ticks(d3.utcHour.every(3)).tickFormat(d3.utcFormat("%H:%M")).tickSize(6).tickPadding(10))
+  .call((a) => a.select(".domain").attr("stroke", C.rule)).call((a) => a.selectAll(".tick line").attr("stroke", C.rule));
+
+// Hover crosshair
+const cross = svg.append("line").attr("y1", M.t).attr("y2", sy0 + stripH).attr("stroke", C.text3).attr("opacity", 0);
+svg.append("rect").attr("x", M.l).attr("y", M.t).attr("width", W - M.l - M.r).attr("height", sy0 + stripH - M.t)
+  .attr("fill", "transparent")
+  .on("pointermove", (ev) => {
+    const [mx] = d3.pointer(ev);
+    const i = Math.max(0, Math.min(n - 1, Math.floor((x.invert(mx) - t[0]) / step)));
+    const r = rows[i];
+    cross.attr("x1", x(new Date(+r.t + step / 2))).attr("x2", x(new Date(+r.t + step / 2))).attr("opacity", 1);
+    const out = [
+      { value: r.truth == null ? "missing" : String(r.truth), name: "observed", color: C.text },
+      { value: r.profile.toFixed(0), name: "typical", color: C.rule },
+    ];
+    if (!s1.classed("step-hidden")) out.push({ value: `${r.v5.toFixed(0)} (${r.lo}–${r.hi})`, name: "RIoT v5 (80% interval)", color: MODEL.v5_full.color });
+    if (!s3.classed("step-hidden")) out.push({ value: r.nu.toFixed(0), name: "without unified encoding", color: MODEL.loo_no_unify.color });
+    out.push({ value: d3.format(".0%")(r.miss), name: "input window missing" });
+    Fig.showTip(ev, d3.utcFormat("%H:%M")(r.t), out);
+  })
+  .on("pointerleave", () => { cross.attr("opacity", 0); Fig.hideTip(); });
+
+Fig.onStep((s) => Fig.showSteps(document.body, s), 3);
+</script>
+</body>
+</html>

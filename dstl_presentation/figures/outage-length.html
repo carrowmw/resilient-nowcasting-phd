@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Synthetic outage length vs forecast error and preserved mass</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/v5_runs.js"></script>
+<style>
+  #legend { position: absolute; left: 0; top: 0; right: 0; }
+</style>
+</head>
+<body>
+<div id="legend"></div>
+<svg id="chart" role="img" aria-label="Two panels: forecast RMSE and predicted-to-true mass ratio against synthetic outage length for five models"></svg>
+<script>
+const { C, MODEL } = Fig;
+const runs = Fig.runsByExperiment();
+const { w: W, h: H } = Fig.size();
+const L = [1, 4, 12, 48, 96];
+const Llabel = { 1: "15 min", 4: "1 h", 12: "3 h", 48: "12 h", 96: "24 h" };
+
+// Build order = the order the story introduces each model.
+const SERIES = ["v4r_full", "e1_6_complete_weather", "e2_1_unify_iid", "v5_full", "loo_no_unify"];
+const stepOf = { v4r_full: 0, e1_6_complete_weather: 1, e2_1_unify_iid: 2, v5_full: 3, loo_no_unify: 4 };
+
+const data = SERIES.map((k) => ({
+  key: k,
+  ...MODEL[k],
+  rmse: L.map((l) => ({ L: l, v: runs[k][`test_so_${l}_forecast_rmse`] })),
+  mass: L.map((l) => ({ L: l, v: runs[k][`test_so_${l}_mass_ratio`] })),
+}));
+const naive = runs.naive_profile;
+
+const leg = Fig.legend(document.getElementById("legend"), [
+  ...data.map((d) => ({ label: d.label, color: d.color })),
+  { label: "Seasonal profile baseline", color: C.text2, dashed: true },
+]);
+leg.querySelectorAll(".item").forEach((el, i) => {
+  if (i < data.length) { el.classList.add("step"); el.dataset.step = stepOf[data[i].key]; }
+});
+
+const TOP = 74;
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const gap = 110;
+const pw = (W - 80 - gap - 70 - 170) / 2;
+const ph = H - TOP - 110;
+
+const x = d3.scalePoint().domain(L).range([0, pw]).padding(0.15);
+
+function panel(gx, title, sub, accessor, yDomain, yTicks, fmtTick, ref) {
+  const g = svg.append("g").attr("transform", `translate(${gx},${TOP + 44})`);
+  g.append("text").attr("class", "panel-title").attr("x", 0).attr("y", -20).text(title);
+  g.append("text").attr("class", "panel-sub").attr("x", 0).attr("y", 4).text(sub);
+  const y = d3.scaleLinear().domain(yDomain).range([ph - 30, 30]);
+  g.append("g").attr("class", "grid").attr("transform", "translate(0,0)")
+    .call(d3.axisLeft(y).tickValues(yTicks).tickSize(-pw).tickFormat(fmtTick))
+    .call((a) => a.select(".domain").remove())
+    .call((a) => a.selectAll(".tick text").attr("x", -12));
+  g.append("g").attr("transform", `translate(0,${ph - 30})`)
+    .call(d3.axisBottom(x).tickFormat((d) => Llabel[d]).tickSize(0).tickPadding(14))
+    .call((a) => a.select(".domain").attr("stroke", C.rule));
+  g.append("text").attr("class", "axis-label").attr("x", pw / 2).attr("y", ph + 26).attr("text-anchor", "middle")
+    .text("Length of synthetic sensor outage");
+
+  if (ref) ref(g, y);
+
+  const line = d3.line().x((d) => x(d.L)).y((d) => y(d.v));
+  for (const s of data) {
+    const sg = g.append("g").attr("class", "step").attr("data-step", stepOf[s.key]);
+    const pts = accessor(s);
+    sg.append("path").attr("d", line(pts)).attr("fill", "none").attr("stroke", s.color)
+      .attr("stroke-width", s.key === "v5_full" ? 4 : 2.5).attr("stroke-linejoin", "round").attr("stroke-linecap", "round");
+    sg.selectAll("circle").data(pts).join("circle")
+      .attr("cx", (d) => x(d.L)).attr("cy", (d) => y(d.v)).attr("r", 6)
+      .attr("fill", s.color).attr("stroke", "#fff").attr("stroke-width", 2);
+    const last = pts[pts.length - 1];
+    sg.append("text").attr("class", "label").attr("x", x(last.L) + 14).attr("y", y(last.v) + 6)
+      .attr("data-key", s.key).text(s.short);
+  }
+
+  // Hover: crosshair snaps to the nearest outage length and lists every series.
+  const cross = g.append("line").attr("y1", 30).attr("y2", ph - 30).attr("stroke", C.rule).attr("opacity", 0);
+  g.append("rect").attr("width", pw).attr("height", ph).attr("fill", "transparent")
+    .on("pointermove", (ev) => {
+      const [mx] = d3.pointer(ev);
+      const l = L.reduce((a, b) => (Math.abs(x(b) - mx) < Math.abs(x(a) - mx) ? b : a));
+      cross.attr("x1", x(l)).attr("x2", x(l)).attr("opacity", 1);
+      const visible = data.filter((s) => !g.select(`[data-key="${s.key}"]`).node().closest(".step-hidden"));
+      Fig.showTip(ev, `Outage ${Llabel[l]} · ${title}`, visible.map((s) => ({
+        color: s.color, value: fmtTick(accessor(s).find((p) => p.L === l).v, true), name: s.short,
+      })));
+    })
+    .on("pointerleave", () => { cross.attr("opacity", 0); Fig.hideTip(); });
+  return { g, y };
+}
+
+const left = panel(80, "Forecast error on outaged sensors", "RMSE, pedestrian counts per 15 min · lower is better",
+  (s) => s.rmse, [0, 36], [0, 10, 20, 30], (v, tip) => (tip ? v.toFixed(1) : d3.format("d")(v)),
+  (g, y) => {
+    const v = naive.test_so_12_forecast_rmse;
+    g.append("line").attr("x1", 0).attr("x2", pw).attr("y1", y(v)).attr("y2", y(v))
+      .attr("stroke", C.text2).attr("stroke-width", 2).attr("stroke-dasharray", "6 6");
+  });
+
+const right = panel(80 + pw + gap + 70, "Traffic the model still predicts", "Predicted ÷ true counts · 1.0 = nothing lost, 0 = an empty street",
+  (s) => s.mass, [0, 1.2], [0, 0.25, 0.5, 0.75, 1.0], (v, tip) => (tip ? v.toFixed(2) : d3.format(".2f")(v)),
+  (g, y) => {
+    g.append("line").attr("x1", 0).attr("x2", pw).attr("y1", y(1)).attr("y2", y(1))
+      .attr("stroke", C.text2).attr("stroke-width", 2).attr("stroke-dasharray", "6 6");
+  });
+
+// Nudge colliding end labels apart (mass panel: several series sit near 1.0).
+function relax(panelSel) {
+  const labels = panelSel.selectAll("text.label").nodes()
+    .filter((n) => !n.closest(".step-hidden"))
+    .sort((a, b) => +a.getAttribute("y") - +b.getAttribute("y"));
+  for (let i = 1; i < labels.length; i++) {
+    const prev = +labels[i - 1].getAttribute("y");
+    const cur = +labels[i].getAttribute("y");
+    if (cur - prev < 22) labels[i].setAttribute("y", prev + 22);
+  }
+}
+const original = new Map();
+svg.selectAll("text.label").each(function () { original.set(this, this.getAttribute("y")); });
+
+Fig.onStep((step) => {
+  Fig.showSteps(document.body, step);
+  svg.selectAll("text.label").each(function () { this.setAttribute("y", original.get(this)); });
+  relax(left.g); relax(right.g);
+}, 4);
+</script>
+</body>
+</html>

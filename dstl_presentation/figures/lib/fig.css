@@ -1,0 +1,98 @@
+/* Shared styling for the standalone figure pages embedded in the deck.
+   Colours follow the GOV.UK Design System palette; see css/deck.css. */
+
+:root {
+  --text: #0b0c0c;
+  --text-2: #505a5f;
+  --text-3: #6f777b;
+  --surface: #ffffff;
+  --panel: #f3f2f1;
+  --grid: #e3e4e5;
+  --rule: #b1b4b6;
+  --blue: #1d70b8;
+  --dark-blue: #003078;
+  --orange: #f47738;
+  --turquoise: #28a197;
+  --purple: #912b88;
+  --light-blue: #5694ca;
+  --brown: #b58840;
+  --red: #d4351c;
+  --green: #00703c;
+  --yellow: #ffdd00;
+  --font: "GDS Transport", Arial, "Helvetica Neue", Helvetica, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 20px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+body.dark { background: transparent; color: #fff; }
+
+svg text { font-family: var(--font); fill: var(--text); }
+svg .tick text { font-size: 17px; fill: var(--text-2); font-variant-numeric: tabular-nums; }
+svg .tick line { stroke: var(--grid); }
+svg .domain { stroke: var(--rule); }
+svg .axis-label { font-size: 18px; fill: var(--text-2); }
+svg .panel-title { font-size: 21px; font-weight: 700; fill: var(--text); }
+svg .panel-sub { font-size: 17px; fill: var(--text-2); }
+svg .annot { font-size: 17px; fill: var(--text-2); }
+svg .annot-strong { font-size: 18px; font-weight: 700; fill: var(--text); }
+svg .label { font-size: 17px; fill: var(--text); }
+svg .muted { fill: var(--text-3); }
+svg .grid line { stroke: var(--grid); stroke-width: 1; }
+svg .grid .domain { display: none; }
+
+.tooltip {
+  position: fixed;
+  pointer-events: none;
+  background: #fff;
+  border: 1px solid var(--rule);
+  box-shadow: 0 2px 8px rgba(11, 12, 12, 0.12);
+  padding: 10px 14px;
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--text);
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 10;
+  max-width: 360px;
+}
+.tooltip .tt-title { font-size: 14px; color: var(--text-2); margin-bottom: 4px; }
+.tooltip .tt-row { display: flex; align-items: center; gap: 8px; }
+.tooltip .tt-key { width: 14px; height: 0; border-top: 3px solid; flex: none; }
+.tooltip .tt-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tooltip .tt-name { color: var(--text-2); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 17px; color: var(--text-2); }
+.legend .item { display: inline-flex; align-items: center; gap: 8px; }
+.legend .swatch-line { width: 22px; height: 0; border-top: 3px solid; }
+.legend .swatch-dot { width: 12px; height: 12px; border-radius: 50%; }
+.legend .swatch-rect { width: 14px; height: 14px; border-radius: 2px; }
+.legend .swatch-band { width: 22px; height: 12px; opacity: 0.25; }
+
+.controls { display: flex; gap: 8px; align-items: center; font-size: 16px; color: var(--text-2); }
+.seg { display: inline-flex; border: 2px solid var(--text); border-radius: 0; }
+.seg button {
+  font: inherit; font-size: 16px; padding: 6px 14px; background: #fff; color: var(--text);
+  border: 0; border-right: 1px solid var(--rule); cursor: pointer;
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--text); color: #fff; }
+.seg button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 0; }
+
+.step { transition: opacity 0.45s ease; }
+.step-hidden { opacity: 0 !important; pointer-events: none; }
+.step-dim { opacity: 0.18 !important; }
+
+.source {
+  position: absolute; left: 0; bottom: 0; font-size: 14px; color: var(--text-3);
+}

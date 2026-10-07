@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Taxonomy of sensor data-quality failure, with real examples and defence analogues</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/quality_examples.js"></script>
+<script src="data/network.js"></script>
+<style>
+  body { display: grid; grid-template-columns: 420px 1fr; gap: 44px; padding: 0; }
+  #list { display: flex; flex-direction: column; gap: 6px; }
+  #list button {
+    font: inherit; text-align: left; background: #fff; border: 0; border-left: 6px solid transparent;
+    padding: 13px 16px 13px 18px; cursor: pointer; color: var(--text-2); font-size: 21px; line-height: 1.25;
+  }
+  #list button .n { font-weight: 700; color: var(--text-3); margin-right: 10px; font-variant-numeric: tabular-nums; }
+  #list button[aria-pressed="true"] { border-left-color: var(--blue); background: #e8f1f8; color: var(--text); font-weight: 700; }
+  #list button[aria-pressed="true"] .n { color: var(--blue); }
+  #list button:focus-visible { outline: 3px solid var(--yellow); }
+  #right { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
+  #title { font-size: 26px; font-weight: 700; margin: 0 0 4px; }
+  #sub { font-size: 18px; color: var(--text-2); margin: 0 0 6px; }
+  #chart { width: 100%; height: 100%; }
+  #cards { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 10px; }
+  .card { padding: 18px 22px; background: var(--panel); }
+  .card.defence { background: #fff; border: 3px solid var(--text); }
+  .card h4 { margin: 0 0 8px; font-size: 16px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+  .card.defence h4 { color: var(--text); }
+  .card p { margin: 0; font-size: 21px; line-height: 1.35; }
+  .card .big { font-size: 34px; font-weight: 700; display: block; margin-bottom: 4px; letter-spacing: -0.01em; }
+</style>
+</head>
+<body>
+<div id="list" role="tablist" aria-label="Data-quality failure modes"></div>
+<div id="right">
+  <div><p id="title"></p><p id="sub"></p></div>
+  <svg id="chart" role="img"></svg>
+  <div id="cards">
+    <div class="card"><h4>In the Newcastle data</h4><p id="stat"></p></div>
+    <div class="card defence"><h4>Defence analogue</h4><p id="defence"></p></div>
+  </div>
+</div>
+<script>
+const { C } = Fig;
+const E = window.DATA_QUALITY_EXAMPLES;
+const S = E.stats;
+const NET = window.DATA_NETWORK;
+const fmtK = d3.format(",");
+const name = (s) => s.replace(/^Ncl/, "").replace(/ANPR$/, "").replace(/([a-z])([A-Z])/g, "$1 $2");
+
+const MODES = [
+  { key: "intermittent", label: "Intermittent dropout", kind: "day",
+    sub: () => `${name(E.intermittent.station)} · 15-min counts, two days from ${E.intermittent.start.slice(0, 10)}`,
+    big: fmtK(S.gapRuns), stat: `separate gaps across 81 stations; the median gap is a single 15-minute slot.`,
+    defence: "Packet loss on intermittent links: a contested electromagnetic environment drops reports at random." },
+  { key: "nullzero", label: "Zero, or broken?", kind: "day",
+    sub: () => `${name(E.nullzero.station)} · nights go silent, but is the street empty or the sensor off?`,
+    big: "0 zeros", stat: `in 7.9 million raw records. A quiet street and a dead sensor produce exactly the same thing: nothing.`,
+    defence: "“No detection” versus “no report”. Absence of evidence is not evidence of absence." },
+  { key: "fragmentation", label: "Fragmentation", kind: "day",
+    sub: () => `${name(E.fragmentation.station)} · contiguous runs average 46 minutes`,
+    big: d3.format(".0%")(S.pMissingGivenPrevMissing), stat: `chance the next slot is missing given this one is. Gaps cluster; ${d3.format(".0%")(S.shareMissingInGapsOver3h)} of missing time sits in gaps longer than 3 h.`,
+    defence: "Short, broken looks rather than a continuous track: ISR revisit gaps and fragmented tracks." },
+  { key: "failure", label: "Prolonged failure", kind: "daily",
+    sub: () => `${name(E.failure.station)} · daily total and daily completeness over the station's life`,
+    big: "300 days", stat: "the longest single outage at this station. Long outages are common across the network.",
+    defence: "A sensor destroyed, captured or out of supply. The system has to keep working around the hole." },
+  { key: "degraded", label: "Degraded sensor", kind: "daily",
+    sub: () => `${name(E.degraded.station)} · reports, but at implausibly low levels`,
+    big: "≈1 per 15 min", stat: "mean reported count, on a junction whose neighbours see tens. Present is not the same as trustworthy.",
+    defence: "A degraded, miscalibrated or spoofed sensor that still reports. Quality must be judged, not assumed." },
+  { key: "surge", label: "Rare surges", kind: "day",
+    sub: () => `${name(E.surge.station)} (St James' Park corridor) · the two days containing its busiest 15 minutes`,
+    big: "−50 to −73", stat: "counts: how far every model under-predicts the top 10% of observations.",
+    defence: "Mass gatherings and surges: the events that matter most are the ones with the least data." },
+  { key: "blind", label: "Spatial blind spots", kind: "map",
+    sub: () => "The 81 stations of Experiment 3 · 24 held out from training to test inference where there is no sensor",
+    big: "24 of 81", stat: "stations held out. At these locations the model must infer the street from its neighbours alone.",
+    defence: "Areas with no ISR coverage. The picture there can only come from neighbouring sensors." },
+];
+
+const list = document.getElementById("list");
+MODES.forEach((m, i) => {
+  const b = document.createElement("button");
+  b.setAttribute("role", "tab");
+  const n = document.createElement("span"); n.className = "n"; n.textContent = String(i + 1).padStart(2, "0");
+  b.append(n, document.createTextNode(m.label));
+  b.onclick = () => select(i);
+  list.appendChild(b);
+});
+
+const svg = d3.select("#chart");
+
+function select(i) {
+  const m = MODES[i];
+  list.querySelectorAll("button").forEach((b, j) => b.setAttribute("aria-pressed", i === j));
+  document.getElementById("title").textContent = m.label;
+  document.getElementById("sub").textContent = m.sub();
+  const st = document.getElementById("stat");
+  st.replaceChildren();
+  const big = document.createElement("span"); big.className = "big"; big.textContent = m.big;
+  st.append(big, document.createTextNode(m.stat));
+  document.getElementById("defence").textContent = m.defence;
+  svg.selectAll("*").remove();
+  ({ day: drawDay, daily: drawDaily, map: drawMap })[m.kind](m);
+}
+
+function box() {
+  const n = svg.node();
+  return { w: n.clientWidth, h: n.clientHeight };
+}
+
+function drawDay(m) {
+  const ex = E[m.key];
+  const { w, h } = box();
+  const M = { l: 60, r: 36, t: 16, b: 54 };
+  const t0 = new Date(ex.start + ":00Z");
+  const step = 15 * 60e3;
+  const vals = ex.values.map((v, i) => ({ t: new Date(+t0 + i * step), v }));
+  const ref = m.key === "surge" ? E.surgeReference.medianProfile : null;
+  const ymax = d3.max(vals, (d) => d.v) || 1;
+  const x = d3.scaleUtc().domain([t0, new Date(+t0 + vals.length * step)]).range([M.l, w - M.r]);
+  const y = d3.scaleLinear().domain([0, ymax * 1.1]).nice().range([h - M.b - 26, M.t]);
+  svg.append("g").attr("class", "grid").attr("transform", `translate(${M.l},0)`)
+    .call(d3.axisLeft(y).ticks(4).tickSize(-(w - M.l - M.r))).call((a) => a.select(".domain").remove())
+    .call((a) => a.selectAll(".tick text").attr("x", -10));
+  const bw = Math.max(1, x(new Date(+t0 + step)) - x(t0) - 1);
+  svg.append("g").selectAll("rect").data(vals.filter((d) => d.v != null)).join("rect")
+    .attr("x", (d) => x(d.t)).attr("width", bw).attr("y", (d) => y(d.v)).attr("height", (d) => y(0) - y(d.v))
+    .attr("fill", C.blue);
+  if (ref) {
+    svg.append("path").attr("fill", "none").attr("stroke", C.text).attr("stroke-width", 2.5)
+      .attr("d", d3.line().defined((d) => d != null).x((d, i) => x(new Date(+t0 + i * step + step / 2))).y((d) => y(d))(ref));
+    svg.append("text").attr("class", "annot").attr("x", w - M.r).attr("y", M.t + 14).attr("text-anchor", "end").text("— usual profile for these weekdays");
+  }
+  // Missing-slot strip under the plot.
+  const sy = h - M.b - 14;
+  svg.append("text").attr("class", "annot").attr("x", M.l - 10).attr("y", sy + 6).attr("text-anchor", "end").text("gap");
+  svg.append("g").selectAll("rect").data(vals.filter((d) => d.v == null)).join("rect")
+    .attr("x", (d) => x(d.t)).attr("width", bw + 1).attr("y", sy - 8).attr("height", 16).attr("fill", C.orange);
+  svg.append("g").attr("transform", `translate(0,${h - M.b + 8})`)
+    .call(d3.axisBottom(x).ticks(d3.utcHour.every(6)).tickFormat((d) => (d.getUTCHours() === 0 ? d3.utcFormat("%a %H:%M")(d) : d3.utcFormat("%H:%M")(d))).tickSize(0).tickPadding(8))
+    .call((a) => a.select(".domain").remove());
+  svg.append("text").attr("class", "annot").attr("x", M.l).attr("y", M.t + 14).text("pedestrians per 15 min");
+  hover(vals, x, (d) => d3.utcFormat("%a %H:%M")(d.t), (d) => [{ value: d.v == null ? "missing" : String(d.v), name: "count" }], step);
+}
+
+function drawDaily(m) {
+  const ex = E[m.key];
+  const { w, h } = box();
+  const M = { l: 60, r: 10, t: 16, b: 40 };
+  const t0 = new Date(ex.start + "T00:00:00Z");
+  const day = 864e5;
+  const vals = ex.dailyTotal.map((v, i) => ({ t: new Date(+t0 + i * day), v, c: ex.dailyCompleteness[i] }));
+  const x = d3.scaleUtc().domain([t0, new Date(+t0 + vals.length * day)]).range([M.l, w - M.r]);
+  const ch = 60;
+  const y = d3.scaleLinear().domain([0, d3.max(vals, (d) => d.v) * 1.1]).nice().range([h - M.b - ch - 30, M.t]);
+  svg.append("g").attr("class", "grid").attr("transform", `translate(${M.l},0)`)
+    .call(d3.axisLeft(y).ticks(4).tickSize(-(w - M.l - M.r)).tickFormat(d3.format("~s"))).call((a) => a.select(".domain").remove())
+    .call((a) => a.selectAll(".tick text").attr("x", -10));
+  svg.append("path").attr("fill", "none").attr("stroke", C.blue).attr("stroke-width", 2)
+    .attr("d", d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v))(vals));
+  const cy = d3.scaleLinear().domain([0, 1]).range([h - M.b, h - M.b - ch]);
+  svg.append("path").attr("fill", C.text2).attr("opacity", 0.3)
+    .attr("d", d3.area().x((d) => x(d.t)).y0(cy(0)).y1((d) => cy(d.c)).curve(d3.curveStepAfter)(vals));
+  svg.append("text").attr("class", "annot").attr("x", M.l - 10).attr("y", cy(0.5) + 6).attr("text-anchor", "end").text("cover");
+  svg.append("text").attr("class", "annot").attr("x", M.l + 6).attr("y", cy(1) - 8).text("share of the day reported");
+  svg.append("text").attr("class", "annot").attr("x", M.l + 6).attr("y", M.t + 14).text("pedestrians per day");
+  svg.append("g").attr("transform", `translate(0,${h - M.b + 4})`)
+    .call(d3.axisBottom(x).ticks(6).tickFormat(d3.utcFormat("%b %Y")).tickSize(0).tickPadding(8)).call((a) => a.select(".domain").remove());
+  hover(vals, x, (d) => d3.utcFormat("%-d %b %Y")(d.t), (d) => [
+    { value: d.v == null ? "no data" : fmtK(d.v), name: "pedestrians" }, { value: d3.format(".0%")(d.c), name: "of the day reported" }], day);
+}
+
+function drawMap() {
+  const { w, h } = box();
+  const nodes = NET.nodes;
+  const proj = d3.geoMercator().fitExtent([[30, 20], [w - 30, h - 20]], {
+    type: "MultiPoint", coordinates: nodes.map((n) => [n.lon, n.lat]),
+  });
+  const pos = new Map(nodes.map((n) => [n.id, proj([n.lon, n.lat])]));
+  svg.append("g").selectAll("circle").data(nodes).join("circle")
+    .attr("cx", (n) => pos.get(n.id)[0]).attr("cy", (n) => pos.get(n.id)[1])
+    .attr("r", (n) => (n.role === "holdout" ? 10 : 7))
+    .attr("fill", (n) => (n.role === "holdout" ? "#fff" : C.blue))
+    .attr("stroke", (n) => (n.role === "holdout" ? C.orange : "#fff")).attr("stroke-width", (n) => (n.role === "holdout" ? 4 : 2))
+    .on("pointermove", (ev, n) => Fig.showTip(ev, name(n.name), [{ value: n.role === "holdout" ? "held out" : "training", name: "" }]))
+    .on("pointerleave", Fig.hideTip);
+  const lg = svg.append("g").attr("transform", `translate(${w - 300},${h - 70})`);
+  lg.append("circle").attr("r", 7).attr("fill", C.blue);
+  lg.append("text").attr("class", "annot").attr("x", 18).attr("y", 6).text("training station (57)");
+  lg.append("circle").attr("cy", 32).attr("r", 9).attr("fill", "#fff").attr("stroke", C.orange).attr("stroke-width", 4);
+  lg.append("text").attr("class", "annot").attr("x", 18).attr("y", 38).text("held-out station (24)");
+}
+
+function hover(vals, x, title, rows, step) {
+  const { h } = box();
+  const cross = svg.append("line").attr("y1", 0).attr("y2", h - 40).attr("stroke", C.text3).attr("opacity", 0);
+  svg.append("rect").attr("x", x.range()[0]).attr("width", x.range()[1] - x.range()[0]).attr("height", h).attr("fill", "transparent")
+    .on("pointermove", (ev) => {
+      const [mx] = d3.pointer(ev);
+      const i = Math.max(0, Math.min(vals.length - 1, Math.floor((x.invert(mx) - vals[0].t) / step)));
+      cross.attr("x1", x(vals[i].t)).attr("x2", x(vals[i].t)).attr("opacity", 1);
+      Fig.showTip(ev, title(vals[i]), rows(vals[i]));
+    })
+    .on("pointerleave", () => { cross.attr("opacity", 0); Fig.hideTip(); });
+}
+
+Fig.onStep((s) => select(s), MODES.length - 1);
+</script>
+</body>
+</html>

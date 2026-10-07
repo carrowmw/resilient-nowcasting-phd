@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Graceful degradation: schematic</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<style>
+  #top { position: absolute; left: 0; top: 0; right: 0; display: flex; align-items: center; gap: 22px; }
+  #top label { font-size: 18px; color: var(--text-2); }
+  #top input[type=range] { width: 360px; accent-color: var(--blue); }
+  #top output { font-size: 20px; font-weight: 700; min-width: 64px; font-variant-numeric: tabular-nums; }
+  .badge { margin-left: auto; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700; padding: 4px 10px; background: #e5e6e7; color: #383f43; }
+</style>
+</head>
+<body>
+<div id="top">
+  <label for="avail">Data still arriving</label>
+  <input id="avail" type="range" min="0" max="100" step="1" value="100">
+  <output id="out">100%</output>
+  <span class="badge">Schematic</span>
+</div>
+<svg id="chart" role="img" aria-label="Schematic: as incoming data stops, a brittle system fails silently while a resilient system keeps forecasting with widening uncertainty"></svg>
+<script>
+const { C, MODEL } = Fig;
+const { w: W, h: H } = Fig.size();
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const N = 96;
+// A plausible daily profile (illustrative only, not data).
+const truth = d3.range(N).map((i) => {
+  const h = (i / N) * 24;
+  return 6 + 70 * Math.exp(-((h - 8.3) ** 2) / 1.6) + 48 * Math.exp(-((h - 13) ** 2) / 6) + 62 * Math.exp(-((h - 17.4) ** 2) / 2.2);
+});
+const prior = truth.map((v, i) => v * (0.94 + 0.05 * Math.sin(i / 7)));
+
+const panelW = (W - 60) / 2;
+const M = { t: 120, b: 70 };
+const y = d3.scaleLinear().domain([0, 110]).range([H - M.b, M.t]);
+
+function panel(x0, title, sub, kind) {
+  const g = svg.append("g").attr("transform", `translate(${x0},0)`);
+  g.append("text").attr("class", "panel-title").attr("x", 0).attr("y", 78).text(title);
+  g.append("text").attr("class", "panel-sub").attr("x", 0).attr("y", 104).text(sub);
+  const x = d3.scaleLinear().domain([0, N]).range([20, panelW - 20]);
+  g.append("line").attr("x1", 20).attr("x2", panelW - 20).attr("y1", y(0)).attr("y2", y(0)).attr("stroke", C.rule);
+  const gap = g.append("rect").attr("y", M.t).attr("height", H - M.b - M.t).attr("fill", C.panel);
+  const gapLabel = g.append("text").attr("class", "annot").attr("y", M.t + 24);
+  const band = g.append("path").attr("fill", kind === "brittle" ? C.orange : C.blue).attr("opacity", 0.14);
+  const tline = g.append("path").attr("fill", "none").attr("stroke", C.rule).attr("stroke-width", 2).attr("stroke-dasharray", "5 6")
+    .attr("d", d3.line().x((d, i) => x(i)).y((d) => y(d))(truth));
+  const fline = g.append("path").attr("fill", "none").attr("stroke", kind === "brittle" ? C.orange : C.blue).attr("stroke-width", 3.5);
+  const dots = g.append("g");
+  const verdict = g.append("text").attr("class", "annot-strong").attr("x", 20).attr("y", H - 22);
+  g.append("text").attr("class", "annot").attr("x", panelW - 20).attr("y", y(truth[30]) - 50).attr("text-anchor", "end").text("");
+  return { g, x, gap, gapLabel, band, fline, dots, verdict, kind };
+}
+const A = panel(0, "Brittle", "Assumes complete inputs; no notion of its own blindness", "brittle");
+const B = panel(panelW + 60, "Resilient", "Treats missingness as information; reports what it does not know", "resilient");
+
+function render(avail) {
+  const cut = Math.round((avail / 100) * N); // data arrive up to `cut`, then the sensor goes dark
+  for (const P of [A, B]) {
+    const { x } = P;
+    P.gap.attr("x", x(cut)).attr("width", Math.max(0, x(N) - x(cut)));
+    P.gapLabel.attr("x", x(cut) + 12).text(cut < N - 6 ? (P.kind === "brittle" ? "no data" : "no data · outage flagged") : "");
+    const obs = d3.range(cut).filter((i) => i % 2 === 0);
+    P.dots.selectAll("circle").data(obs).join("circle").attr("cx", (i) => x(i)).attr("cy", (i) => y(truth[i] + 5 * Math.sin(i * 1.7)))
+      .attr("r", 4).attr("fill", C.text);
+    const fc = d3.range(N).map((i) => {
+      if (i < cut) return { i, v: truth[i] + 3 * Math.sin(i), w: 6 };
+      const s = (i - cut) / 12; // hours since last observation
+      if (P.kind === "brittle") return { i, v: Math.max(0, truth[i] * Math.exp(-s * 1.6)), w: 4 };
+      return { i, v: prior[i], w: 3 + prior[i] * (0.12 + 0.3 * (1 - Math.exp(-s / 1.2))) };
+    });
+    P.fline.attr("d", d3.line().x((d) => x(d.i)).y((d) => y(d.v))(fc));
+    P.band.attr("d", d3.area().x((d) => x(d.i)).y0((d) => y(Math.max(0, d.v - d.w))).y1((d) => y(d.v + d.w))(fc));
+    const missing = 100 - avail;
+    P.verdict.text(P.kind === "brittle"
+      ? (missing < 5 ? "Accurate while the data flow" : "Predicts an empty street, with full confidence")
+      : (missing < 5 ? "Accurate while the data flow" : "Keeps forecasting; uncertainty widens; flags the outage"));
+  }
+  document.getElementById("out").textContent = avail + "%";
+  document.getElementById("avail").value = avail;
+}
+document.getElementById("avail").addEventListener("input", (e) => render(+e.target.value));
+render(100);
+// Slide fragments: the first takeaway is read at full data, the slider drops from the second.
+Fig.onStep((s) => render(s >= 2 ? 55 : 100), 2);
+</script>
+</body>
+</html>

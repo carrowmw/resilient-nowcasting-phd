@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RIoT v5 architecture</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<style>
+  .box-title { font-size: 22px; font-weight: 700; }
+  .box-text { font-size: 17px; fill: var(--text-2); }
+  .col-title { font-size: 16px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--text-3); }
+</style>
+</head>
+<body>
+<svg id="chart" role="img" aria-label="RIoT v5: inputs with unified missing encoding feed a learned graph and a spatio-temporal encoder, which drive imputation, kriging and probabilistic forecast heads"></svg>
+<script>
+const { C } = Fig;
+const { w: W, h: H } = Fig.size();
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+svg.append("defs").append("marker").attr("id", "arr").attr("viewBox", "0 0 10 10").attr("refX", 9).attr("refY", 5)
+  .attr("markerWidth", 9).attr("markerHeight", 9).attr("orient", "auto-start-reverse")
+  .append("path").attr("d", "M0,0L10,5L0,10z").attr("fill", C.text2);
+
+const colW = (W - 3 * 90) / 4;
+const cx = (i) => i * (colW + 90);
+const TOP = 40;
+
+function box(g, x, y, w, h, title, lines, opts = {}) {
+  const b = g.append("g");
+  b.append("rect").attr("x", x).attr("y", y).attr("width", w).attr("height", h)
+    .attr("fill", opts.fill || C.panel).attr("stroke", opts.stroke || "none").attr("stroke-width", opts.stroke ? 3 : 0);
+  if (opts.accent) b.append("rect").attr("x", x).attr("y", y).attr("width", 8).attr("height", h).attr("fill", opts.accent);
+  b.append("text").attr("class", "box-title").attr("x", x + 22).attr("y", y + 34).style("fill", opts.titleColor || C.text).text(title);
+  lines.forEach((l, i) => b.append("text").attr("class", "box-text").attr("x", x + 22).attr("y", y + 62 + i * 24)
+    .style("fill", opts.textColor || null).text(l));
+  return b;
+}
+// Column 1: inputs
+const g0 = svg.append("g").attr("class", "step").attr("data-step", 0);
+g0.append("text").attr("class", "col-title").attr("x", cx(0)).attr("y", TOP - 10).text("Inputs, per station");
+const ih = (H - TOP - 60 - 3 * 16) / 4;
+const INPUTS = [
+  ["Pedestrian counts", ["3-hour window, unified", "missing encoding, run-length"], C.blue],
+  ["Weather", ["temperature, rainfall", "(Open-Meteo)"], null],
+  ["Calendar and profile", ["time of week, holidays", "seasonal median prior"], null],
+  ["Static context", ["15 features: points of interest,", "transit, land use, centrality"], null],
+];
+INPUTS.forEach(([t, l, acc], i) => box(g0, cx(0), TOP + i * (ih + 16), colW, ih, t, l, { accent: acc, fill: acc ? "#e8f1f8" : C.panel }));
+
+// Column 2: training-time masking (row 1) and the learned graph (row 4)
+const g1 = svg.append("g").attr("class", "step").attr("data-step", 1);
+g1.append("text").attr("class", "col-title").attr("x", cx(1)).attr("y", TOP - 10).text("Gaps and space");
+const rowY = (i) => TOP + i * (ih + 16);
+box(g1, cx(1), rowY(0), colW, ih, "Structured masking", ["training only: hide blocks, tails", "and transplanted real gaps"], { fill: "#fff", stroke: C.text });
+box(g1, cx(1), rowY(3), colW, ih, "Learned graph", ["who influences whom; edges carry", "walking distance, directness, road type"]);
+const line = (g, x1, y, x2) => g.append("line").attr("x1", x1).attr("x2", x2).attr("y1", y).attr("y2", y)
+  .attr("stroke", C.text2).attr("stroke-width", 2).attr("marker-end", "url(#arr)");
+line(g1, cx(0) + colW + 4, rowY(0) + ih / 2, cx(1) - 6);
+line(g1, cx(0) + colW + 4, rowY(3) + ih / 2, cx(1) - 6);
+
+// Column 3: encoder
+const g2 = svg.append("g").attr("class", "step").attr("data-step", 1);
+g2.append("text").attr("class", "col-title").attr("x", cx(2)).attr("y", TOP - 10).text("Space × time");
+const eh = H - TOP - 60;
+box(g2, cx(2), TOP, colW, eh, "Encoder", [], { fill: C.darkBlue, titleColor: "#fff" });
+[["GATv2 attention", "messages between stations"], ["Transformer", "patterns across the window"], ["× 3 layers, 64-d", "184k parameters in total"]]
+  .forEach(([a, b], i) => {
+    const y = TOP + 70 + i * ((eh - 90) / 3);
+    g2.append("rect").attr("x", cx(2) + 22).attr("y", y).attr("width", colW - 44).attr("height", (eh - 90) / 3 - 18).attr("fill", "#fff").attr("opacity", 0.1);
+    g2.append("text").attr("x", cx(2) + 40).attr("y", y + 36).attr("font-size", 21).attr("font-weight", 700).style("fill", "#fff").text(a);
+    g2.append("text").attr("x", cx(2) + 40).attr("y", y + 62).attr("font-size", 17).style("fill", "#d2e2f1").text(b);
+  });
+[0, 3].forEach((r) => line(g2, cx(1) + colW + 4, rowY(r) + ih / 2, cx(2) - 6));
+[1, 2].forEach((r) => line(g2, cx(0) + colW + 4, rowY(r) + ih / 2, cx(2) - 6));
+
+// Column 4: heads, mapped to situational-awareness levels
+const g3 = svg.append("g").attr("class", "step").attr("data-step", 2);
+g3.append("text").attr("class", "col-title").attr("x", cx(3)).attr("y", TOP - 10).text("Outputs");
+const hh = (H - TOP - 60 - 2 * 20) / 3;
+const HEADS = [
+  ["Imputation", ["what a silent sensor", "would be reading now"], "Comprehension"],
+  ["Kriging", ["what is happening where", "there is no sensor"], "Comprehension"],
+  ["Probabilistic forecast", ["next 15 min: distribution,", "q50 / q90, outage probability"], "Projection"],
+];
+HEADS.forEach(([t, l, sa], i) => {
+  const y = TOP + i * (hh + 20);
+  box(g3, cx(3), y, colW, hh, t, l, { fill: "#fff", stroke: C.blue });
+  g3.append("text").attr("x", cx(3) + 22).attr("y", y + hh - 18).attr("font-size", 14)
+    .attr("font-weight", 700).attr("letter-spacing", "0.06em").style("fill", C.blue).text(sa.toUpperCase());
+  line(g3, cx(2) + colW + 4, y + hh / 2, cx(3) - 6);
+});
+
+svg.append("text").attr("class", "annot").attr("x", 0).attr("y", H - 16)
+  .text("Uppercase tags: Endsley's levels of situational awareness each head supports.");
+
+Fig.onStep((s) => Fig.showSteps(document.body, s), 2);
+</script>
+</body>
+</html>

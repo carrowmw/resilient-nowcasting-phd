@@ -1,0 +1,15 @@
+{
+  "name": "dstl-presentation",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Dstl sponsor presentation: resilient spatiotemporal forecasting for urban digital twins (reveal.js)",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "data": "python3 scripts/build_figure_data.py",
+    "serve": "npx --yes http-server -p 8000 -c-1 ."
+  },
+  "devDependencies": {
+    "d3": "^7.9.0",
+    "reveal.js": "^5.1.0"
+  }
+}
