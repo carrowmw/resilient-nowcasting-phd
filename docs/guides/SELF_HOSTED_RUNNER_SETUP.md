@@ -122,10 +122,9 @@ Add the following secrets via **Settings → Secrets and variables → Actions �
 2. Select **"Build and Publish Payloads to R2"** workflow
 3. Click **"Run workflow"**
 4. Fill in parameters:
-   - **artifact_ref**: Single W&B artifact (optional)
-   - **all_artifacts**: Process all artifacts (checkbox)
-   - **start_date**: Analysis window start (YYYY-MM-DD)
-   - **end_date**: Analysis window end (YYYY-MM-DD)
+   - **runs**: Space-separated v5 run names, e.g. `v5_full-s42` (optional)
+   - **top_k**: Reference run + best (top_k - 1) by validation RMSE (default 10; used when **runs** is empty)
+   - The analysis window comes from `configs/analysis/analysis.yaml` (`holdout_start` / `holdout_end`)
 5. Click **"Run workflow"**
 
 ### Monitoring
@@ -217,7 +216,7 @@ git pull origin main
 
 # Export payloads
 python src/export_paginated_payload.py \
-    --all_artifacts \
+    --top_k 10 \
     --start_date 2026-06-01 \
     --end_date 2026-07-01 \
     --output_dir frontend/public/data/runs

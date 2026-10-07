@@ -1,8 +1,37 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv
 from typing import Optional, Tuple, Union
+
+
+class SinusoidalPositionalEncoding(nn.Module):
+    """
+    Sinusoidal positional encoding for the temporal sequence dimension (F-C08 remediation).
+    Maps positions t in [0, max_len) to harmonic embeddings of dimension hidden_dim.
+    Input layout: [Seq_len, Batch, Dim].
+    """
+    def __init__(self, hidden_dim: int, max_len: int = 100):
+        super(SinusoidalPositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, hidden_dim)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, hidden_dim, 2).float() * (-math.log(10000.0) / hidden_dim))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        # Register buffer so it moves across devices with the module
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [Seq_len, Batch, Dim]
+        Returns:
+            Tensor of shape [Seq_len, Batch, Dim] with positional encoding added.
+        """
+        seq_len = x.size(0)
+        return x + self.pe[:seq_len].unsqueeze(1)
+
 
 class MaskedSpatiotemporalEncoder(nn.Module):
     """
@@ -10,7 +39,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
     
     Architecture:
     1. Spatial: GATv2Conv layers applied independently across each time step.
-    2. Temporal: TransformerEncoder to capture dependencies across the sequence.
+    2. Temporal: Sinusoidal Positional Encoding + TransformerEncoder across the sequence.
     """
     def __init__(self, 
                  num_nodes: int, 
@@ -22,14 +51,29 @@ class MaskedSpatiotemporalEncoder(nn.Module):
                  dropout: float = 0.1,
                  dim_feedforward: int = 256,
                  edge_dim: int = 1,
-                 mask_dim: int = 2):
+                 mask_dim: int = 2,
+                 use_positional_encoding: bool = True,
+                 extra_dim: int = 0,
+                 temporal_key_padding: bool = False,
+                 gat_drop_missing_sources: bool = False):
+        """v5 arguments (defaults = v4):
+            extra_dim: covariate + sensor-embedding channels appended per step (R3).
+            temporal_key_padding: missing steps are masked as Transformer *keys* (R7);
+                a fully-missing row is left unmasked (softmax over nothing is NaN).
+            gat_drop_missing_sources: per-timestep, edges *from* nodes whose step is
+                missing are removed (R7); GATv2 self-loops keep every node's own input.
+        """
         super(MaskedSpatiotemporalEncoder, self).__init__()
 
         self.num_nodes = num_nodes
         self.seq_len = seq_len
         self.time_series_dim = time_series_dim
         self.mask_dim = mask_dim
+        self.extra_dim = extra_dim
+        self.temporal_key_padding = temporal_key_padding
+        self.gat_drop_missing_sources = gat_drop_missing_sources
         self.hidden_dim = hidden_dim
+        self.use_positional_encoding = use_positional_encoding
         # PHASE 3: edge_dim=1 -> learned similarity only; edge_dim=10 -> enriched
         # physical + learned edge features from the cache.
         self.edge_dim = edge_dim
@@ -38,14 +82,19 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         # We use a single layer for simplicity as per common IoT patterns,
         # or can be extended to multiple.
         self.gat = GATv2Conv(
-            in_channels=time_series_dim + mask_dim,
+            in_channels=time_series_dim + mask_dim + extra_dim,
             out_channels=hidden_dim // num_heads,
             heads=num_heads,
             dropout=dropout,
             edge_dim=edge_dim  # PHASE 3: 1 (learned-only) or 10 (enriched edge_attr)
         )
 
-        # 2. Temporal Processing: Transformer
+        # 2. Temporal Processing: Positional Encoding + Transformer
+        if use_positional_encoding:
+            self.pos_encoder = SinusoidalPositionalEncoding(hidden_dim, max_len=max(seq_len * 2, 64))
+        else:
+            self.pos_encoder = None
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
@@ -53,7 +102,11 @@ class MaskedSpatiotemporalEncoder(nn.Module):
             dropout=dropout,
             batch_first=False # Standard Transformer [Seq, Batch, Dim]
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        # Nested-tensor fast path drops padded positions from the output; padded steps
+        # must still be *queried* (imputation), so it is disabled under key padding.
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers, enable_nested_tensor=not temporal_key_padding,
+        )
 
     def forward(
         self,
@@ -61,6 +114,7 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         edge_index: torch.Tensor,
         edge_attr: torch.Tensor,
         return_attention_weights: bool = False,
+        input_missing: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
@@ -85,7 +139,11 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         batch_size, num_nodes, seq_len, ts_dim = dynamic_features.shape
         assert num_nodes == self.num_nodes, f"Node mismatch: {num_nodes} != {self.num_nodes}"
         assert seq_len == self.seq_len, f"Seq mismatch: {seq_len} != {self.seq_len}"
-        assert ts_dim == self.time_series_dim + self.mask_dim, f"Feature mismatch: {ts_dim} != {self.time_series_dim + self.mask_dim}"
+        assert ts_dim == self.time_series_dim + self.mask_dim + self.extra_dim, \
+            f"Feature mismatch: {ts_dim} != {self.time_series_dim + self.mask_dim + self.extra_dim}"
+        if self.temporal_key_padding or self.gat_drop_missing_sources:
+            assert input_missing is not None and input_missing.shape == (batch_size, num_nodes, seq_len), \
+                "CRITICAL: missing-aware attention needs input_missing [B, N, T]"
 
         # --- Spatial Processing ---
         # Reshape to [B, T, N, D] then to [B*T*N, D]
@@ -113,6 +171,13 @@ class MaskedSpatiotemporalEncoder(nn.Module):
             f"batched edges {batched_edge_index.shape[1]}"
         )
 
+        if self.gat_drop_missing_sources:
+            # Node rows are laid out (b, t, n), matching x above.
+            src_missing = input_missing.permute(0, 2, 1).reshape(-1)
+            keep = ~src_missing[batched_edge_index[0]]
+            batched_edge_index = batched_edge_index[:, keep]
+            batched_edge_attr = batched_edge_attr[keep]
+
         # Apply GAT — optionally collect attention coefficients for analysis.
         if return_attention_weights:
             # PyG returns (out, (edge_index_used, alpha)) when return_attention_weights=True
@@ -136,9 +201,18 @@ class MaskedSpatiotemporalEncoder(nn.Module):
         x_temporal = x_temporal.permute(1, 0, 2, 3).contiguous() # [T, B, N, H]
         x_temporal = x_temporal.view(seq_len, batch_size * num_nodes, self.hidden_dim)
 
+        # Inject harmonic positional encoding (F-C08 fix)
+        if self.use_positional_encoding and self.pos_encoder is not None:
+            x_temporal = self.pos_encoder(x_temporal)
+
         # Pass through Transformer
         # x_out: [T, B * N, H]
-        x_out = self.transformer(x_temporal)
+        if self.temporal_key_padding:
+            pad = input_missing.reshape(batch_size * num_nodes, seq_len)
+            pad = pad & ~pad.all(dim=1, keepdim=True)
+            x_out = self.transformer(x_temporal, src_key_padding_mask=pad)
+        else:
+            x_out = self.transformer(x_temporal)
 
         # Reshape back to [B, N, T, H]
         x_out = x_out.view(seq_len, batch_size, num_nodes, self.hidden_dim)

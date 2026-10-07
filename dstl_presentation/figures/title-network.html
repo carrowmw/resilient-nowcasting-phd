@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Newcastle sensor network (title background)</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/network.js"></script>
+<style>
+  html, body { background: #0b0c0c; }
+  body { background: radial-gradient(ellipse at 72% 45%, #0d2a52 0%, #071a33 45%, #0b0c0c 100%); }
+</style>
+</head>
+<body>
+<svg id="chart" aria-hidden="true"></svg>
+<script>
+// The 81 real station locations of Experiment 3, linked to their four nearest
+// neighbours. Pulses drift along the links: data moving through the network.
+const NET = window.DATA_NETWORK;
+const { w: W, h: H } = Fig.size();
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const proj = d3.geoMercator().fitExtent([[W * 0.46, H * 0.08], [W * 0.97, H * 0.86]], {
+  type: "MultiPoint", coordinates: NET.nodes.map((n) => [n.lon, n.lat]),
+});
+const nodes = NET.nodes.map((n) => { const [x, y] = proj([n.lon, n.lat]); return { ...n, x, y }; });
+const edges = [];
+const seen = new Set();
+for (const a of nodes) {
+  const near = nodes.filter((b) => b !== a).sort((p, q) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(q.x - a.x, q.y - a.y)).slice(0, 4);
+  for (const b of near) {
+    const k = [a.id, b.id].sort().join("-");
+    if (!seen.has(k)) { seen.add(k); edges.push([a, b]); }
+  }
+}
+svg.append("g").selectAll("line").data(edges).join("line")
+  .attr("x1", (e) => e[0].x).attr("y1", (e) => e[0].y).attr("x2", (e) => e[1].x).attr("y2", (e) => e[1].y)
+  .attr("stroke", "#5694ca").attr("stroke-opacity", 0.28).attr("stroke-width", 1.5);
+svg.append("g").selectAll("circle").data(nodes).join("circle")
+  .attr("cx", (n) => n.x).attr("cy", (n) => n.y).attr("r", 5).attr("fill", "#d2e2f1");
+
+const pulses = svg.append("g");
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function pulse() {
+  const [a, b] = edges[Math.floor(Math.random() * edges.length)];
+  const c = pulses.append("circle").attr("r", 3).attr("fill", "#fff").attr("cx", a.x).attr("cy", a.y).attr("opacity", 0.9);
+  c.transition().duration(1800).ease(d3.easeSinInOut).attr("cx", b.x).attr("cy", b.y).attr("opacity", 0).remove();
+}
+if (!reduce) setInterval(pulse, 140);
+Fig.onStep(() => {}, 0);
+</script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Missing data in widely used benchmarks vs the Newcastle network</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/availability.js"></script>
+<script src="data/quality_examples.js"></script>
+</head>
+<body>
+<svg id="chart" role="img" aria-label="Share of missing values in standard benchmark datasets compared with the Newcastle Urban Observatory pedestrian network"></svg>
+<script>
+const { C } = Fig;
+const { w: W, h: H } = Fig.size();
+const A = window.DATA_AVAILABILITY.summary;
+const Q = window.DATA_QUALITY_EXAMPLES.stats;
+
+// Benchmark rates as reported in the literature (original missing values, before any injected masking):
+// PEMS-BAY, METR-LA, AQI-36: Cini et al., ICLR 2022 (GRIN), Table 1. PhysioNet-2012: Du et al., ESWA 2023 (SAITS).
+const ROWS = [
+  { label: "PEMS-BAY", domain: "Road traffic, California", v: 0.0002, src: "lit" },
+  { label: "METR-LA", domain: "Road traffic, Los Angeles", v: 0.081, src: "lit" },
+  { label: "AQI-36", domain: "Air quality, Beijing", v: 0.132, src: "lit" },
+  { label: "PhysioNet 2012", domain: "Intensive-care vital signs", v: 0.80, src: "lit" },
+  { label: "Newcastle, while installed", domain: "Pedestrian counts (this thesis)", v: Q.activeLifeMissingFrac, src: "ours" },
+  { label: "Newcastle, whole archive", domain: "Pedestrian counts (this thesis)", v: A.missingFrac, src: "ours" },
+];
+const M = { l: 360, r: 120, t: 20, b: 70 };
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const x = d3.scaleLinear().domain([0, 1]).range([M.l, W - M.r]);
+const y = d3.scaleBand().domain(ROWS.map((r) => r.label)).range([M.t, H - M.b]).padding(0.42);
+svg.append("g").attr("class", "grid").attr("transform", `translate(0,${H - M.b})`)
+  .call(d3.axisBottom(x).ticks(5).tickFormat(d3.format(".0%")).tickSize(-(H - M.t - M.b)))
+  .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("dy", 14));
+svg.append("text").attr("class", "axis-label").attr("x", (M.l + W - M.r) / 2).attr("y", H - 14).attr("text-anchor", "middle")
+  .text("Share of values missing in the raw data");
+
+const bw = Math.min(24, y.bandwidth());
+const g = svg.selectAll("g.row").data(ROWS).join("g").attr("transform", (r) => `translate(0,${y(r.label) + y.bandwidth() / 2})`);
+g.append("text").attr("class", "label").attr("x", M.l - 18).attr("y", -2).attr("text-anchor", "end").attr("font-weight", (r) => (r.src === "ours" ? 700 : 400)).text((r) => r.label);
+g.append("text").attr("class", "annot").attr("x", M.l - 18).attr("y", 20).attr("text-anchor", "end").text((r) => r.domain);
+g.append("path").attr("fill", (r) => (r.src === "ours" ? C.blue : C.rule)).attr("d", (r) => {
+  const x0 = x(0), x1 = Math.max(x(r.v), x0 + 2), rr = Math.min(4, x1 - x0);
+  return `M${x0},${-bw / 2}H${x1 - rr}q${rr},0 ${rr},${rr}V${bw / 2 - rr}q0,${rr} ${-rr},${rr}H${x0}Z`;
+});
+g.append("text").attr("class", "annot-strong").attr("x", (r) => Math.max(x(r.v), x(0) + 2) + 12).attr("y", 6)
+  .text((r) => (r.v < 0.001 ? "<0.1%" : d3.format(".0%")(r.v)));
+g.on("pointermove", (ev, r) => Fig.showTip(ev, r.label, [
+  { value: r.v < 0.001 ? "0.02%" : d3.format(".1%")(r.v), name: "missing" },
+  { value: r.src === "ours" ? "computed from data/traffic_*.parquet" : "as reported in the literature", name: "" },
+])).on("pointerleave", Fig.hideTip);
+Fig.onStep(() => {}, 0);
+</script>
+</body>
+</html>

@@ -7,6 +7,8 @@ from graph_learner import DynamicGraphLearner
 from encoder import MaskedSpatiotemporalEncoder
 from decoders import DecoupledDecoders, SpatialKrigingDecoder, compute_loss
 from dataset import RealIoTDataset
+from likelihoods import point_forecast, prob_zero
+from losses import TrafficScale
 
 from typing import Dict, Optional, Tuple, Union
 
@@ -31,8 +33,46 @@ class ResilientIoTPipeline(nn.Module):
                  dim_feedforward: Optional[int] = None,
                  zinb_eps: float = 1.0e-6,
                  edge_features_cache_path: str = None,
-                 simulated_edge_features_cache_path: str = None):
+                 simulated_edge_features_cache_path: str = None,
+                 use_positional_encoding: bool = True,
+                 covariate_dim: int = 0,
+                 sensor_embedding_dim: int = 0,
+                 sensor_embedding_dropout: float = 0.0,
+                 temporal_key_padding: bool = False,
+                 gat_drop_missing_sources: bool = False,
+                 graph_mode: str = "learned",
+                 forecast_likelihood: str = "zinb",
+                 impute_likelihood: str = "msle",
+                 quantiles: Tuple[float, ...] = (),
+                 outage_head_input: str = "latent",
+                 mask_channels: str = "both",
+                 holdout_night_channel: str = "leak",
+                 detach_impute_latent: bool = False,
+                 traffic_log1p: bool = False):
+        """v5 keyword arguments default to the v4 architecture (identical state_dict);
+        model_factory.build_model passes every one explicitly from the resolved config.
+        The v5 options are only honoured by forward(..., return_outputs=True)."""
         super(ResilientIoTPipeline, self).__init__()
+        assert graph_mode in ("learned", "identity")
+        assert outage_head_input in ("latent", "latent_detached", "missingness")
+        assert mask_channels in ("both", "total_only", "night_only", "none")
+        assert holdout_night_channel in ("leak", "zero", "consistent")
+        assert list(quantiles) == sorted(quantiles) and all(0.0 < q < 1.0 for q in quantiles), \
+            f"CRITICAL: quantiles must be sorted levels in (0, 1), got {quantiles}"
+        self.seq_len = seq_len
+        self.num_nodes = num_nodes
+        self.covariate_dim = covariate_dim
+        self.sensor_embedding_dim = sensor_embedding_dim
+        self.sensor_embedding_dropout = sensor_embedding_dropout
+        self.graph_mode = graph_mode
+        self.forecast_likelihood = forecast_likelihood
+        self.impute_likelihood = impute_likelihood
+        self.quantile_levels = tuple(quantiles)
+        self.outage_head_input = outage_head_input
+        self.mask_channels = mask_channels
+        self.holdout_night_channel = holdout_night_channel
+        self.detach_impute_latent = detach_impute_latent
+        self.traffic_log1p = traffic_log1p
 
         # None is a documented API default (hidden_dim * 4); <= 0 is an invalid caller error.
         if dim_feedforward is None:
@@ -65,16 +105,41 @@ class ResilientIoTPipeline(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             dim_feedforward=dim_feedforward,
-            edge_dim=encoder_edge_dim
+            edge_dim=encoder_edge_dim,
+            use_positional_encoding=use_positional_encoding,
+            extra_dim=covariate_dim + sensor_embedding_dim,
+            temporal_key_padding=temporal_key_padding,
+            gat_drop_missing_sources=gat_drop_missing_sources,
         )
-        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, num_heads={num_heads}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
+        self.encoder_edge_dim = encoder_edge_dim
+
+        # v5 (R3): learned per-sensor embedding. Blanked (holdout) nodes, and a random
+        # embedding_dropout fraction of nodes during training, use a projection of the
+        # static features instead — the only embedding an unseen sensor can have.
+        if sensor_embedding_dim > 0:
+            self.sensor_embedding = nn.Embedding(num_nodes, sensor_embedding_dim)
+            self.static_embedding = nn.Linear(static_feat_dim, sensor_embedding_dim)
+        else:
+            self.sensor_embedding = None
+            self.static_embedding = None
+
+        if forecast_likelihood == "outage_mixture":
+            outage_feat_dim = (seq_len + 3 if outage_head_input == "missingness" else hidden_dim) + covariate_dim
+        else:
+            outage_feat_dim = 0
+        logger.info(f"Initialized MaskedSpatiotemporalEncoder with num_nodes={num_nodes}, seq_len={seq_len}, time_series_dim={time_series_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}, num_heads={num_heads}, use_pe={use_positional_encoding}, total_params={sum(p.numel() for p in self.encoder.parameters())}")
 
         # 3. Multi-Task Decoders
         self.decoders = DecoupledDecoders(
             hidden_dim=hidden_dim,
             time_series_dim=time_series_dim,
             dropout=dropout,
-            zinb_eps=zinb_eps
+            zinb_eps=zinb_eps,
+            forecast_likelihood=forecast_likelihood,
+            impute_likelihood=impute_likelihood,
+            num_quantiles=len(quantiles),
+            target_cov_dim=covariate_dim,
+            outage_feat_dim=outage_feat_dim,
         )
         logger.info(f"Initialized DecoupledDecoders with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, dropout={dropout}, total_params={sum(p.numel() for p in self.decoders.parameters())}")
 
@@ -83,7 +148,8 @@ class ResilientIoTPipeline(nn.Module):
         self.kriging_decoder = SpatialKrigingDecoder(
             hidden_dim=hidden_dim,
             time_series_dim=time_series_dim,
-            dropout=dropout
+            dropout=dropout,
+            count_head=impute_likelihood == "outage_mixture",
         )
         logger.info(f"Initialized SpatialKrigingDecoder with hidden_dim={hidden_dim}, time_series_dim={time_series_dim}, total_params={sum(p.numel() for p in self.kriging_decoder.parameters())}")
 
@@ -91,6 +157,11 @@ class ResilientIoTPipeline(nn.Module):
         self.register_buffer('traffic_mean', torch.tensor(0.0))
         self.register_buffer('traffic_std', torch.tensor(1.0))
         logger.info("Registered traffic scaler buffers (traffic_mean, traffic_std)")
+        if outage_head_input == "missingness" and forecast_likelihood == "outage_mixture":
+            # Train-slice per-node missing rate (set by model_factory); outage-head input only.
+            self.register_buffer('node_missing_rate', torch.zeros(num_nodes))
+        else:
+            self.node_missing_rate = None
 
     def set_scaler_stats(self, traffic_mean: float, traffic_std: float):
         """
@@ -112,7 +183,168 @@ class ResilientIoTPipeline(nn.Module):
 
         logger.info(f"Scaler buffers set: mean={traffic_mean:.4f}, std={traffic_std:.4f}, device={self.traffic_mean.device}")
 
+    @property
+    def scale(self) -> TrafficScale:
+        return TrafficScale(self.traffic_mean, self.traffic_std, self.traffic_log1p)
+
     def forward(
+        self,
+        batch: dict,
+        return_analysis: bool = False,
+        return_outputs: bool = False,
+    ) -> Union[Tuple[torch.Tensor, ...], Dict[str, torch.Tensor]]:
+        if return_outputs:
+            return self._forward_v5(batch, return_attention=return_analysis)
+        return self._forward_v4(batch, return_analysis)
+
+    # ------------------------------------------------------------------ #
+    # v5 forward: outputs only; losses live in losses.compute_v5_losses    #
+    # ------------------------------------------------------------------ #
+    def _forward_v5(self, batch: dict, return_attention: bool = False) -> Dict[str, object]:
+        """
+        Batch keys (all set by harness.batch_prep.BatchPreparer; optional ones may be None):
+            static_features [N, S], dynamic_features [B, N, T, D] (NaN = hidden),
+            structural_masks [B, N, T, 2], spatial_holdout_mask [N] | None,
+            blank_mask [N] | None (every node whose dynamic input is blanked),
+            covariates [B, N, T + 1, C] | None, night_flags [B, T + 1] bool,
+            input_missing [B, N, T] bool (effective missingness the model sees),
+            location_ids, simulated_nodes_mask (optional, F-C04).
+        """
+        static_features = batch['static_features']
+        dyn = torch.nan_to_num(batch['dynamic_features'], nan=0.0)
+        B, N, T, _ = dyn.shape
+        holdout_mask = batch['spatial_holdout_mask']
+        blank_mask = batch['blank_mask']
+        input_missing = batch['input_missing']
+        covariates = batch['covariates']
+        masks = batch['structural_masks'].clone()
+
+        # Holdout encoding. "leak" is v4 exactly: only the kriging holdout signals
+        # ch0 = 1 and loses its outgoing edges, and its night channel keeps the real
+        # pattern. The v5 modes treat every blanked node (incl. the fixed inductive
+        # set during training) as a fully missing sensor.
+        if self.holdout_night_channel == "leak":
+            encode_blank = holdout_mask
+        else:
+            encode_blank = blank_mask
+        if encode_blank is not None and encode_blank.any():
+            masks[:, encode_blank, :, 0] = 1.0
+            if self.holdout_night_channel == "zero":
+                masks[:, encode_blank, :, 1] = 0.0
+            elif self.holdout_night_channel == "consistent":
+                night = batch['night_flags'][:, :T].to(masks.dtype)            # [B, T]
+                masks[:, encode_blank, :, 1] = night.unsqueeze(1).expand(B, int(encode_blank.sum()), T)
+        if self.mask_channels in ("night_only", "none"):
+            masks[..., 0] = 0.0
+        if self.mask_channels in ("total_only", "none"):
+            masks[..., 1] = 0.0
+
+        parts = [dyn, masks]
+        if covariates is not None:
+            assert covariates.shape == (B, N, T + 1, self.covariate_dim), \
+                f"CRITICAL: covariates {tuple(covariates.shape)} != {(B, N, T + 1, self.covariate_dim)}"
+            parts.append(covariates[:, :, :T].to(dyn.dtype))
+        else:
+            assert self.covariate_dim == 0, "CRITICAL: model expects covariates but batch has none"
+        if self.sensor_embedding is not None:
+            emb = self.sensor_embedding.weight                                  # [N, d]
+            proj = self.static_embedding(static_features)                      # [N, d]
+            use_proj = torch.zeros(N, dtype=torch.bool, device=dyn.device)
+            if blank_mask is not None:
+                use_proj = use_proj | blank_mask
+            if self.training and self.sensor_embedding_dropout > 0.0:
+                use_proj = use_proj | (torch.rand(N, device=dyn.device) < self.sensor_embedding_dropout)
+            node_emb = torch.where(use_proj.unsqueeze(-1), proj, emb)
+            parts.append(node_emb.view(1, N, 1, -1).expand(B, N, T, -1).to(dyn.dtype))
+        encoder_input = torch.cat(parts, dim=-1)
+
+        location_ids = batch.get('location_ids')
+        if self.graph_mode == "identity":
+            # Graph ablation (thesis limitation 7): no message passing; GATv2 still adds
+            # self-loops, so every other component is unchanged.
+            edge_index = torch.zeros(2, 0, dtype=torch.long, device=dyn.device)
+            edge_weight = torch.zeros(0, device=dyn.device)
+            edge_attr = torch.zeros(0, self.encoder_edge_dim, device=dyn.device)
+        else:
+            edge_index, edge_weight, edge_attr = self.graph_learner(static_features, location_ids=location_ids)
+            drop_mask = batch.get('simulated_nodes_mask')
+            if encode_blank is not None and encode_blank.any():
+                drop_mask = encode_blank if drop_mask is None else (drop_mask | encode_blank)
+            if drop_mask is not None:
+                valid_edges = ~drop_mask[edge_index[0]]
+                edge_index = edge_index[:, valid_edges]
+                edge_weight = edge_weight[valid_edges]
+                edge_attr = edge_attr[valid_edges]
+
+        enc = self.encoder(
+            encoder_input, edge_index, edge_attr,
+            return_attention_weights=return_attention, input_missing=input_missing,
+        )
+        latent, alpha = enc if return_attention else (enc, None)
+
+        target_cov = covariates[:, :, T] if covariates is not None else None
+        outage_feats = None
+        if self.forecast_likelihood == "outage_mixture":
+            if self.outage_head_input == "missingness":
+                miss = input_missing.float()
+                trailing = torch.cumprod(miss.flip(-1), dim=-1).sum(-1) / T
+                blanked = (blank_mask.view(1, N).expand(B, N).float() if blank_mask is not None
+                           else torch.zeros(B, N, device=dyn.device))
+                rate = torch.where(blanked > 0, torch.ones_like(blanked), self.node_missing_rate.view(1, N).expand(B, N))
+                feats = [miss, trailing.unsqueeze(-1), rate.unsqueeze(-1), blanked.unsqueeze(-1)]
+            else:
+                last = latent[:, :, -1, :]
+                feats = [last.detach() if self.outage_head_input == "latent_detached" else last]
+            if target_cov is not None:
+                feats.append(target_cov)
+            outage_feats = torch.cat([f.to(latent.dtype) for f in feats], dim=-1)
+
+        impute_latent = latent.detach() if self.detach_impute_latent else latent
+        heads = self.decoders.forward_v5(latent, impute_latent, target_cov, outage_feats)
+
+        scale = self.scale
+        if heads["impute_traffic_params"] is not None:
+            mu_t = heads["impute_traffic_params"][0]
+            imputed = torch.cat([scale.to_scaled(mu_t).unsqueeze(-1), heads["impute_weather"]], dim=-1)
+            imputed_raw = mu_t
+        else:
+            imputed = heads["imputed"]
+            imputed_raw = scale.to_raw(imputed[..., 0].float())
+
+        kriging_pred, kriging_params = None, None
+        if holdout_mask is not None:
+            k_raw = self.kriging_decoder(latent, holdout_mask)
+            if self.kriging_decoder.count_head:
+                mu_k = self.decoders._positive(k_raw[..., 0])
+                theta_k = self.decoders._positive(k_raw[..., 1])
+                kriging_params = (mu_k, theta_k)
+                kriging_pred = torch.cat([scale.to_scaled(mu_k).unsqueeze(-1), k_raw[..., 2:].float()], dim=-1)
+            else:
+                kriging_pred = k_raw
+
+        mu, theta, pi, q = heads["mu"], heads["theta"], heads["pi"], heads["q"]
+        lik = self.forecast_likelihood
+        return {
+            'imputed': imputed,
+            'imputed_raw': imputed_raw,
+            'impute_traffic_params': heads["impute_traffic_params"],
+            'mu': mu,
+            'theta': theta,
+            'pi': pi,
+            'q': q,
+            'quantiles': heads["quantiles"],
+            'quantile_levels': self.quantile_levels,
+            'point': point_forecast(lik, mu, theta, pi),
+            'p_zero': prob_zero(lik, mu, theta, pi, q),
+            'kriging_pred': kriging_pred,
+            'kriging_traffic_params': kriging_params,
+            'tripwires': heads["tripwires"],
+            'edge_index': edge_index if return_attention else None,
+            'edge_weight': edge_weight if return_attention else None,
+            'attention': alpha,
+        }
+
+    def _forward_v4(
         self,
         batch: dict,
         return_analysis: bool = False,
@@ -150,7 +382,14 @@ class ResilientIoTPipeline(nn.Module):
         # structural_masks shape: [batch_size, num_nodes, seq_len, 2]
         structural_masks = batch.get('structural_masks')
         if structural_masks is not None:
-            encoder_input = torch.cat([dynamic_features_clean, structural_masks], dim=-1)
+            # F-C05: If spatial holdout is applied, heldout nodes should signal Channel 3 = 1.0 (unobserved)
+            # rather than leaking their fine-grained missingness pattern.
+            if holdout_mask is not None and holdout_mask.any():
+                masks_clone = structural_masks.clone()
+                masks_clone[:, holdout_mask, :, 0] = 1.0
+                encoder_input = torch.cat([dynamic_features_clean, masks_clone], dim=-1)
+            else:
+                encoder_input = torch.cat([dynamic_features_clean, structural_masks], dim=-1)
         else:
             encoder_input = dynamic_features_clean
         # 1. Graph Learner — PHASE 3 returns enriched edge_attr [E, 10] (or [E, 1] fallback).
@@ -158,12 +397,18 @@ class ResilientIoTPipeline(nn.Module):
             static_features, location_ids=location_ids
         )
 
-        # --- Strict Topology Masking ---
+        # --- Strict Topology Masking (F-C04 fix) ---
         # Prevent "ghost clustering" and pollution by dropping outgoing edges from simulated nodes
+        # AND from spatial holdout nodes during training / kriging evaluation
+        drop_mask = None
         if 'simulated_nodes_mask' in batch:
-            sim_mask = batch['simulated_nodes_mask']
+            drop_mask = batch['simulated_nodes_mask']
+        if holdout_mask is not None and holdout_mask.any():
+            drop_mask = holdout_mask if drop_mask is None else (drop_mask | holdout_mask)
+
+        if drop_mask is not None:
             sources = edge_index[0]
-            valid_edges = ~sim_mask[sources]
+            valid_edges = ~drop_mask[sources]
             edge_index = edge_index[:, valid_edges]
             edge_weight = edge_weight[valid_edges]
             # PHASE 3: keep edge_attr row-aligned with the filtered edges.

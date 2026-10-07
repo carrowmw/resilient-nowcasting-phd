@@ -1,9 +1,0 @@
-2026-04-16 10:44:57,276 - root - INFO - Logger initialized. Writing to /workspace/logs/train_pipeline_20260416_104457.log
-2026-04-16 10:44:57,276 - __main__ - INFO - Using device: cpu
-2026-04-16 10:44:57,299 - __main__ - INFO - Using mock dataloader.
-2026-04-16 10:44:57,326 - __main__ - INFO - Starting training loop...
-2026-04-16 10:44:58,199 - __main__ - INFO - Epoch 1/2 - Train Loss: 10.5839 | Val Loss: 7.1371 (RMSE: 25.18, MAE: 21.23, ZeroAcc: 0.00, ImputeMSE: 0.9854)
-2026-04-16 10:44:58,206 - __main__ - INFO - New best model saved to models/best_pipeline.pt with val_loss: 7.1371
-2026-04-16 10:44:59,040 - __main__ - INFO - Epoch 2/2 - Train Loss: 6.9247 | Val Loss: 6.7192 (RMSE: 25.26, MAE: 21.24, ZeroAcc: 0.50, ImputeMSE: 0.9921)
-2026-04-16 10:44:59,042 - __main__ - INFO - New best model saved to models/best_pipeline.pt with val_loss: 6.7192
-2026-04-16 10:44:59,043 - __main__ - INFO - Training complete.

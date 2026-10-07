@@ -9,6 +9,7 @@ from typing import Dict, Optional, Sequence
 from quality.contract import ALL_FEATURE_GROUPS, SensorForecaster
 from quality.forecasters import (
     ARIMAForecaster,
+    GRUSensorForecaster,
     LSTMSensorForecaster,
     PersistenceForecaster,
     SeasonalNaiveForecaster,
@@ -20,7 +21,7 @@ from quality.transformer_forecaster import (
 
 logger = logging.getLogger(__name__)
 
-KNOWN_TYPES = ("persistence", "seasonal_naive", "arima", "lstm", "transformer", "transformer_masked")
+KNOWN_TYPES = ("persistence", "seasonal_naive", "arima", "lstm", "gru", "transformer", "transformer_masked")
 
 
 def build_forecaster(
@@ -66,6 +67,28 @@ def build_forecaster(
         unknown = set(groups) - set(ALL_FEATURE_GROUPS)
         assert not unknown, f"CRITICAL: unknown feature groups {unknown}"
         forecaster = LSTMSensorForecaster(
+            feature_groups=groups,
+            hidden_dim=spec["hidden_dim"],
+            num_layers=spec["num_layers"],
+            dropout=spec["dropout"],
+            lr=spec["lr"],
+            batch_size=spec["batch_size"],
+            epochs=spec["epochs"],
+            patience=spec["patience"],
+            scheduler_step_size=spec.get("scheduler_step_size", 5),
+            scheduler_gamma=spec.get("scheduler_gamma", 0.7),
+            fractional_time=spec.get("fractional_time", True),
+            seed=seed,
+            device=device,
+        )
+
+    elif mtype == "gru":
+        groups = list(feature_groups_override or spec["feature_groups"])
+        assert groups and groups[0] == "count", \
+            f"CRITICAL: GRU feature groups must start with 'count', got {groups}"
+        unknown = set(groups) - set(ALL_FEATURE_GROUPS)
+        assert not unknown, f"CRITICAL: unknown feature groups {unknown}"
+        forecaster = GRUSensorForecaster(
             feature_groups=groups,
             hidden_dim=spec["hidden_dim"],
             num_layers=spec["num_layers"],

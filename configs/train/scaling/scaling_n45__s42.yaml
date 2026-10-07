@@ -1,0 +1,117 @@
+amp: true
+data:
+  ablate_masks: false
+  artificial_mask_observed_only: true
+  calendar_features: false
+  complete_weather: true
+  end_date: '2026-04-02'
+  gap_runlength_feature: false
+  holdout_night_channel: leak
+  inductive_holdout_frac: 0.2
+  inductive_holdout_seed: 42
+  lag_features: []
+  log1p_inputs: false
+  mask_block_len_dist: empirical
+  mask_block_mean_len: 8
+  mask_channels: both
+  mask_mix:
+    block: 0.25
+    iid: 0.25
+    tail: 0.2
+    transplant: 0.3
+  mask_prob: 0.3
+  mask_strategy: mixed
+  mask_weather: false
+  profile_knn_k: 5
+  profile_prior: inductive_zero
+  runlength_cap: 672
+  seq_len: 12
+  spatial_holdout_prob: 0.2
+  start_date: '2023-04-02'
+  target_dir: all
+  target_veh_class: person
+  unify_missing_encoding: true
+  train_node_count: 45
+  train_node_seed: 42
+eval_mode: inductive
+evaluation:
+  crps_max_count: 2048
+  diagnostics: true
+  eval_mask_seed: 1234
+  so_lengths:
+  - 1
+  - 4
+  - 12
+  - 48
+  - 96
+  so_node_frac: 0.25
+loss:
+  detach_impute_latent: false
+  forecast_likelihood: nb
+  impute_aux_weight: 0.0
+  impute_huber_delta: 20.0
+  impute_huber_mix: 0.0
+  impute_likelihood: msle
+  impute_positions: masked_observed
+  impute_pretrain_epochs: 0
+  kriging_observed_only: true
+  low_end_tolerance: false
+  magnitude_weight_alpha: 0.0
+  magnitude_weight_y0: 27.0
+  mtl_balancing: none
+  outage_prior_weight: 0.0
+  target_mask: observed
+  underpred_tau: 0.75
+  w_artificial_outage: 0.0
+  w_forecast: 1.0
+  w_impute: 1.0
+  w_kriging: 0.5
+  w_missing_lik: 1.0
+  w_quantile: 1.0
+  w_underpred: 0.0
+model:
+  baseline_head: mse
+  baseline_inputs: dynamic
+  dim_feedforward: null
+  dropout: 0.1
+  embedding_dim: 32
+  gat_drop_missing_sources: false
+  graph_mode: learned
+  hidden_dim: 64
+  naive_kind: none
+  num_heads: 4
+  num_layers: 3
+  num_nodes: 81
+  outage_head_input: latent
+  quantiles: []
+  sensor_embedding_dim: 0
+  sensor_embedding_dropout: 0.0
+  sparsity_threshold: 0.5
+  static_feat_dim: 15
+  temporal_key_padding: false
+  time_series_dim: 5
+  use_positional_encoding: true
+  zinb_eps: 1.0e-06
+model_type: gnn
+pipeline_version: 5
+selection:
+  metric: obs_loss_plus_so
+  so_lambda: 1.0
+  so_length: 12
+train_split: 0.7
+training:
+  batch_size: 128
+  early_stop_min_delta: 0.001
+  early_stop_patience: 10
+  epochs: 50
+  grad_accum_steps: 1
+  grad_clip_max_norm: 1.0
+  grad_cosine_every: 100
+  lr: 0.0003
+  random_seed: 42
+val_split: 0.15
+wandb:
+  collection: riot-v5-scaling-n45
+  project: resilient-iot-v5
+  run_name: scaling_n45-s42
+  sweep_project: resilient-iot-sweeps-v5

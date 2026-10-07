@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Optional
+from typing import Callable, List, Optional, Tuple
 
 # Perform early GPU selection before ANY PyTorch or W&B bindings are loaded
 if __name__ == "__main__":
@@ -10,17 +10,21 @@ if __name__ == "__main__":
 
     if not early_args.use_mock_data:
         existing_gpus = os.environ.get("CUDA_VISIBLE_DEVICES")
-        if not existing_gpus:
+        if existing_gpus is None:
             from gpu_selector import select_gpus
             selected_gpus = select_gpus()
             if selected_gpus:
                 os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import copy
+import functools
 import logging
 import math
 from datetime import datetime
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import wandb
@@ -31,22 +35,28 @@ from dataset import (
     RealIoTDataset,
     custom_collate_real,
     make_spatial_holdout_mask,
-    apply_spatial_holdout,
 )
 from db_connector import create_connector
 from logger import setup_logger
-from pipeline import ResilientIoTPipeline
-from baselines import LSTMForecaster, GRUForecaster
+from losses import TrafficScale
+from model_factory import build_model
+from run_config import resolve_config
+from synthetic_connector import SyntheticConnector
 from harness import (
     MetricAccumulator,
     evaluate_batch,
-    make_fixed_holdout_mask,
+    inductive_holdout_ids,
+    mask_from_manifest,
+    select_network_locations,
     save_holdout_manifest,
     load_holdout_manifest,
     manifest_sha,
     save_results_manifest,
 )
 from harness.adapters import build_adapter
+from harness.batch_prep import BatchPreparer
+from harness.evaluate_v5 import V5Evaluator
+from harness.mtl import MTLBalancer
 
 
 def _worker_init_fn(worker_id: int) -> None:
@@ -70,7 +80,13 @@ def parse_args():
     parser.add_argument(
         "--use_mock_data",
         action="store_true",
-        help="Use mock data instead of real parquet data",
+        help="Use the SyntheticConnector city instead of the real database",
+    )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Custom run name for W&B and checkpoint directory",
     )
     return parser.parse_args()
 
@@ -79,12 +95,21 @@ def load_config(config_path: str) -> dict:
     with open(config_path, "r") as f:
         cfg = yaml.safe_load(f)
 
-    # Merge configs/infra.yaml as defaults (one directory level above the training config dir).
-    # The training config always wins on any conflict, so per-run overrides are safe.
-    infra_path = os.path.normpath(
-        os.path.join(os.path.dirname(os.path.abspath(config_path)), "..", "infra.yaml")
-    )
-    if os.path.exists(infra_path):
+    # Search for configs/infra.yaml as defaults.
+    # Checks 1 and 2 directory levels above the training config, plus repo-relative configs/infra.yaml.
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    infra_path = None
+    for candidate in [
+        os.path.join(config_dir, "..", "infra.yaml"),
+        os.path.join(config_dir, "..", "..", "infra.yaml"),
+        os.path.join(os.getcwd(), "configs", "infra.yaml"),
+    ]:
+        norm = os.path.normpath(candidate)
+        if os.path.exists(norm):
+            infra_path = norm
+            break
+
+    if infra_path and os.path.exists(infra_path):
         with open(infra_path, "r") as f:
             infra = yaml.safe_load(f) or {}
         for key, val in infra.items():
@@ -97,49 +122,129 @@ def load_config(config_path: str) -> dict:
     return cfg
 
 
-def create_mock_dataloader(
-    batch_size: int,
-    num_nodes: int,
-    seq_len: int,
-    time_series_dim: int,
-    static_feat_dim: int,
-    dataset_size: int,
-):
+def chronological_purged_split(
+    full_dataset,
+    train_split: float = 0.7,
+    val_split: float = 0.15,
+    purge_steps: int = 13,
+) -> Tuple[torch.utils.data.Subset, torch.utils.data.Subset, Optional[torch.utils.data.Subset]]:
     """
-    Creates a mock DataLoader yielding batches that match the pipeline's
-    expected dimensional structure.
+    Chronological train/val/test split with purge buffers (F-C01 remediation).
+    Prevents temporal window overlap leakage between train, validation, and test partitions.
     """
-    class MockPipelineDataset(torch.utils.data.Dataset):
-        def __init__(self, size: int):
-            self.size = size
-            self.num_nodes = num_nodes
-            self.static_feat_dim = static_feat_dim
-            self.time_series_dim = time_series_dim
+    total_len = len(full_dataset)
+    train_size = int(train_split * total_len)
+    val_size = int(val_split * total_len)
 
-        def __len__(self) -> int:
-            return self.size
+    train_end = train_size
+    val_start = min(train_end + purge_steps, total_len)
+    val_end = min(val_start + val_size, total_len)
+    test_start = min(val_end + purge_steps, total_len)
+    test_end = total_len
 
-        def __getitem__(self, idx: int) -> dict:
-            # Clean dynamic features only — mask generated on-device in the train/val loop.
-            dyn = torch.randn(num_nodes, seq_len, time_series_dim)
-            return {
-                "static_features": torch.randn(num_nodes, static_feat_dim),
-                "dynamic_features": dyn,
-                "target_forecast": torch.randint(0, 50, (num_nodes,)).float(),
-                "structural_masks": torch.zeros(num_nodes, seq_len, 2),
-            }
+    if train_end <= 0 or val_end <= val_start:
+        # Fallback if dataset is very short (e.g. mock test): split without purge
+        train_end = max(1, int(train_split * total_len))
+        val_start = train_end
+        val_end = total_len
+        test_start = val_end
+        test_end = total_len
 
-    dataset = MockPipelineDataset(size=dataset_size)
+    train_dataset = torch.utils.data.Subset(full_dataset, list(range(0, train_end)))
+    val_dataset = torch.utils.data.Subset(full_dataset, list(range(val_start, val_end)))
+    test_dataset = (
+        torch.utils.data.Subset(full_dataset, list(range(test_start, test_end)))
+        if test_end > test_start
+        else None
+    )
 
-    def custom_collate(batch_list):
-        return {
-            "static_features": batch_list[0]["static_features"],
-            "dynamic_features": torch.stack([b["dynamic_features"] for b in batch_list]),
-            "target_forecast": torch.stack([b["target_forecast"] for b in batch_list]),
-            "structural_masks": torch.stack([b["structural_masks"] for b in batch_list]),
-        }
+    for subset in [train_dataset, val_dataset, test_dataset]:
+        if subset is not None:
+            subset.num_nodes = getattr(full_dataset, "num_nodes", None)
+            subset.static_feat_dim = getattr(full_dataset, "static_feat_dim", None)
+            subset.time_series_dim = getattr(full_dataset, "time_series_dim", None)
+            subset.traffic_mean = getattr(full_dataset, "traffic_mean", None)
+            subset.traffic_std = getattr(full_dataset, "traffic_std", None)
 
-    return DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate), dataset
+    return train_dataset, val_dataset, test_dataset
+
+
+# Synthetic city used by --use_mock_data (structurally realistic MNAR feed).
+MOCK_DAYS = 21
+
+
+def _network_filter(config: dict) -> Optional[Callable[[List[str]], List[str]]]:
+    """Sensor-density runs (data.train_node_count): the stations the dataset keeps.
+    Dropped stations leave the network entirely — no inputs, no loss, no graph
+    node, no profile donor — as if they were never installed."""
+    data_cfg = config["data"]
+    if data_cfg["train_node_count"] is None:
+        return None
+    return functools.partial(
+        select_network_locations,
+        holdout_frac=data_cfg["inductive_holdout_frac"],
+        holdout_seed=data_cfg["inductive_holdout_seed"],
+        train_node_count=data_cfg["train_node_count"],
+        train_node_seed=data_cfg["train_node_seed"],
+    )
+
+
+def build_dataset(config: dict, use_mock_data: bool) -> RealIoTDataset:
+    """The full dataset for a resolved config (shared with tune.py so a pre-loaded
+    sweep dataset is built with exactly the run's v5 data options)."""
+    data_cfg = config["data"]
+    common = dict(
+        seq_len=data_cfg["seq_len"],
+        target_veh_class=data_cfg["target_veh_class"],
+        target_dir=data_cfg["target_dir"],
+        train_split=config["train_split"],
+        ablate_masks=data_cfg["ablate_masks"],
+        log1p_inputs=data_cfg["log1p_inputs"],
+        complete_weather=data_cfg["complete_weather"],
+        location_filter=_network_filter(config),
+    )
+    if use_mock_data:
+        start = pd.Timestamp(data_cfg["start_date"])
+        connector = SyntheticConnector(
+            num_nodes=config["model"]["num_nodes"], start_date=str(start), days=MOCK_DAYS,
+            seed=config["training"]["random_seed"],
+        )
+        return RealIoTDataset(connector, str(start), str(start + pd.Timedelta(days=MOCK_DAYS)), **common)
+    connector = create_connector(config)
+    try:
+        return RealIoTDataset(connector, data_cfg["start_date"], data_cfg["end_date"], **common)
+    finally:
+        # RealIoTDataset.__init__ loads all data into memory; the connector is
+        # no longer needed after construction whether it succeeded or failed.
+        connector.close()
+
+
+def _loader(subset, batch_size: int, num_workers: int, train: bool) -> DataLoader:
+    return DataLoader(
+        subset,
+        batch_size=batch_size,
+        collate_fn=custom_collate_real,
+        shuffle=train,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
+        drop_last=train,
+        worker_init_fn=_worker_init_fn,
+    )
+
+
+def _to_device(batch: dict, device: torch.device) -> dict:
+    return {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
+
+
+def _fmt(v, p=4):
+    # None means "model cannot produce this" — shown as N/A, never as 0.
+    return "N/A" if v is None else f"{v:.{p}f}"
+
+
+# Test batches that also run the mask-flip / value-perturbation diagnostic.
+PERTURB_BATCHES = 8
 
 
 def run_training(
@@ -154,10 +259,13 @@ def run_training(
 ) -> float:
     """
     Core execution logic for a single training run.
-    Accepts a fully-specified config dictionary (see configs/train.yaml).
-    Returns the final validation loss.
+    Accepts a run config (v5, or a v4-era config upgraded by run_config.resolve_config).
+    Returns the best validation selection score (selection.metric).
     """
     logger = logging.getLogger(__name__)
+
+    # v5: every key resolved up front (v4 configs get LEGACY_V4_EQUIVALENTS).
+    config = resolve_config(config)
 
     # Reproducibility — seed from config, not hardcoded, so experiments are traceable.
     _seed = config["training"]["random_seed"]
@@ -171,10 +279,14 @@ def run_training(
 
     amp_enabled: bool = config["amp"]
     if amp_enabled:
-        assert torch.cuda.is_bf16_supported(), \
-            "CRITICAL: amp=true requested but this device does not support bf16. " \
-            "Set amp: false in train.yaml or use a bf16-capable GPU."
-        logger.info("bf16 autocast ENABLED (amp=true)")
+        if device.type == "cuda":
+            assert torch.cuda.is_bf16_supported(), \
+                "CRITICAL: amp=true requested but this device does not support bf16. " \
+                "Set amp: false in train.yaml or use a bf16-capable GPU."
+            logger.info("bf16 autocast ENABLED (amp=true)")
+        else:
+            logger.info("Device is CPU: bf16 autocast disabled for execution")
+            amp_enabled = False
     else:
         logger.info("bf16 autocast DISABLED (amp=false)")
 
@@ -184,9 +296,10 @@ def run_training(
     wandb_project = wandb_cfg["project"]
     wandb_sweep_project = wandb_cfg["sweep_project"]
     wandb_collection = wandb_cfg["collection"]
+    run_name_cfg = wandb_cfg.get("run_name") or wandb_cfg.get("name") or wandb_collection
 
     if init_wandb:
-        wandb.init(project=wandb_project, config=config)
+        wandb.init(project=wandb_project, name=run_name_cfg, config=config)
 
     # ------------------------------------------------------------------ #
     # Directory Namespacing Strategy (Robust Model Versioning)           #
@@ -198,22 +311,21 @@ def run_training(
             run_name = f"{study_name}_trial_{trial_number}"
         else:
             run_name = study_name
-    elif wandb.run is not None:
+    elif wandb.run is not None and not wandb.run.disabled:
         # Production Namespace: models/{project}/{run_name}/
         project = wandb.run.project
         run_name = wandb.run.name
     else:
-        # Local Namespace: models/local/{timestamp}/
+        # Local Namespace: models/local/{run name or timestamp}/
         project = "local"
-        run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"{run_name_cfg}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     checkpoint_dir = os.path.join("models", project, run_name)
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, "best_model.pt")
     logger.info(f"Checkpointing enabled: {checkpoint_path}")
 
-
-    # --- ARCHITECT TWINNING: Co-locate Config copy ---
+    # --- ARCHITECT TWINNING: Co-locate the RESOLVED config copy ---
     config_save_path = os.path.join(checkpoint_dir, "config.yaml")
     try:
         with open(config_save_path, "w") as f:
@@ -229,6 +341,8 @@ def run_training(
     model_cfg = config["model"]
     train_cfg = config["training"]
     loss_cfg = config["loss"]
+    eval_cfg = config["evaluation"]
+    sel_cfg = config["selection"]
 
     num_workers = train_cfg["num_workers"]
     assert num_workers >= 0, f"CRITICAL: num_workers must be non-negative, got {num_workers}"
@@ -238,6 +352,7 @@ def run_training(
     eval_mode = config["eval_mode"]
     assert eval_mode in ("temporal", "inductive"), \
         f"CRITICAL: eval_mode must be temporal | inductive, got {eval_mode!r}"
+    trainable = model_type != "naive"
 
     # PHASE 2: Spatial kriging configuration
     # ABLATION-SAFE: kriging_active controls holdout masking, decoder evaluation,
@@ -246,219 +361,48 @@ def run_training(
     # making task-specific metrics directly comparable.
     spatial_holdout_prob = data_cfg["spatial_holdout_prob"]
     w_kriging = loss_cfg["w_kriging"]
-    w_impute = loss_cfg["w_impute"]
-    w_forecast = loss_cfg["w_forecast"]
     kriging_active = spatial_holdout_prob > 0.0
-    loss_weights = {"w_impute": w_impute, "w_forecast": w_forecast, "w_kriging": w_kriging}
-
-    train_split = config["train_split"]
+    loss_weights = {"w_impute": loss_cfg["w_impute"], "w_forecast": loss_cfg["w_forecast"], "w_kriging": w_kriging}
 
     if train_loader is not None and val_loader is not None:
         logger.info("Using provided data loaders.")
-        train_dataset = train_loader.dataset
-    elif full_dataset is not None:
-        logger.info("Using provided full_dataset.")
-        train_size = int(train_split * len(full_dataset))
-        val_size = len(full_dataset) - train_size
-
-        train_dataset, val_dataset = torch.utils.data.random_split(
-            full_dataset, [train_size, val_size]
-        )
-        # Propagate dataset-level attributes
-        train_dataset.num_nodes = full_dataset.num_nodes
-        train_dataset.static_feat_dim = full_dataset.static_feat_dim
-        train_dataset.time_series_dim = full_dataset.time_series_dim
-
-        # Propagate scaler statistics for scale-invariant loss
-        train_dataset.traffic_mean = full_dataset.traffic_mean
-        train_dataset.traffic_std = full_dataset.traffic_std
-        val_dataset.traffic_mean = full_dataset.traffic_mean
-        val_dataset.traffic_std = full_dataset.traffic_std
-
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=train_cfg["batch_size"],
-            collate_fn=custom_collate_real,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=num_workers > 0,
-            prefetch_factor=4 if num_workers > 0 else None,
-            drop_last=True,
-            worker_init_fn=_worker_init_fn,
-        )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=train_cfg["batch_size"],
-            collate_fn=custom_collate_real,
-            num_workers=num_workers,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=num_workers > 0,
-            prefetch_factor=4 if num_workers > 0 else None,
-            worker_init_fn=_worker_init_fn,
-        )
-    elif use_mock_data:
-        logger.info("Using mock dataloader.")
-        train_loader, train_dataset = create_mock_dataloader(
-            batch_size=train_cfg["batch_size"],
-            num_nodes=model_cfg["num_nodes"],
-            seq_len=data_cfg["seq_len"],
-            time_series_dim=model_cfg["time_series_dim"],
-            static_feat_dim=model_cfg["static_feat_dim"],
-            dataset_size=20,
-        )
-        val_loader, _ = create_mock_dataloader(
-            batch_size=train_cfg["batch_size"],
-            num_nodes=model_cfg["num_nodes"],
-            seq_len=data_cfg["seq_len"],
-            time_series_dim=model_cfg["time_series_dim"],
-            static_feat_dim=model_cfg["static_feat_dim"],
-            dataset_size=8,
-        )
+        train_dataset, val_dataset = train_loader.dataset, val_loader.dataset
+        assert isinstance(train_dataset, torch.utils.data.Subset), \
+            "CRITICAL: provided loaders must wrap Subsets of a RealIoTDataset (v5 tables)"
+        full_dataset = train_dataset.dataset
+        test_loader, test_dataset = None, None
     else:
-        logger.info(f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}")
-        connector = create_connector(config)
-        try:
-            full_dataset = RealIoTDataset(
-                connector,
-                data_cfg["start_date"],
-                data_cfg["end_date"],
-                seq_len=data_cfg["seq_len"],
-                target_veh_class=data_cfg["target_veh_class"],
-                target_dir=data_cfg["target_dir"],
-            )
-        finally:
-            # RealIoTDataset.__init__ loads all data into memory; the connector is
-            # no longer needed after construction whether it succeeded or failed.
-            connector.close()
-
-        train_size = int(train_split * len(full_dataset))
-        val_size = len(full_dataset) - train_size
-
-        if train_size == 0 or val_size == 0:
-            raise ValueError(
-                "Not enough data to split into train and val. Try a wider date range."
-            )
-
-        train_dataset, val_dataset = torch.utils.data.random_split(
-            full_dataset, [train_size, val_size]
-        )
-
-        # Propagate dataset-level attributes to the Subset wrapper so the
-        # model initializer below can read them uniformly.
-        train_dataset.num_nodes = full_dataset.num_nodes
-        train_dataset.static_feat_dim = full_dataset.static_feat_dim
-        train_dataset.time_series_dim = full_dataset.time_series_dim
-
-        # PHASE 1: Propagate scaler statistics for scale-invariant loss
-        train_dataset.traffic_mean = full_dataset.traffic_mean
-        train_dataset.traffic_std = full_dataset.traffic_std
-        val_dataset.traffic_mean = full_dataset.traffic_mean
-        val_dataset.traffic_std = full_dataset.traffic_std
-
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=train_cfg["batch_size"],
-            collate_fn=custom_collate_real,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=num_workers > 0,
-            prefetch_factor=4 if num_workers > 0 else None,
-            drop_last=True,
-            worker_init_fn=_worker_init_fn,
-        )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=train_cfg["batch_size"],
-            collate_fn=custom_collate_real,
-            num_workers=num_workers,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=num_workers > 0,
-            prefetch_factor=4 if num_workers > 0 else None,
-            worker_init_fn=_worker_init_fn,
-        )
-
-    # ------------------------------------------------------------------ #
-    # Model                                                                #
-    # For real data the dataset determines num_nodes / feat_dims at        #
-    # runtime; for mock data the config values are used directly.          #
-    # HARNESS: the train/val loops below talk only to the ModelAdapter.    #
-    # ------------------------------------------------------------------ #
-    if model_type == "gnn":
-        model = ResilientIoTPipeline(
-            num_nodes=train_dataset.num_nodes,
-            static_feat_dim=train_dataset.static_feat_dim,
-            time_series_dim=train_dataset.time_series_dim,
-            seq_len=data_cfg["seq_len"],
-            embedding_dim=model_cfg["embedding_dim"],
-            hidden_dim=model_cfg["hidden_dim"],
-            sparsity_threshold=model_cfg["sparsity_threshold"],
-            num_layers=model_cfg["num_layers"],
-            num_heads=model_cfg["num_heads"],
-            dropout=model_cfg["dropout"],
-            dim_feedforward=model_cfg["dim_feedforward"],
-            zinb_eps=model_cfg["zinb_eps"],
-            # PHASE 3: physical edge features cache (None for mock data / learned-only fallback).
-            edge_features_cache_path=(
-                None if use_mock_data else model_cfg.get("edge_features_cache_path")
-            ),
-        ).to(device)
-    else:
-        baseline_cls = LSTMForecaster if model_type == "lstm" else GRUForecaster
-        model = baseline_cls(
-            time_series_dim=train_dataset.time_series_dim,
-            hidden_dim=model_cfg["hidden_dim"],
-            num_layers=model_cfg["num_layers"],
-            dropout=model_cfg["dropout"],
-        ).to(device)
-
-    adapter = build_adapter(model_type, model)
-    logger.info(
-        f"HARNESS: model_type={model_type}, eval_mode={eval_mode}, "
-        f"capabilities={adapter.capabilities}"
-    )
-
-    # PHASE 1: Set scaler buffers AFTER moving model to device (GNN only — the
-    # baselines carry no scaler buffers; their forecast head trains directly
-    # against raw counts).
-    if not use_mock_data and model_type == "gnn":
-        traffic_mean = train_dataset.traffic_mean
-        traffic_std = train_dataset.traffic_std
-
-        logger.info(f"Extracted scaler stats from train_dataset: mean={traffic_mean:.4f}, std={traffic_std:.4f}")
-
-        model.set_scaler_stats(traffic_mean, traffic_std)
-
-        # DEFENSIVE CHECK: Validation set should have similar statistics
-        # (both subsets reference the same full_dataset, so they should be identical)
-        val_mean_diff = abs(val_dataset.traffic_mean - traffic_mean)
-        val_std_diff = abs(val_dataset.traffic_std - traffic_std)
-        relative_mean_diff = val_mean_diff / traffic_mean if traffic_mean != 0 else float('inf')
-        relative_std_diff = val_std_diff / traffic_std if traffic_std != 0 else float('inf')
-
-        if relative_mean_diff > 0.2 or relative_std_diff > 0.2:
-            raise ValueError(
-                f"CRITICAL: Train/val scaler mismatch exceeds 20%: "
-                f"Δmean={val_mean_diff:.2f} ({relative_mean_diff*100:.1f}%), "
-                f"Δstd={val_std_diff:.2f} ({relative_std_diff*100:.1f}%). "
-                "Both subsets share the same full_dataset — this should never happen."
-            )
+        if full_dataset is not None:
+            logger.info("Using provided full_dataset with chronological purged splitting (F-C01 fix).")
         else:
             logger.info(
-                f"Train/val scaler stats are consistent: "
-                f"Δmean={val_mean_diff:.4f}, Δstd={val_std_diff:.4f}"
+                "Building synthetic dataset (SyntheticConnector)" if use_mock_data
+                else f"Loading RealIoTDataset from {data_cfg['start_date']} to {data_cfg['end_date']}"
             )
+            full_dataset = build_dataset(config, use_mock_data)
+        train_dataset, val_dataset, test_dataset = chronological_purged_split(
+            full_dataset,
+            train_split=config["train_split"],
+            val_split=config["val_split"],
+            purge_steps=data_cfg["seq_len"] + 1,
+        )
+        train_loader = _loader(train_dataset, train_cfg["batch_size"], num_workers, train=True)
+        val_loader = _loader(val_dataset, train_cfg["batch_size"], num_workers, train=False)
+        test_loader = (
+            _loader(test_dataset, train_cfg["batch_size"], num_workers, train=False)
+            if test_dataset is not None and len(test_dataset) > 0 else None
+        )
 
-    logger.info(
-        f"Model initialised — num_nodes={train_dataset.num_nodes}, "
-        f"static_feat_dim={train_dataset.static_feat_dim}, "
-        f"time_series_dim={train_dataset.time_series_dim}, "
-        f"embedding_dim={model_cfg['embedding_dim']}, "
-        f"hidden_dim={model_cfg['hidden_dim']}, "
-        f"num_layers={model_cfg['num_layers']}, "
-        f"num_heads={model_cfg['num_heads']}"
-    )
+    # A pre-built dataset (tune.py, tests) must match this run's data options.
+    assert full_dataset.seq_len == data_cfg["seq_len"], "CRITICAL: dataset seq_len != config"
+    assert full_dataset.log1p_inputs == data_cfg["log1p_inputs"], "CRITICAL: dataset log1p_inputs != config"
+    assert full_dataset.complete_weather == data_cfg["complete_weather"], "CRITICAL: dataset complete_weather != config"
+    assert full_dataset.ablate_masks == data_cfg["ablate_masks"], "CRITICAL: dataset ablate_masks != config"
+
+    num_nodes = full_dataset.num_nodes
+    location_ids = list(full_dataset.locations)
+    if use_mock_data:
+        logger.warning("HARNESS: mock mode — synthetic node IDs and a synthetic city")
 
     # ------------------------------------------------------------------ #
     # HARNESS: holdout configuration                                      #
@@ -468,34 +412,34 @@ def run_training(
     #               excluded from every gradient-producing loss term       #
     #               (zero-shot guarantee); scored at val time only.        #
     # ------------------------------------------------------------------ #
-    num_nodes = train_dataset.num_nodes
     inductive_holdout_mask = None   # [N] bool — fixed, never trained on
     loss_node_mask = None           # [N] bool — True = node participates in losses
     holdout_manifest = None
+    n_train_nodes = None            # stations the model learns from (inductive mode)
 
     if eval_mode == "inductive":
-        inductive_seed = train_cfg["random_seed"]
+        # v5: the inductive split has its own seed (v4 coupled it to random_seed,
+        # so seed replicates silently changed the evaluation nodes).
+        inductive_seed = data_cfg["inductive_holdout_seed"]
         inductive_frac = data_cfg["inductive_holdout_frac"]
-        inductive_holdout_mask = make_fixed_holdout_mask(
-            num_nodes=num_nodes,
-            holdout_frac=inductive_frac,
-            seed=inductive_seed,
-            device=device,
+        # Drawn over the full station list, so a run with fewer training stations
+        # (data.train_node_count) is still scored on exactly the same held-out nodes.
+        held_ids = inductive_holdout_ids(full_dataset.all_locations, inductive_frac, inductive_seed)
+        inductive_holdout_mask = mask_from_manifest(
+            {"holdout_location_ids": held_ids}, location_ids, device=device,
         )
+        assert int(inductive_holdout_mask.sum()) == len(held_ids), \
+            "CRITICAL: held-out stations missing from the dataset"
+        n_train_nodes = num_nodes - len(held_ids)
+        if data_cfg["train_node_count"] is not None:
+            assert n_train_nodes == data_cfg["train_node_count"], (
+                f"CRITICAL: dataset has {n_train_nodes} training stations, config asks for "
+                f"{data_cfg['train_node_count']} (pre-built dataset from another config?)"
+            )
         loss_node_mask = ~inductive_holdout_mask
 
         # Manifest: resolved location IDs, not just the seed — this is the bridge
         # to the exporters and the cross-model comparability key.
-        if full_dataset is not None and hasattr(full_dataset, "locations"):
-            location_ids = list(full_dataset.locations)
-        elif use_mock_data:
-            location_ids = [f"node_{i}" for i in range(num_nodes)]
-            logger.warning("HARNESS: mock mode — holdout manifest uses synthetic node IDs")
-        else:
-            raise ValueError(
-                "CRITICAL: dataset exposes no location IDs in inductive mode. "
-                "The holdout manifest requires real sensor IDs, not synthetic names."
-            )
         manifest_path = save_holdout_manifest(
             checkpoint_dir, location_ids, inductive_holdout_mask.cpu(),
             seed=inductive_seed, holdout_frac=inductive_frac,
@@ -503,7 +447,8 @@ def run_training(
         holdout_manifest = load_holdout_manifest(checkpoint_dir)
         logger.info(
             f"HARNESS inductive holdout: {int(inductive_holdout_mask.sum())}/{num_nodes} nodes "
-            f"held out (seed={inductive_seed}), manifest={manifest_path}, "
+            f"held out (seed={inductive_seed}), {n_train_nodes} training stations "
+            f"(of {len(full_dataset.all_locations) - len(held_ids)}), manifest={manifest_path}, "
             f"sha={manifest_sha(holdout_manifest)}"
         )
 
@@ -533,30 +478,113 @@ def run_training(
     # Pre-compute constant that only requires a single sync (mask is fixed for the whole run).
     val_holdout_node_count = int(val_holdout_mask.sum().item()) if val_holdout_mask is not None else 0
 
-    # Hoist constant payload to device once (real data paths only; mock path supplies these per-sample via its own collate).
-    if not use_mock_data:
-        _src = full_dataset if full_dataset is not None else (
-            train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset
-        )
-        static_features_dev = _src.static_features.to(device)
-        _batch_loc_ids = list(_src.locations)
-    else:
-        static_features_dev = None
-        _batch_loc_ids = None
+    # v5: one device-side batch builder for every pass (masking, encoding, holdout, covariates).
+    preparer = BatchPreparer(
+        config, full_dataset, device,
+        inductive_mask=inductive_holdout_mask,
+        loss_node_mask=loss_node_mask,
+        eval_holdout_mask=val_holdout_mask,
+        static_features=full_dataset.static_features.to(device),
+        location_ids=location_ids,
+    )
+    scale = TrafficScale(
+        torch.tensor(full_dataset.traffic_mean, device=device),
+        torch.tensor(full_dataset.traffic_std, device=device),
+        data_cfg["log1p_inputs"],
+    )
 
-    # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["lr"])
+    # ------------------------------------------------------------------ #
+    # Model — HARNESS: the loops below talk only to the ModelAdapter.      #
+    # ------------------------------------------------------------------ #
+    model = build_model(
+        config, full_dataset, device,
+        covariate_dim=preparer.covariates.dim,
+        edge_features_cache_path=None if use_mock_data else model_cfg.get("edge_features_cache_path"),
+    )
+    adapter = build_adapter(model_type, model, config, scale=scale, covariates=preparer.covariates)
+    logger.info(
+        f"HARNESS: model_type={model_type}, eval_mode={eval_mode}, "
+        f"capabilities={adapter.capabilities}"
+    )
+    logger.info(
+        f"Model initialised — num_nodes={num_nodes}, "
+        f"static_feat_dim={full_dataset.static_feat_dim}, "
+        f"time_series_dim={full_dataset.time_series_dim}, covariate_dim={preparer.covariates.dim}, "
+        f"hidden_dim={model_cfg['hidden_dim']}, num_layers={model_cfg['num_layers']}"
+    )
 
-    logger.info("Starting training loop...")
-
-    best_val_loss = float("inf")
+    balancer = MTLBalancer(loss_cfg["mtl_balancing"], model, train_cfg["grad_cosine_every"]).to(device)
+    optimizer = (
+        torch.optim.Adam(list(model.parameters()) + balancer.extra_parameters(), lr=train_cfg["lr"])
+        if trainable else None
+    )
 
     epochs = train_cfg["epochs"]
     grad_clip_max_norm = train_cfg["grad_clip_max_norm"]
     early_stop_patience = train_cfg["early_stop_patience"]
     early_stop_min_delta = train_cfg["early_stop_min_delta"]
-    mask_prob = data_cfg["mask_prob"]
+    accum_steps = train_cfg["grad_accum_steps"]
+    pretrain_epochs = loss_cfg["impute_pretrain_epochs"]
+    selection_metric = sel_cfg["metric"]
+    eval_seed = eval_cfg["eval_mask_seed"]
+
+    def _gen(offset: int) -> torch.Generator:
+        # Fresh, identically-seeded generator per evaluation pass: every epoch (and
+        # every run) scores the same artificial gaps and synthetic outages.
+        return torch.Generator(device=device).manual_seed(eval_seed + offset)
+
+    def _eval_pass(loader, weights, evaluator, legacy_accum, perturb_batches=0):
+        """Main evaluation pass. Returns averaged loss terms (kriging stripped from
+        the total in inductive mode — selection never sees holdout-node targets)."""
+        sums = {"total": 0.0, "impute": 0.0, "forecast": 0.0, "kriging": 0.0, "forecast_nll_obs": 0.0}
+        gen = _gen(0)
+        for i, raw in enumerate(loader):
+            batch = preparer.prepare(_to_device(raw, device), train=False, gen=gen)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
+                losses, preds = adapter.step(batch, weights, loss_node_mask=loss_node_mask)
+                if i < perturb_batches:
+                    evaluator.update_perturbation(adapter, batch, preds)
+            total = losses.total.detach()
+            if eval_mode == "inductive":
+                total = total - weights["w_kriging"] * losses.kriging.detach()
+            sums["total"] = sums["total"] + total
+            sums["impute"] = sums["impute"] + losses.impute.detach()
+            sums["forecast"] = sums["forecast"] + losses.forecast.detach()
+            sums["kriging"] = sums["kriging"] + losses.kriging.detach()
+            sums["forecast_nll_obs"] = sums["forecast_nll_obs"] + losses.components["forecast_nll_obs"].detach()
+            evaluator.update(preds, batch)
+            legacy_accum.update(evaluate_batch(adapter.capabilities, preds, batch, holdout_mask=val_holdout_mask))
+        n = max(len(loader), 1)
+        return {k: float(v) / n for k, v in sums.items()}
+
+    def _so_pass(loader, length: int, evaluator):
+        gen = _gen(length)
+        for raw in loader:
+            batch = preparer.prepare(_to_device(raw, device), train=False, gen=gen, so_length=length)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
+                preds = adapter.predict(batch)
+            evaluator.update_so(length, preds, batch)
+
+    def _selection_score(avg: dict, v5_metrics: dict) -> float:
+        if selection_metric == "val_loss_total":
+            return avg["total"]
+        if selection_metric == "obs_loss":
+            return avg["forecast_nll_obs"]
+        so_rmse = v5_metrics[f"so_{sel_cfg['so_length']}_forecast_rmse"]
+        assert so_rmse is not None, "CRITICAL: obs_loss_plus_so selection but no synthetic-outage rows scored"
+        return avg["forecast_nll_obs"] + sel_cfg["so_lambda"] * so_rmse / full_dataset.count_std_raw
+
+    logger.info(
+        f"Starting training loop (selection={selection_metric}, grad_accum={accum_steps}, "
+        f"mtl={loss_cfg['mtl_balancing']}, impute_pretrain_epochs={pretrain_epochs})..."
+    )
+
+    best_score = float("inf")
+    best_epoch = None
+    best_val_metrics, best_val_v5 = None, None
     epochs_no_improve = 0
+    opt_step = 0
+    last_score = float("nan")
 
     import psutil
     memory_threshold_percent = 10.0 # Exit if < 10% RAM available
@@ -571,184 +599,113 @@ def run_training(
                 "Aborting to prevent OOM crash — reduce batch_size or use a smaller dataset window."
             )
 
-        model.train()
+        # R6: imputation-only warm-up epochs (forecast weight 0, no checkpointing).
+        pretraining = epoch < pretrain_epochs
+        weights = dict(loss_weights, w_forecast=0.0) if pretraining else loss_weights
 
-        epoch_loss_total = torch.zeros((), device=device)
-        epoch_loss_forecast = torch.zeros((), device=device)
-        epoch_loss_impute = torch.zeros((), device=device)
-        epoch_loss_kriging = torch.zeros((), device=device)
-
-        for batch in train_loader:
-            batch = {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
-            if static_features_dev is not None:
-                batch["static_features"] = static_features_dev
-                batch["location_ids"] = _batch_loc_ids
-
-            # GPU-side imputation mask: generate AFTER transfer so CUDA RNG is used,
-            # eliminating a CPU→GPU copy of the mask tensor (§14 medium-risk).
-            clean_dyn = batch["dynamic_features"]
-            node_mask = torch.rand(clean_dyn.shape, device=device) < mask_prob
-            batch["target_impute"] = clean_dyn.clone()
-            batch["dynamic_features"] = clean_dyn.masked_fill(node_mask, float("nan"))
-            batch["node_mask"] = node_mask
-
-            # PHASE 2: Re-roll a random spatial holdout per batch and blank the held-out
-            # nodes' dynamic features so the encoder must rely on neighbour message passing.
-            # HARNESS (inductive): the re-roll draws from participating nodes only —
-            # the fixed inductive holdout supplies no kriging training signal.
-            blank_mask = None
-            if kriging_active:
-                reroll_mask = torch.rand(num_nodes, device=device) < spatial_holdout_prob
-                if loss_node_mask is not None:
-                    reroll_mask = reroll_mask & loss_node_mask
-                batch["spatial_holdout_mask"] = reroll_mask
-                blank_mask = reroll_mask
-            if inductive_holdout_mask is not None:
-                blank_mask = (
-                    inductive_holdout_mask if blank_mask is None
-                    else blank_mask | inductive_holdout_mask
-                )
-            if blank_mask is not None:
-                batch["dynamic_features"] = apply_spatial_holdout(
-                    batch["dynamic_features"], blank_mask
-                )
-
+        epoch_sums = {"total": 0.0, "impute": 0.0, "forecast": 0.0, "kriging": 0.0}
+        grad_cosines = []
+        n_train = 0
+        if trainable:
+            model.train()
             optimizer.zero_grad()
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
-                losses, _ = adapter.step(batch, loss_weights, loss_node_mask=loss_node_mask)
-            losses.total.backward()  # outside autocast — backward always in full precision
-
-            # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
-
-            optimizer.step()
-
-            epoch_loss_total += losses.total.detach()
-            epoch_loss_impute += losses.impute.detach()
-            epoch_loss_forecast += losses.forecast.detach()
-            epoch_loss_kriging += losses.kriging.detach()
-
-        avg_train_loss = (epoch_loss_total / len(train_loader)).item()
-        avg_train_impute = (epoch_loss_impute / len(train_loader)).item()
-        avg_train_forecast = (epoch_loss_forecast / len(train_loader)).item()
-        avg_train_kriging = (epoch_loss_kriging / len(train_loader)).item()
-        assert not math.isnan(avg_train_loss), "CRITICAL FAILURE: train loss is NaN"
-
-        # Validation Loop — shared harness path (capability-gated metrics).
-        model.eval()
-        val_loss_total = torch.zeros((), device=device)
-        val_loss_kriging_total = torch.zeros((), device=device)
-        val_accum = MetricAccumulator()
-
-        with torch.no_grad():
-            for batch in val_loader:
-                batch = {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
-                if static_features_dev is not None:
-                    batch["static_features"] = static_features_dev
-                    batch["location_ids"] = _batch_loc_ids
-
-                # GPU-side imputation mask for val (random, same distribution as train).
-                clean_dyn_val = batch["dynamic_features"]
-                node_mask_val = torch.rand(clean_dyn_val.shape, device=device) < mask_prob
-                batch["target_impute"] = clean_dyn_val.clone()
-                batch["dynamic_features"] = clean_dyn_val.masked_fill(node_mask_val, float("nan"))
-                batch["node_mask"] = node_mask_val
-
-                # Apply the fixed validation holdout for deterministic scoring
-                # (inductive fixed mask, or PHASE 2 seeded transductive mask).
-                if val_holdout_mask is not None:
-                    batch["spatial_holdout_mask"] = val_holdout_mask
-                    batch["dynamic_features"] = apply_spatial_holdout(
-                        batch["dynamic_features"], val_holdout_mask
-                    )
-
+            for micro, raw in enumerate(train_loader):
+                batch = preparer.prepare(_to_device(raw, device), train=True)
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
-                    losses, preds = adapter.step(
-                        batch, loss_weights, loss_node_mask=loss_node_mask
-                    )
-                val_loss_kriging_total += losses.kriging.detach()
+                    losses, _ = adapter.step(batch, weights, loss_node_mask=loss_node_mask)
+                total = balancer.total(losses, weights)
+                if (micro + 1) % accum_steps == 0:
+                    cos = balancer.grad_cosine(losses, opt_step)
+                    if cos is not None:
+                        grad_cosines.append(cos)
+                # backward outside autocast — always in full precision
+                balancer.backward(total, losses, weights, lambda t: t / accum_steps)
 
-                # HARNESS (inductive): Model selection must include kriging performance.
-                # Previously, kriging was stripped from the selection loss, causing zero-collapse 
-                # models to be favored. (Study C intervention)
-                val_loss_total += losses.total.detach()
+                if (micro + 1) % accum_steps == 0:
+                    # CRITICAL SAFEGUARD: Gradient Clipping (from NSTAR_BACKEND_ARCHITECTURE.md)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    opt_step += 1
 
-                val_accum.update(
-                    evaluate_batch(
-                        adapter.capabilities, preds, batch, holdout_mask=val_holdout_mask
-                    )
-                )
+                epoch_sums["total"] = epoch_sums["total"] + total.detach()
+                epoch_sums["impute"] = epoch_sums["impute"] + losses.impute.detach()
+                epoch_sums["forecast"] = epoch_sums["forecast"] + losses.forecast.detach()
+                epoch_sums["kriging"] = epoch_sums["kriging"] + losses.kriging.detach()
+                n_train += 1
+            optimizer.zero_grad()  # drop a trailing partial accumulation window
+        avg_train = {k: float(v) / max(n_train, 1) for k, v in epoch_sums.items()}
+        assert not math.isnan(avg_train["total"]), "CRITICAL FAILURE: train loss is NaN"
 
-        avg_val_loss = (val_loss_total / len(val_loader)).item()
-        avg_val_kriging = (val_loss_kriging_total / len(val_loader)).item()
+        # Validation — shared harness path (capability-gated metrics).
+        model.eval()
+        val_accum = MetricAccumulator()
+        val_eval = V5Evaluator(full_dataset, preparer.covariates, adapter.capabilities, config,
+                               val_holdout_mask, scale, device)
+        with torch.no_grad():
+            avg_val = _eval_pass(val_loader, weights, val_eval, val_accum)
+            if selection_metric == "obs_loss_plus_so":
+                _so_pass(val_loader, sel_cfg["so_length"], val_eval)
         val_metrics = val_accum.summary()
-        val_rmse = val_metrics["rmse"]
-        val_mae = val_metrics["mae"]
-        val_zero_acc = val_metrics["zero_acc"]
-        val_impute_mse = val_metrics["impute_mse"]
-        val_kriging_msle = val_metrics["kriging_msle"]
-        val_kriging_rmse = val_metrics["kriging_rmse"]
-        val_kriging_mae = val_metrics["kriging_mae"]
+        val_v5 = val_eval.summary()
+        avg_val_loss = avg_val["total"]
+        last_score = _selection_score(avg_val, val_v5)
 
         # Offensive Assertion for Divergence
-        if math.isnan(avg_val_loss):
+        if math.isnan(avg_val_loss) or math.isnan(last_score):
             raise DivergenceError("Validation loss is NaN! The Burn Test Failed.")
 
-        # None-safe formatting: None means "model cannot produce this" — shown
-        # as N/A, never as 0.
-        def _fmt(v, p=4):
-            return "N/A" if v is None else f"{v:.{p}f}"
-
         kriging_log = (
-            f", Kriging(train={avg_train_kriging:.4f}, val={avg_val_kriging:.4f}, "
-            f"RMSE={_fmt(val_kriging_rmse, 2)}, MAE={_fmt(val_kriging_mae, 2)}, "
-            f"MSLE={_fmt(val_kriging_msle)})"
+            f", Kriging(train={avg_train['kriging']:.4f}, val={avg_val['kriging']:.4f}, "
+            f"RMSE={_fmt(val_v5.get('kriging_raw_rmse'), 2)})"
             if val_holdout_mask is not None else ""
         )
-        zero_acc_log = (
-            f"{_fmt(val_zero_acc)} "
-            f"[{val_metrics['zero_correct_count']}/{val_metrics['zero_true_count']}]"
-            if val_zero_acc is not None else "N/A"
-        )
         logger.info(
-            f"Epoch {epoch+1}/{epochs} - "
-            f"Train Loss: {avg_train_loss:.4f} | "
-            f"Val Loss: {avg_val_loss:.4f} "
-            f"(RMSE: {_fmt(val_rmse, 2)}, MAE: {_fmt(val_mae, 2)}, "
-            f"ZeroAcc: {zero_acc_log}, "
-            f"ImputeMSE: {_fmt(val_impute_mse)})"
+            f"Epoch {epoch+1}/{epochs}{' [impute pretrain]' if pretraining else ''} - "
+            f"Train Loss: {avg_train['total']:.4f} | Val Loss: {avg_val_loss:.4f} | "
+            f"Score({selection_metric}): {last_score:.4f} "
+            f"(obsRMSE: {_fmt(val_v5.get('obs_all_rmse'), 2)}, peakRMSE: {_fmt(val_v5.get('peak_rmse'), 2)}, "
+            f"collapse: {_fmt(val_v5.get('collapse_rate'), 3)}, "
+            f"gapMass: {_fmt(val_v5.get('real_gap_mass_ratio'), 3)}, "
+            f"ImputeRMSE: {_fmt(val_v5.get('impute_raw_rmse'), 2)})"
             f"{kriging_log}"
         )
 
-        # Checkpointing and Early Stopping
-        if avg_val_loss < (best_val_loss - early_stop_min_delta):
-            best_val_loss = avg_val_loss
-            epochs_no_improve = 0
-            torch.save(model.state_dict(), checkpoint_path)
-            logger.info(
-                f"New best model saved to {checkpoint_path} with val_loss: {best_val_loss:.4f}"
-            )
-        else:
-            epochs_no_improve += 1
-            logger.info(f"Early stopping counter: {epochs_no_improve} out of {early_stop_patience}")
+        # Checkpointing and Early Stopping (never during imputation pre-training).
+        if not pretraining:
+            if last_score < (best_score - early_stop_min_delta):
+                best_score = last_score
+                best_epoch = epoch + 1
+                best_val_metrics, best_val_v5 = val_metrics, val_v5
+                epochs_no_improve = 0
+                torch.save(model.state_dict(), checkpoint_path)
+                logger.info(f"New best model saved to {checkpoint_path} with {selection_metric}: {best_score:.4f}")
+            else:
+                epochs_no_improve += 1
+                logger.info(f"Early stopping counter: {epochs_no_improve} out of {early_stop_patience}")
 
         # W&B Logging — capability-gated: None metrics are absent, never 0.0.
         if init_wandb or (wandb.run is not None):
             log_payload = {
-                "train_loss_total": avg_train_loss,
-                "train_loss_impute": avg_train_impute,
-                "train_loss_forecast": avg_train_forecast,
+                "train_loss_total": avg_train["total"],
+                "train_loss_impute": avg_train["impute"],
+                "train_loss_forecast": avg_train["forecast"],
                 "val_loss_total": avg_val_loss,
+                "val_loss_forecast_nll_obs": avg_val["forecast_nll_obs"],
+                "val_selection_score": last_score,
                 "epoch": epoch + 1,
             }
-            log_payload.update({
-                f"val_{k}": v for k, v in val_metrics.items() if v is not None
-            })
+            log_payload.update({f"val_{k}": v for k, v in val_metrics.items() if v is not None})
+            log_payload.update({f"val_{k}": v for k, v in val_v5.items() if v is not None})
+            if grad_cosines:
+                log_payload["train_grad_cosine_forecast_impute"] = float(np.mean(grad_cosines))
+            if balancer.log_vars is not None:
+                log_payload.update({f"mtl_log_var_{k}": float(v) for k, v in balancer.log_vars.items()})
             # PHASE 2 / inductive: kriging telemetry only when a holdout is scored.
             if val_holdout_mask is not None:
                 log_payload.update({
-                    "train_loss_kriging": avg_train_kriging,
-                    "val_loss_kriging": avg_val_kriging,
+                    "train_loss_kriging": avg_train["kriging"],
+                    "val_loss_kriging": avg_val["kriging"],
                     "val_kriging_nodes": val_holdout_node_count,
                 })
             wandb.log(log_payload)
@@ -757,21 +714,92 @@ def run_training(
         # Joinable across runs on holdout_manifest_sha — identical hash means
         # identical evaluation conditions.
         save_results_manifest(checkpoint_dir, {
+            "pipeline_version": config["pipeline_version"],
             "model_type": model_type,
             "eval_mode": eval_mode,
             "epoch": epoch + 1,
             "seed": train_cfg["random_seed"],
             "holdout_manifest_sha": manifest_sha(holdout_manifest),
             "val_loss_total": avg_val_loss,
+            "selection_metric": selection_metric,
+            "selection_score": last_score,
             "metrics": val_metrics,
+            "v5_metrics": val_v5,
             "mask_rng": "cuda",  # augmentation RNG stream moved to GPU (§14 medium-risk)
         })
 
+        if not trainable:
+            logger.info("Non-learned baseline: a single evaluation epoch is the whole run.")
+            break
         if epochs_no_improve >= early_stop_patience:
             logger.info(f"Early stopping triggered after {epoch + 1} epochs.")
             break
 
     logger.info("Training complete.")
+
+    # ------------------------------------------------------------------ #
+    # Final Evaluation on Held-Out Test Set (F-C01 / Forensic Audit)     #
+    # ------------------------------------------------------------------ #
+    test_metrics, test_v5 = None, None
+    assert os.path.exists(checkpoint_path), \
+        "CRITICAL: no checkpoint was saved (every epoch was imputation pre-training?)"
+    logger.info(f"Restoring best checkpoint from {checkpoint_path} (epoch {best_epoch}) for final evaluation.")
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+    if test_loader is not None and len(test_loader) > 0:
+        logger.info(f"Running final evaluation on held-out test partition ({len(test_dataset)} samples)...")
+        model.eval()
+        test_accum = MetricAccumulator()
+        test_eval = V5Evaluator(
+            full_dataset, preparer.covariates, adapter.capabilities, config, val_holdout_mask, scale, device,
+            diagnostics=eval_cfg["diagnostics"], store_series=eval_cfg["diagnostics"],
+        )
+        with torch.no_grad():
+            avg_test = _eval_pass(
+                test_loader, loss_weights, test_eval, test_accum,
+                perturb_batches=PERTURB_BATCHES if eval_cfg["diagnostics"] else 0,
+            )
+            for length in eval_cfg["so_lengths"]:
+                _so_pass(test_loader, length, test_eval)
+        test_metrics = test_accum.summary()
+        test_metrics["test_loss"] = avg_test["total"]
+        test_metrics["test_loss_kriging"] = avg_test["kriging"]
+        test_metrics["test_loss_forecast_nll_obs"] = avg_test["forecast_nll_obs"]
+        test_v5 = test_eval.summary()
+
+        logger.info(
+            f"Final Test Metrics -> Loss: {avg_test['total']:.4f} | "
+            f"obsRMSE: {_fmt(test_v5.get('obs_all_rmse'), 2)} (trans {_fmt(test_v5.get('obs_trans_rmse'), 2)}, "
+            f"ind {_fmt(test_v5.get('obs_ind_rmse'), 2)}) | peakRMSE: {_fmt(test_v5.get('peak_rmse'), 2)} | "
+            f"collapse: {_fmt(test_v5.get('collapse_rate'), 3)} | "
+            f"SO12 RMSE: {_fmt(test_v5.get('so_12_forecast_rmse'), 2)} | CRPS: {_fmt(test_v5.get('crps'), 3)}"
+        )
+        if init_wandb or (wandb.run is not None):
+            test_payload = {f"final_test_{k}": v for k, v in test_metrics.items() if v is not None}
+            test_payload.update({f"final_test_{k}": v for k, v in test_v5.items() if v is not None})
+            wandb.log(test_payload)
+            for k, v in list(test_metrics.items()) + list(test_v5.items()):
+                if v is not None:
+                    wandb.run.summary[f"test_{k}"] = v
+
+    save_results_manifest(checkpoint_dir, {
+        "pipeline_version": config["pipeline_version"],
+        "model_type": model_type,
+        "eval_mode": eval_mode,
+        "best_val_loss": best_score,
+        "best_epoch": best_epoch,
+        "seed": train_cfg["random_seed"],
+        "holdout_manifest_sha": manifest_sha(holdout_manifest),
+        "num_nodes": num_nodes,
+        "train_node_count": n_train_nodes,
+        "selection_metric": selection_metric,
+        "selection_score": best_score,
+        "metrics": best_val_metrics,
+        "v5_metrics": best_val_v5,
+        "test_metrics": test_metrics,
+        "v5_test_metrics": test_v5,
+        "mask_rng": "cuda",
+    })
 
     # ------------------------------------------------------------------ #
     # W&B Artifact Upload (Phase 1)                                      #
@@ -813,13 +841,15 @@ def run_training(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return avg_val_loss
+    return best_score
 
 
 def main():
     logger = setup_logger("train_pipeline")
     args = parse_args()
     config = load_config(args.config)
+    if args.run_name:
+        config.setdefault("wandb", {})["run_name"] = args.run_name
 
     # CUDA_VISIBLE_DEVICES is already set by the early setup block
     if not args.use_mock_data:

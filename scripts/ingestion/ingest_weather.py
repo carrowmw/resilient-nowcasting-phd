@@ -25,13 +25,13 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("ingest_weather")
 
-DEFAULT_CACHE_PATH = "data/external/static_features_cache.parquet"
+DEFAULT_CACHE_PATH = "data/external/weather_cache.parquet"
 DEFAULT_BATCH_SIZE = 50_000
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Ingest weather readings to TimescaleDB")
-    p.add_argument("--cache", default=DEFAULT_CACHE_PATH, help="Path to static_features_cache.parquet")
+    p.add_argument("--cache", default=DEFAULT_CACHE_PATH, help="Path to weather_cache.parquet")
     p.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--allow-duplicates", action="store_true",

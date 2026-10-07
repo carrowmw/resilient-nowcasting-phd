@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Leave-one-out from RIoT v5: what the model depends on</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/v5_runs.js"></script>
+<style>
+  #top { position: absolute; left: 0; top: 0; right: 0; display: flex; justify-content: space-between; align-items: center; }
+</style>
+</head>
+<body>
+<div id="top">
+  <div class="controls"><span>Metric</span><div class="seg" id="metric"></div></div>
+  <div id="legend"></div>
+</div>
+<svg id="chart" role="img" aria-label="Change in error when each RIoT v5 component is removed"></svg>
+<script>
+const { C } = Fig;
+const runs = Fig.runsByExperiment();
+const { w: W, h: H } = Fig.size();
+const base = runs.v5_full;
+
+const COMPONENTS = [
+  ["loo_no_unify", "Unified missing encoding"],
+  ["v5_identity_graph", "Learned spatial graph"],
+  ["loo_no_sensor_emb", "Sensor embedding"],
+  ["loo_no_runlength", "Gap run-length feature"],
+  ["loo_no_profile", "Seasonal profile input"],
+  ["loo_no_calendar", "Calendar features"],
+  ["loo_no_gat_drop", "Drop messages from missing sensors"],
+  ["loo_mask_015", "Mask ratio 0.30 (vs 0.15)"],
+  ["loo_no_quantiles", "Quantile heads"],
+  ["loo_unanchored", "Outage-head anchoring"],
+  ["loo_no_log1p", "log1p inputs"],
+  ["loo_no_magnitude", "Magnitude weighting"],
+  ["loo_no_huber", "Huber imputation loss"],
+  ["loo_no_key_padding", "Temporal key padding"],
+  ["loo_no_complete_weather", "Complete weather"],
+  ["loo_night_leak", "Night-channel fix"],
+];
+const METRICS = [
+  { key: "test_so_12_forecast_rmse", label: "3 h outage", band: 0.03 },
+  { key: "test_so_96_forecast_rmse", label: "24 h outage", band: 0.03 },
+  { key: "test_obs_all_rmse", label: "Normal (all sensors)", band: 0.03 },
+  { key: "test_obs_ind_rmse", label: "Held-out sensors", band: 0.05 },
+];
+let metric = METRICS[0];
+
+const seg = document.getElementById("metric");
+for (const m of METRICS) {
+  const b = document.createElement("button");
+  b.textContent = m.label;
+  b.setAttribute("aria-pressed", m === metric);
+  b.onclick = () => { metric = m; seg.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); draw(); };
+  seg.appendChild(b);
+}
+Fig.legend(document.getElementById("legend"), [
+  { label: "Component helps (removing it hurts)", color: C.blue, shape: "rect" },
+  { label: "Removing it helps", color: C.orange, shape: "rect" },
+  { label: "Within single-seed noise", color: C.rule, shape: "rect" },
+]);
+
+const M = { l: 430, r: 120, t: 80, b: 60 };
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const x = d3.scaleLinear().range([M.l, W - M.r]);
+const y = d3.scaleBand().range([M.t, H - M.b]).padding(0.28);
+const gBand = svg.append("g"), gAxis = svg.append("g"), gBars = svg.append("g"), gZero = svg.append("g");
+const xLabel = svg.append("text").attr("class", "axis-label").attr("y", H - 14).attr("text-anchor", "middle");
+
+function draw() {
+  const rows = COMPONENTS.map(([k, label]) => ({
+    k, label, d: runs[k][metric.key] / base[metric.key] - 1,
+  })).sort((a, b) => b.d - a.d);
+  const ext = Math.max(0.12, d3.max(rows, (r) => Math.abs(r.d)) * 1.08);
+  x.domain([-Math.min(ext, 0.2), ext]);
+  y.domain(rows.map((r) => r.k));
+
+  gBand.selectAll("rect").data([0]).join("rect")
+    .attr("y", M.t - 10).attr("height", H - M.b - M.t + 10).attr("fill", C.panel)
+    .transition().duration(400).attr("x", x(-metric.band)).attr("width", x(metric.band) - x(-metric.band));
+  gBand.selectAll("text").data([0]).join("text").attr("class", "annot").attr("y", M.t - 18).attr("text-anchor", "middle")
+    .text(`noise ±${metric.band * 100}%`).transition().duration(400).attr("x", x(0));
+
+  gAxis.attr("transform", `translate(0,${H - M.b})`).transition().duration(400)
+    .call(d3.axisBottom(x).ticks(8).tickFormat((v) => Fig.fmt.pct(v)).tickSize(6))
+    .on("end", function () { d3.select(this).select(".domain").attr("stroke", C.rule); });
+  xLabel.attr("x", (M.l + W - M.r) / 2).text(`Change in ${metric.label.toLowerCase()} RMSE when the component is removed, vs RIoT v5`);
+
+  gZero.selectAll("line").data([0]).join("line").attr("y1", M.t - 10).attr("y2", H - M.b).attr("stroke", C.text2)
+    .transition().duration(400).attr("x1", x(0)).attr("x2", x(0));
+
+  const color = (r) => (Math.abs(r.d) <= metric.band ? C.rule : r.d > 0 ? C.blue : C.orange);
+  const bw = Math.min(24, y.bandwidth());
+  const g = gBars.selectAll("g.row").data(rows, (r) => r.k).join((enter) => {
+    const e = enter.append("g").attr("class", "row");
+    e.append("rect").attr("class", "hit").attr("fill", "transparent");
+    e.append("path").attr("class", "bar");
+    e.append("text").attr("class", "label name").attr("text-anchor", "end");
+    e.append("text").attr("class", "annot value");
+    return e;
+  });
+  g.transition().duration(400).attr("transform", (r) => `translate(0,${y(r.k) + y.bandwidth() / 2})`);
+  g.select(".name").attr("x", M.l - 24).attr("y", 6).text((r) => r.label)
+    .attr("font-weight", (r) => (r.k === "loo_no_unify" ? 700 : 400));
+  // Bars: 4px rounded data end, square at the zero baseline.
+  g.select(".bar").transition().duration(400).attr("fill", color).attr("d", (r) => {
+    const x0 = x(0), x1 = x(r.d), h = bw, rad = Math.min(4, Math.abs(x1 - x0));
+    const dir = x1 >= x0 ? 1 : -1;
+    return `M${x0},${-h / 2}H${x1 - dir * rad}q${dir * rad},0 ${dir * rad},${rad}V${h / 2 - rad}q0,${rad} ${-dir * rad},${rad}H${x0}Z`;
+  });
+  g.select(".value").transition().duration(400)
+    .attr("x", (r) => x(r.d) + (r.d >= 0 ? 10 : -10)).attr("y", 6)
+    .attr("text-anchor", (r) => (r.d >= 0 ? "start" : "end"))
+    .text((r) => Fig.fmt.pct(r.d, Math.abs(r.d) < 0.1 ? 1 : 0));
+  g.select(".hit").attr("x", M.l - 400).attr("y", -y.step() / 2).attr("width", W - M.r - M.l + 400).attr("height", y.step())
+    .on("pointermove", (ev, r) => Fig.showTip(ev, r.label, [
+      { value: Fig.fmt.pct(r.d, 1), name: `${metric.label} RMSE vs V5F` },
+      { value: runs[r.k][metric.key].toFixed(1), name: `without it (V5F ${base[metric.key].toFixed(1)})` },
+      { value: runs[r.k].test_collapse_rate.toFixed(3), name: `collapse rate (V5F ${base.test_collapse_rate.toFixed(3)})` },
+    ]))
+    .on("pointerleave", Fig.hideTip);
+}
+draw();
+Fig.onStep(() => {}, 0);
+</script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Experiment 1: fragmentation and imputation vs forecast error on 110 streams</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/exp1.js"></script>
+<style>
+  #top { position: absolute; left: 0; top: 0; right: 0; display: flex; gap: 28px; align-items: center; }
+</style>
+</head>
+<body>
+<div id="top">
+  <div class="controls"><span>Model</span><div class="seg" id="model"></div></div>
+  <div class="controls"><span>Horizon</span><div class="seg" id="horizon"></div></div>
+</div>
+<svg id="chart" role="img" aria-label="Left: forecast error against mean contiguous run length for 110 pedestrian streams, with a segmented regression. Right: median error with and without kNN imputation for each model"></svg>
+<script>
+const { C } = Fig;
+const D = window.DATA_EXP1;
+const { w: W, h: H } = Fig.size();
+const MODELS = [
+  ["lstm_mv", "LSTM (multivariate)"], ["transformer_mv", "Transformer (multivariate)"],
+  ["lstm_uv", "LSTM (univariate)"], ["snaive_weekly", "Seasonal naïve"], ["persistence", "Persistence"],
+];
+const HZ = [[8, "2 h ahead"], [24, "6 h ahead"]];
+let model = "lstm_mv", hz = 8;
+
+function seg(id, items, get, set) {
+  const el = document.getElementById(id);
+  items.forEach(([k, label]) => {
+    const b = document.createElement("button");
+    b.textContent = label.replace(" (multivariate)", " MV").replace(" (univariate)", " UV");
+    b.setAttribute("aria-pressed", k === get());
+    b.onclick = () => { set(k); el.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); draw(); };
+    el.appendChild(b);
+  });
+}
+seg("model", MODELS, () => model, (k) => (model = k));
+seg("horizon", HZ, () => hz, (k) => (hz = k));
+
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const lw = W * 0.6;
+const M = { l: 90, t: 110, b: 76 };
+const x = d3.scaleLog().domain([1.4, 16]).range([M.l, lw - 40]);
+const y = d3.scaleLinear().domain([20, 160]).range([H - M.b, M.t]);
+
+const gl = svg.append("g");
+gl.append("text").attr("class", "panel-title").attr("x", 0).attr("y", M.t - 50).text("Fragmentation drives error");
+gl.append("text").attr("class", "panel-sub").attr("x", 0).attr("y", M.t - 24).text("One dot per directional stream (110) · gaps left as gaps, no imputation");
+gl.append("g").attr("class", "grid").attr("transform", `translate(0,${H - M.b})`)
+  .call(d3.axisBottom(x).tickValues([1.5, 2, 3, 5, 10, 15]).tickFormat((v) => v + " h").tickSize(-(H - M.t - M.b)))
+  .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("dy", 14));
+gl.append("g").attr("class", "grid").attr("transform", `translate(${M.l},0)`)
+  .call(d3.axisLeft(y).ticks(7).tickSize(-(lw - 40 - M.l)).tickFormat((v) => v + "%"))
+  .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("x", -12));
+gl.append("text").attr("class", "axis-label").attr("x", lw - 40).attr("y", H - 18).attr("text-anchor", "end")
+  .text("Mean length of contiguous observed runs (log scale) →");
+gl.append("text").attr("class", "axis-label").attr("transform", `translate(24,${M.t}) rotate(-90)`).attr("text-anchor", "end")
+  .text("Forecast error, CV-RMSE ↑");
+const gCI = gl.append("g"), gFit = gl.append("g"), gDots = gl.append("g"), gAnn = gl.append("g");
+
+// Right: imputation dumbbell
+const rx0 = lw + 250, rw = W - rx0 - 40;
+const gr = svg.append("g");
+gr.append("text").attr("class", "panel-title").attr("x", lw + 40).attr("y", M.t - 50).text("Imputation does not help");
+gr.append("text").attr("class", "panel-sub").attr("x", lw + 40).attr("y", M.t - 24).text("Median CV-RMSE across streams");
+const xr = d3.scaleLinear().domain([40, 140]).range([rx0, rx0 + rw]);
+const yr = d3.scaleBand().domain(MODELS.map((m) => m[0])).range([M.t + 20, H - M.b - 40]).padding(0.4);
+const gxr = gr.append("g").attr("class", "grid").attr("transform", `translate(0,${H - M.b - 40})`);
+const gRows = gr.append("g");
+const legR = gr.append("g").attr("transform", `translate(${lw + 40},${H - M.b + 14})`);
+[["none", "gaps left as gaps", C.blue], ["knn", "kNN-imputed first", C.orange]].forEach(([, label, color], i) => {
+  legR.append("circle").attr("cx", 8 + i * 230).attr("cy", 0).attr("r", 8).attr("fill", color);
+  legR.append("text").attr("class", "annot").attr("x", 24 + i * 230).attr("y", 6).text(label);
+});
+
+function fitY(t, L) {
+  return L <= t.breakpoint ? t.intercept + t.slope_below * L : t.intercept + t.slope_below * t.breakpoint + t.slope_above * (L - t.breakpoint);
+}
+
+function draw() {
+  const T = 400;
+  const pts = D.points.filter((p) => p.m === model && p.h === hz && p.i === "none" && p.L != null && p.cv != null);
+  gDots.selectAll("circle").data(pts, (p) => p.s).join("circle")
+    .attr("r", 7).attr("fill", C.blue).attr("fill-opacity", 0.75).attr("stroke", "#fff").attr("stroke-width", 1.5)
+    .on("pointermove", (ev, p) => Fig.showTip(ev, p.s.replace(/^Ncl/, "").replace("__", " · "), [
+      { value: p.cv.toFixed(0) + "%", name: "CV-RMSE" }, { value: p.L.toFixed(1) + " h", name: "mean run length" },
+      { value: d3.format(".0%")(p.c), name: "completeness" },
+    ]))
+    .on("pointerleave", Fig.hideTip)
+    .transition().duration(T).attr("cx", (p) => x(Math.min(16, p.L))).attr("cy", (p) => y(Math.min(160, p.cv)));
+
+  const t = D.thresholds[`${model}_h${hz}`];
+  const ok = t && t.n >= 50 && t.delta_aic > 2;
+  const xs = d3.range(Math.log(1.45), Math.log(15.5), 0.02).map(Math.exp);
+  gFit.selectAll("path").data(ok ? [xs] : []).join("path").attr("fill", "none").attr("stroke", C.text).attr("stroke-width", 3)
+    .transition().duration(T).attr("d", (d) => d3.line().x((L) => x(L)).y((L) => y(fitY(t, L)))(d));
+  gCI.selectAll("rect").data(ok ? [t] : []).join("rect").attr("fill", C.panel)
+    .attr("y", M.t).attr("height", H - M.t - M.b)
+    .transition().duration(T).attr("x", (d) => x(Math.max(1.4, d.breakpoint_ci[0]))).attr("width", (d) => x(d.breakpoint_ci[1]) - x(Math.max(1.4, d.breakpoint_ci[0])));
+  gAnn.selectAll("*").remove();
+  if (ok) {
+    gAnn.append("line").attr("x1", x(t.breakpoint)).attr("x2", x(t.breakpoint)).attr("y1", M.t).attr("y2", H - M.b)
+      .attr("stroke", C.text).attr("stroke-width", 1.5).attr("stroke-dasharray", "4 4");
+    gAnn.append("text").attr("class", "annot-strong").attr("x", x(t.breakpoint) + 12).attr("y", M.t + 24)
+      .text(`Breakpoint ≈ ${t.breakpoint.toFixed(1)} h`);
+    gAnn.append("text").attr("class", "annot").attr("x", x(t.breakpoint) + 12).attr("y", M.t + 50)
+      .text(`95% CI ${t.breakpoint_ci[0].toFixed(1)}–${t.breakpoint_ci[1].toFixed(1)} h · ΔAIC ${t.delta_aic.toFixed(1)} vs linear`);
+    gAnn.append("text").attr("class", "annot").attr("x", x(t.breakpoint) + 12).attr("y", M.t + 76)
+      .text(`slope ${t.slope_below.toFixed(0)} pts/h below, ${t.slope_above.toFixed(1)} above`);
+  } else {
+    gAnn.append("text").attr("class", "annot").attr("x", x(4)).attr("y", M.t + 24)
+      .text("No segmented fit preferred over a straight line for this model");
+  }
+  const clipped = pts.filter((p) => p.cv > 160).length;
+  if (clipped) gAnn.append("text").attr("class", "annot").attr("x", lw - 50).attr("y", H - M.b - 12).attr("text-anchor", "end").text(`${clipped} stream${clipped > 1 ? "s" : ""} above 160% shown at the top edge`);
+
+  // Right panel
+  const med = (m, i) => d3.median(D.points.filter((p) => p.m === m && p.h === hz && p.i === i && p.cv != null), (p) => p.cv);
+  const rows = MODELS.map(([m, label]) => ({ m, label, none: med(m, "none"), knn: med(m, "knn") }));
+  xr.domain([40, Math.max(110, d3.max(rows, (r) => Math.max(r.none, r.knn)) * 1.08)]);
+  gxr.transition().duration(T).call(d3.axisBottom(xr).ticks(4).tickFormat((v) => v + "%").tickSize(-(H - M.b - 40 - M.t - 20)))
+    .on("end", function () { d3.select(this).select(".domain").remove(); d3.select(this).selectAll(".tick text").attr("dy", 14); });
+  const g = gRows.selectAll("g.row").data(rows, (r) => r.m).join((e) => {
+    const g = e.append("g").attr("class", "row");
+    g.append("text").attr("class", "label").attr("text-anchor", "end");
+    g.append("line").attr("stroke", C.rule).attr("stroke-width", 3);
+    g.append("circle").attr("class", "none").attr("r", 9).attr("fill", C.blue).attr("stroke", "#fff").attr("stroke-width", 2);
+    g.append("circle").attr("class", "knn").attr("r", 9).attr("fill", C.orange).attr("stroke", "#fff").attr("stroke-width", 2);
+    return g;
+  });
+  g.attr("transform", (r) => `translate(0,${yr(r.m) + yr.bandwidth() / 2})`)
+    .attr("font-weight", (r) => (r.m === model ? 700 : 400));
+  g.select("text").attr("x", rx0 - 18).attr("y", 6).text((r) => r.label.replace(" (multivariate)", " MV").replace(" (univariate)", " UV"))
+    .attr("font-weight", (r) => (r.m === model ? 700 : 400));
+  g.select("line").transition().duration(T).attr("x1", (r) => xr(r.none)).attr("x2", (r) => xr(r.knn));
+  g.select("circle.none").transition().duration(T).attr("cx", (r) => xr(r.none));
+  g.select("circle.knn").transition().duration(T).attr("cx", (r) => xr(r.knn));
+  g.on("pointermove", (ev, r) => Fig.showTip(ev, r.label, [
+    { color: C.blue, value: r.none.toFixed(0) + "%", name: "gaps left as gaps" },
+    { color: C.orange, value: r.knn.toFixed(0) + "%", name: "kNN-imputed" },
+  ])).on("pointerleave", Fig.hideTip);
+}
+draw();
+Fig.onStep(() => {}, 0);
+</script>
+</body>
+</html>

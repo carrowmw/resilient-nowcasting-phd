@@ -42,3 +42,24 @@ def test_decoupled_decoders_and_loss():
     # Verify gradient flow through the first Linear in each head.
     assert model.impute_layer[0].weight.grad is not None
     assert model.forecast_layer[0].weight.grad is not None
+
+
+def test_decoupled_decoders_bfloat16_saturation():
+    """Verify that under bfloat16 autocast or extreme positive logits,
+    pi does not saturate to 1.0 due to bfloat16 mantissa limits.
+    """
+    model = DecoupledDecoders(hidden_dim=64, time_series_dim=3)
+
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        latent_embeddings = torch.randn(2, 10, 12, 64) * 10.0
+        imputed_features, mu, theta, pi, _ = model(latent_embeddings)
+
+    assert pi.dtype == torch.float32
+    assert (pi > 0).all() and (pi < 1.0).all(), "pi must be strictly in (0, 1)"
+
+    from decoders import compute_zinb_nll
+    target = torch.zeros(2, 10)
+    nll = compute_zinb_nll(target, mu, theta, pi)
+    assert not torch.isnan(nll).any()
+    assert not torch.isinf(nll).any()
+

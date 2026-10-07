@@ -28,7 +28,8 @@ def test_resilient_iot_pipeline():
                 'dynamic_features': dyn_masked,
                 'target_impute': dyn.clone(),
                 'target_forecast': torch.randint(0, 50, (num_nodes,)).float(),
-                'node_mask': mask
+                'node_mask': mask,
+                'structural_masks': torch.zeros(num_nodes, seq_len, 2),
             }
             
     dataset = MockPipelineDataset(size=8)
@@ -39,7 +40,8 @@ def test_resilient_iot_pipeline():
             'dynamic_features': torch.stack([b['dynamic_features'] for b in batch_list]),
             'target_impute': torch.stack([b['target_impute'] for b in batch_list]),
             'target_forecast': torch.stack([b['target_forecast'] for b in batch_list]),
-            'node_mask': torch.stack([b['node_mask'] for b in batch_list])
+            'node_mask': torch.stack([b['node_mask'] for b in batch_list]),
+            'structural_masks': torch.stack([b['structural_masks'] for b in batch_list]),
         }
 
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=custom_collate)
@@ -100,6 +102,7 @@ def test_pipeline_kriging_active():
         "target_impute": target_impute,
         "target_forecast": torch.randint(0, 50, (batch_size, num_nodes)).float(),
         "node_mask": torch.zeros_like(dyn, dtype=torch.bool),
+        "structural_masks": torch.zeros(batch_size, num_nodes, seq_len, 2),
         "spatial_holdout_mask": holdout_mask,
         "w_impute": 1.0,
         "w_forecast": 1.0,

@@ -10,7 +10,7 @@ Contract Out — Predictions / Losses. Absence of a capability is expressed as
                Losses (the train loop calls .item() on every component).
 """
 from dataclasses import dataclass
-from typing import NamedTuple, Optional
+from typing import Dict, NamedTuple, Optional
 
 import torch
 
@@ -37,6 +37,7 @@ class Capabilities:
     imputation: bool = False      # imputed [B, N, T, D] is produced
     kriging: bool = False         # kriging_pred [B, K, T, D] is produced
     graph: bool = False           # edge_index / attention exist
+    outage: bool = False          # v5: outage_q is a real P(sensor outage) (outage mixture)
 
 
 class Predictions(NamedTuple):
@@ -48,6 +49,14 @@ class Predictions(NamedTuple):
     edge_index: Optional[torch.Tensor] = None
     attention: Optional[torch.Tensor] = None
     tripwires: tuple = ()
+    # v5 additions (None for models / likelihoods that cannot produce them).
+    point: Optional[torch.Tensor] = None      # [B, N] scored point forecast (raw counts)
+    p_zero: Optional[torch.Tensor] = None     # [B, N] P(slot reads zero / is empty)
+    outage_q: Optional[torch.Tensor] = None   # [B, N] outage probability (outage mixture)
+    quantiles: Optional[torch.Tensor] = None  # [B, N, Q] forecast quantiles (raw counts)
+    quantile_levels: tuple = ()
+    imputed_raw: Optional[torch.Tensor] = None  # [B, N, T] imputed traffic (raw counts)
+    nll_params: Optional[Dict] = None         # {"likelihood", "mu", "theta", "pi"} for CRPS / PIT
 
 
 class Losses(NamedTuple):
@@ -55,3 +64,4 @@ class Losses(NamedTuple):
     impute: torch.Tensor    # zero tensor when unsupported — never a python float
     forecast: torch.Tensor
     kriging: torch.Tensor
+    components: Optional[Dict[str, torch.Tensor]] = None   # v5 per-term breakdown

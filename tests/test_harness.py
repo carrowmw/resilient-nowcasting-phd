@@ -32,6 +32,8 @@ from pipeline import ResilientIoTPipeline
 
 B, N, T, D, S = 2, 10, 6, 3, 5
 WEIGHTS = {"w_impute": 1.0, "w_forecast": 1.0, "w_kriging": 0.5}
+# Losses.components (v5) is an optional per-term breakdown; these four are always tensors.
+LOSS_TENSOR_FIELDS = ("total", "impute", "forecast", "kriging")
 
 
 def make_batch(seed=0):
@@ -43,6 +45,7 @@ def make_batch(seed=0):
         "target_impute": dyn.clone(),
         "target_forecast": torch.randint(0, 30, (B, N), generator=g).float(),
         "node_mask": torch.rand(B, N, T, D, generator=g) < 0.15,
+        "structural_masks": torch.zeros(B, N, T, 2),
         "location_ids": [f"loc_{i}" for i in range(N)],
     }
 
@@ -79,7 +82,8 @@ def test_adapter_contract(adapter_fixture, request):
 
     assert isinstance(losses, Losses) and isinstance(preds, Predictions)
     # Every loss is a scalar tensor — .item() and .backward() must both work.
-    for component in losses:
+    for name in LOSS_TENSOR_FIELDS:
+        component = getattr(losses, name)
         assert torch.is_tensor(component), f"loss component is {type(component)}, not a tensor"
         component.item()
     losses.total.backward()
@@ -190,7 +194,8 @@ def test_holdout_targets_produce_no_loss_signal(adapter_fixture, request):
         return losses
 
     a, b = run(1), run(2)
-    for got, other, name in zip(a, b, Losses._fields):
+    for name in LOSS_TENSOR_FIELDS:
+        got, other = getattr(a, name), getattr(b, name)
         assert got.item() == pytest.approx(other.item(), abs=1e-9), \
             f"{name} moved when holdout targets changed — target leakage"
 
@@ -242,10 +247,14 @@ def test_holdout_manifest_round_trip(tmp_path):
     assert manifest_sha(None) is None
 
 
-def test_mask_from_manifest_rejects_unknown_nodes(tmp_path):
-    manifest = {"holdout_location_ids": ["ghost_sensor"], "num_nodes": 3}
-    with pytest.raises(AssertionError, match="absent"):
-        mask_from_manifest(manifest, ["a", "b", "c"])
+def test_mask_from_manifest_skips_absent_nodes(tmp_path, caplog):
+    """01b32c7 made absent manifest nodes a logged skip (the exporter's inference
+    window may not contain every holdout sensor), not an error."""
+    manifest = {"holdout_location_ids": ["ghost_sensor", "b"], "num_nodes": 3}
+    with caplog.at_level("WARNING", logger="harness.holdout"):
+        mask = mask_from_manifest(manifest, ["a", "b", "c"])
+    assert mask.tolist() == [False, True, False]
+    assert "absent" in caplog.text
 
 
 def test_fixed_holdout_requires_seed_and_nontrivial_split():

@@ -371,3 +371,179 @@ class LSTMSensorForecaster(SensorForecaster):
             "fractional_time": self.fractional_time,
             "seed": self.seed,
         }
+
+
+class PerSensorGRU(nn.Module):
+    """
+    Unidirectional GRU for per-sensor forecasting.
+
+    Architecture: [B, T, D] → GRU → last hidden state [B, H]
+    → Dropout → Linear(H, 1) → scalar [B].
+
+    Deliberately unidirectional (contrast with the BiLSTM) so the comparison
+    isolates the gate mechanism (GRU vs LSTM) from the data-flow direction.
+    """
+
+    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float):
+        super().__init__()
+        assert input_dim >= 1 and hidden_dim >= 1 and num_layers >= 1, \
+            f"CRITICAL: bad GRU dims ({input_dim}, {hidden_dim}, {num_layers})"
+        self.gru = nn.GRU(
+            input_dim,
+            hidden_dim,
+            num_layers,
+            batch_first=True,
+            bidirectional=False,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+        self.dropout = nn.Dropout(dropout)
+        # Unidirectional: head receives hidden_dim (not 2 * hidden_dim)
+        self.head = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        assert x.dim() == 3, f"CRITICAL: GRU input must be [B, T, D], got {tuple(x.shape)}"
+        out, _ = self.gru(x)               # [B, T, H]
+        last = self.dropout(out[:, -1, :])  # [B, H]
+        y = self.head(last).squeeze(-1)     # [B]
+        assert torch.isfinite(y).all(), "CRITICAL: non-finite GRU output"
+        return y
+
+
+class GRUSensorForecaster(SensorForecaster):
+    """Training wrapper for PerSensorGRU: Adam + MSE + StepLR + early stopping.
+
+    Interface identical to LSTMSensorForecaster — same WindowDataset, same
+    hyperparameter schema, same capability contract.
+    """
+    capabilities = QualityCapabilities(trainable=True, uses_history=False, multivariate=True)
+
+    def __init__(
+        self,
+        feature_groups: Sequence[str],
+        hidden_dim: int = 64,
+        num_layers: int = 2,
+        dropout: float = 0.1,
+        lr: float = 1e-3,
+        batch_size: int = 128,
+        epochs: int = 30,
+        patience: int = 5,
+        scheduler_step_size: int = 5,
+        scheduler_gamma: float = 0.7,
+        fractional_time: bool = True,
+        seed: int = 42,
+        device: Optional[str] = None,
+        num_workers: int = 0,
+    ):
+        self.feature_groups = tuple(feature_groups)
+        self.name = "gru_uv" if self.feature_groups == ("count",) else "gru_mv"
+        self.capabilities = QualityCapabilities(
+            trainable=True, uses_history=False,
+            multivariate=len(self.feature_groups) > 1,
+        )
+        self.input_dim = sum(FEATURE_GROUP_DIMS[g] for g in self.feature_groups)
+        self.hidden_dim = int(hidden_dim)
+        self.num_layers = int(num_layers)
+        self.dropout = float(dropout)
+        self.lr = float(lr)
+        self.batch_size = int(batch_size)
+        self.epochs = int(epochs)
+        self.patience = int(patience)
+        self.scheduler_step_size = int(scheduler_step_size)
+        self.scheduler_gamma = float(scheduler_gamma)
+        self.fractional_time = bool(fractional_time)
+        self.seed = int(seed)
+        self.num_workers = int(num_workers)
+        self.device = torch.device(
+            device if device else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        self._model: Optional[PerSensorGRU] = None
+
+    def _loader(self, split: PerSensorSplit, shuffle: bool) -> DataLoader:
+        ds = WindowDataset(split, self.feature_groups, self.fractional_time)
+        return DataLoader(
+            ds, batch_size=self.batch_size, shuffle=shuffle,
+            num_workers=self.num_workers, drop_last=False,
+        )
+
+    def fit(self, train: PerSensorSplit, val: PerSensorSplit) -> FitReport:
+        torch.manual_seed(self.seed)
+        np.random.seed(self.seed)
+
+        model = PerSensorGRU(self.input_dim, self.hidden_dim, self.num_layers, self.dropout)
+        model.to(self.device)
+        optimiser = torch.optim.Adam(model.parameters(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimiser, step_size=self.scheduler_step_size, gamma=self.scheduler_gamma
+        )
+        criterion = nn.MSELoss()
+        train_loader = self._loader(train, shuffle=True)
+        val_loader = self._loader(val, shuffle=False)
+
+        best_val = float("inf")
+        best_state = None
+        epochs_no_improve = 0
+        epochs_run = 0
+        for epoch in range(self.epochs):
+            model.train()
+            for xb, yb in train_loader:
+                xb, yb = xb.to(self.device), yb.to(self.device)
+                optimiser.zero_grad()
+                loss = criterion(model(xb), yb)
+                assert torch.isfinite(loss), \
+                    f"CRITICAL: non-finite train loss at epoch {epoch}"
+                loss.backward()
+                optimiser.step()
+            scheduler.step()
+            epochs_run = epoch + 1
+
+            model.eval()
+            val_losses = []
+            with torch.no_grad():
+                for xb, yb in val_loader:
+                    xb, yb = xb.to(self.device), yb.to(self.device)
+                    val_losses.append(criterion(model(xb), yb).item() * len(yb))
+            val_loss = sum(val_losses) / len(val_loader.dataset)
+
+            if val_loss < best_val - 1e-6:
+                best_val = val_loss
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= self.patience:
+                    break
+
+        assert best_state is not None, "CRITICAL: GRU training produced no best state"
+        model.load_state_dict(best_state)
+        self._model = model
+        return FitReport(fitted=True, epochs_run=epochs_run, best_val_loss=best_val)
+
+    def predict(self, split: PerSensorSplit) -> np.ndarray:
+        assert self._model is not None, "CRITICAL: predict() before fit()"
+        loader = self._loader(split, shuffle=False)
+        self._model.eval()
+        preds: List[np.ndarray] = []
+        with torch.no_grad():
+            for xb, _ in loader:
+                preds.append(self._model(xb.to(self.device)).cpu().numpy())
+        out = np.concatenate(preds).astype(np.float64)
+        assert len(out) == len(split), \
+            f"CRITICAL: prediction count {len(out)} != window count {len(split)}"
+        return out
+
+    def get_params(self) -> Dict:
+        return {
+            "feature_groups": list(self.feature_groups),
+            "input_dim": self.input_dim,
+            "hidden_dim": self.hidden_dim,
+            "num_layers": self.num_layers,
+            "dropout": self.dropout,
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs": self.epochs,
+            "patience": self.patience,
+            "scheduler_step_size": self.scheduler_step_size,
+            "scheduler_gamma": self.scheduler_gamma,
+            "fractional_time": self.fractional_time,
+            "seed": self.seed,
+        }

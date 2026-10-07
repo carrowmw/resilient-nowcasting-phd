@@ -12,6 +12,7 @@ import json
 import os
 from typing import Dict, List, Optional
 
+import numpy as np
 import torch
 
 from dataset import make_spatial_holdout_mask
@@ -37,6 +38,36 @@ def make_fixed_holdout_mask(
     return mask
 
 
+def inductive_holdout_ids(all_location_ids: List[str], holdout_frac: float, seed: int) -> List[str]:
+    """Held-out location IDs, drawn over the FULL station list (before any
+    training-station subsampling), so the evaluation set never depends on how
+    many training stations a run keeps."""
+    mask = make_fixed_holdout_mask(len(all_location_ids), holdout_frac, seed)
+    return [loc for loc, held in zip(all_location_ids, mask.tolist()) if held]
+
+
+def select_network_locations(
+    all_location_ids: List[str],
+    holdout_frac: float,
+    holdout_seed: int,
+    train_node_count: int,
+    train_node_seed: int,
+) -> List[str]:
+    """Stations kept in a sensor-density run: the full inductive holdout plus the
+    first `train_node_count` stations of a seeded permutation of the remaining pool.
+    Subsets are nested (a smaller count is a prefix of a larger one), so a scaling
+    sweep adds stations rather than redrawing the network at every density."""
+    held = set(inductive_holdout_ids(all_location_ids, holdout_frac, holdout_seed))
+    pool = [loc for loc in all_location_ids if loc not in held]
+    assert train_node_count <= len(pool), (
+        f"CRITICAL: data.train_node_count={train_node_count} but only {len(pool)} "
+        f"non-holdout stations exist"
+    )
+    order = np.random.RandomState(train_node_seed).permutation(len(pool))
+    keep = {pool[i] for i in order[:train_node_count]} | held
+    return [loc for loc in all_location_ids if loc in keep]
+
+
 def save_holdout_manifest(
     checkpoint_dir: str,
     location_ids: List[str],
@@ -53,6 +84,10 @@ def save_holdout_manifest(
         "num_nodes": len(location_ids),
         "holdout_location_ids": [
             loc for loc, held in zip(location_ids, holdout_mask.tolist()) if held
+        ],
+        # Not part of manifest_sha: the stations the model could learn from.
+        "train_location_ids": [
+            loc for loc, held in zip(location_ids, holdout_mask.tolist()) if not held
         ],
     }
     path = os.path.join(checkpoint_dir, HOLDOUT_MANIFEST_FILENAME)

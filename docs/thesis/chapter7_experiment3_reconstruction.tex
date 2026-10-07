@@ -1,0 +1,852 @@
+% =====================================================================
+% Chapter 7 -- Experiment 3: Reconstruction-Augmented Forecasting
+%              Without Imputation -- Results and Discussion
+% ---------------------------------------------------------------------
+% Required packages (preamble): booktabs, multirow, amsmath, graphicx
+% Lines marked "% AUTHOR-CHECK" are claims that depend on implementation
+% details the author should confirm before submission.
+% =====================================================================
+
+\section{Results}
+\label{sec:exp3-results}
+
+This section reports the empirical behaviour of RIoT v4 on the held-out
+chronological test partition. It begins by setting out exactly what the
+reported metrics measure, because several of the conclusions drawn later
+depend on how missing observations enter the evaluation targets. It then
+places the v4 results against the historical v3 record, examines the
+contribution of spatial message passing relative to a non-spatial
+baseline, and deconstructs the architecture through four single-factor
+ablations and two optimisation variants.
+
+\subsection{Evaluation protocol and metric definitions}
+\label{sec:exp3-protocol}
+
+All v4 configurations were trained and evaluated under the protocol
+introduced in Section~\ref{sec:exp3-method}: a strict chronological
+70/15/15 split across the multi-month record, a purge gap of
+$T + h = 13$ steps (3.25\,h) between consecutive partitions, and
+standardisation statistics estimated on the training partition alone.
+The network comprises all 81 sensor locations, of which 24 are designated
+as inductive stations. These stations are excluded from every
+gradient-producing loss term during training and are encountered only at
+evaluation time, so that kriging performance on them constitutes a
+genuine zero-shot spatial transfer test. The inductive set was drawn
+once, with a fixed seed (42), and is shared across all configurations,
+so every run is scored on the same 24 stations.
+
+The forecast metrics (RMSE, MAE and ZIR) are averaged over \emph{all
+81 nodes}, not over the 57 transductive nodes alone. The inductive
+stations are excluded from the training losses, and at evaluation time
+their dynamic inputs are zeroed and their total-missingness channel is
+set to ``unobserved''. They nonetheless still receive horizon-$h$
+forecasts, and those forecasts are scored alongside the transductive
+ones. Each headline forecast figure is therefore a blend: roughly
+70\% of it reflects transductive forecasting from a node's own history,
+and roughly 30\% reflects zero-shot forecasting at stations whose
+history the model never sees. This blend affects every configuration
+equally, so comparisons between runs remain valid. Absolute values,
+however, should not be read as transductive forecast skill.
+Section~\ref{sec:exp3-limitations} lists the stratified re-scoring this
+calls for.
+
+One implementation detail also qualifies the zero-shot claim. When the
+inductive stations are blanked, only the total-missingness channel is
+overwritten. The night-restricted missingness channel
+(Section~\ref{sec:exp3-zero-recall}) keeps its true values. The model
+can therefore see exactly when each inductive station was unobserved
+at night during the input window, and because targets are zero-filled,
+this reveals when that station's targets are likely to be zero. The
+leak is narrow, since it carries no count values, daytime outage
+pattern or observed-zero information. It does, however, bear directly
+on the kriging metrics, on forecast error at the inductive stations,
+and on ZIR. The kriging results below should be read as provisional
+until they are re-scored with this channel blanked for held-out
+stations.
+
+Four properties of the metric implementation matter for interpretation.
+
+\begin{enumerate}
+    \item \textbf{Forecast RMSE and MAE} are computed on raw pedestrian
+    counts at horizon $h$, with the point forecast taken as the ZINB
+    expectation $\hat{y} = \hat{\mu}(1 - \hat{\pi})$.
+    \item \textbf{Forecast targets at unobserved timestamps are zero.}
+    Missing values in the count series are zero-filled before targets
+    are constructed, and the ZINB likelihood is evaluated on those
+    targets without a validity mask. An interval in which a sensor
+    failed to report is therefore scored, and trained, as though zero
+    pedestrians passed. The missingness mask channels remain the only
+    signal by which the model can tell an observed zero from an
+    unobserved interval.
+    \item \textbf{The Zero-Identification Rate (ZIR)} is the proportion
+    of target positions with $y = 0$ for which the zero-inflation head
+    assigns $\hat{\pi} > 0.5$. The implementation logs this quantity as
+    \texttt{zero\_acc}, but it is \emph{not} a measure of accuracy, and
+    it should not be maximised. Given (2), its denominator combines
+    genuinely observed zeros with \emph{all} zero-filled unobserved
+    intervals, at any time of day. Only some of those intervals are
+    plausible physical zeros. A ZIR of 100\% would mean the model
+    treats every sensor outage as an absence of pedestrians, which is
+    physically implausible for daytime gaps. We therefore read ZIR as
+    the share of zero-valued targets that the model identifies as
+    plausible structural zeros, and interpret it against a plausibility
+    band (Section~\ref{sec:exp3-zero-recall}), not against a
+    maximum. No corresponding precision is reported.
+    \item \textbf{Imputation and kriging errors are reported in
+    standardised ($z$-score) space.} Imputation MSE is evaluated on
+    artificially masked entries across all dynamic channels. Kriging
+    RMSE and MAE are computed across all dynamic channels (traffic and
+    the two meteorological covariates) of the 24 inductive stations.
+    Kriging MSLE is computed on the traffic channel only, after clamping
+    standardised values at zero, which means it scores
+    above-mean activity only. None of these three quantities is on the
+    same scale as the forecast RMSE, and they should not be compared
+    with it numerically.
+\end{enumerate}
+
+We call the design in (2) and (3) \emph{forecasting without imputation}
+in the sense intended throughout this thesis: no statistical or learned
+imputation is applied before modelling. It is not a model-free treatment
+of missingness, however. Zero-filling combined with explicit mask
+channels is itself a representational choice, and
+Section~\ref{sec:exp3-zero-recall} shows that it has direct consequences
+for what the zero-inflation head learns.
+
+Each configuration is reported from a single training run.
+% AUTHOR-CHECK: confirm single seed per configuration.
+Differences of the order of 0.5--1.0 RMSE between configurations should
+therefore be treated as indicative, not as established, until they are
+replicated across seeds (Section~\ref{sec:exp3-limitations}).
+
+% ---------------------------------------------------------------------
+\subsection{Integrity versus performance: RIoT v3 and RIoT v4}
+\label{sec:exp3-v3-v4}
+
+Table~\ref{tab:exp3-v3-v4} sets out the methodological differences
+between the two pipeline generations alongside their headline error
+figures.
+
+\begin{table}[htbp]
+    \centering
+    \caption[Methodological and empirical comparison of RIoT v3 and RIoT v4]%
+    {Methodological and empirical comparison of the RIoT v3 and RIoT v4
+    experimental pipelines. v3 figures are validation-set values under
+    overlapping sliding-window splits; no out-of-sample test partition
+    existed in v3. Error figures are not directly commensurable across
+    generations (see text).}
+    \label{tab:exp3-v3-v4}
+    \small
+    \begin{tabular}{@{}p{0.26\textwidth}p{0.32\textwidth}p{0.34\textwidth}@{}}
+        \toprule
+        \textbf{Dimension} & \textbf{RIoT v3} & \textbf{RIoT v4} \\
+        \midrule
+        \multicolumn{3}{@{}l}{\emph{Protocol}} \\
+        Data split & Ad-hoc 24\,h slice or random sliding windows
+                   & Chronological 70/15/15 \\
+        Window overlap across folds & Up to 11 of 12 steps shared
+                   & None; 13-step (3.25\,h) purge gap \\
+        Scaler fitting & Global (full record) & Training partition only \\
+        Test partition & None & Held-out chronological test set \\
+        \midrule
+        \multicolumn{3}{@{}l}{\emph{Spatial scope}} \\
+        Real sensor nodes & 61 & 81 (incl.\ 27 reclaimed peripheral stations) \\
+        Zero-history nodes & 5 simulated; degenerate ($r = 1.00$)
+                   & 24 real inductive stations \\
+        \midrule
+        \multicolumn{3}{@{}l}{\emph{Model and objective}} \\
+        Temporal positional encoding & No & Sinusoidal \\
+        Input channels & Value only & Value, sensor status, artificial mask, MNAR mask \\
+        Reconstruction loss & Raw-count MSE (mean 1{,}537; peaks $>$94{,}000)
+                   & Normalised imputation loss \\
+        Kriging supervision & No explicit inductive term
+                   & $w_{\text{kriging}}\mathcal{L}_{\text{kriging}}$ \\
+        \midrule
+        \multicolumn{3}{@{}l}{\emph{Headline forecast error (raw counts)}} \\
+        Validation RMSE & 21.51--26.56 (23 runs; best 21.51)
+                   & 17.94 (full); 16.34 (bs\,=\,32) \\
+        Validation MAE & 5.62--6.38 (representative runs)
+                   & 5.58 (full); 5.88 (bs\,=\,32) \\
+        Test RMSE / MAE & -- & 18.16 / 5.17 (full); 16.84 / 5.42 (bs\,=\,32) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+% AUTHOR-CHECK: the v3 "Input channels" and "Kriging supervision" rows are
+% inferred from the chapter's description of v4 additions; verify against
+% the v3 configuration.
+
+The best v4 validation RMSE (17.94 for the reference configuration) is
+16.6\% below the best v3 validation RMSE (21.51), and the v4 test RMSE
+(18.16) is lower than every v3 validation figure. This is not the
+direction one would expect after removing leakage. Overlapping windows
+and global scaling both bias error estimates \emph{downwards}, so a
+faithful re-evaluation of the v3 model under v4 hygiene would be expected
+to produce higher errors than those originally reported, not lower ones.
+
+We do not read the v3--v4 gap as evidence of an architectural gain of
+roughly 16\%. At least three confounders separate the two sets of
+numbers:
+
+\begin{enumerate}
+    \item \textbf{Different populations of nodes.} The 27 reclaimed
+    peripheral stations are, almost by construction, lower-footfall
+    locations. Because RMSE in raw counts scales with the magnitude of
+    the series, adding low-volume nodes lowers network-averaged RMSE
+    mechanically, even if per-node skill is unchanged.
+    \item \textbf{Different temporal coverage.} The v4 test partition is
+    the final 15\% of the record. Its seasonal and event composition
+    differs from both the v3 24-hour slice and the randomly sampled v3
+    windows.
+    \item \textbf{Different target treatment.} Section~\ref{sec:exp3-zero-recall}
+    shows that the v4 zero-inflation head can drive $\hat{y}$ towards
+    zero at zero-filled outage intervals. This reduces error at
+    positions that, in a physical sense, carry no ground truth at all.
+\end{enumerate}
+
+The defensible claim is therefore narrower. Under a protocol that is
+strictly more conservative than v3's, RIoT v4 reaches forecast errors at
+least as low as v3 reported under a leaky protocol. The v4 validation
+estimates also transfer to the test partition with little degradation:
+the reference model's RMSE rises from 17.94 to 18.16 (+1.2\%) between
+validation and test, and its MAE falls from 5.58 to 5.17. A small,
+bidirectional validation--test gap of this kind suggests that neither
+model selection nor early stopping has overfitted the validation fold.
+It is the main affirmative result of the protocol overhaul. It shows
+that v4 figures can be trusted as forecasts of out-of-sample behaviour,
+which v3 figures could not. A like-for-like attribution of the
+architectural contribution would require re-scoring v4 on the original
+61-node subset, or reporting a scale-normalised error such as RMSE
+divided by per-node mean footfall. We leave this as an explicit item of
+further work, and do not infer it from the present comparison.
+
+% ---------------------------------------------------------------------
+\subsection{Test-set performance of the v4 configurations}
+\label{sec:exp3-main}
+
+Table~\ref{tab:exp3-main} reports all eight v4 configurations on the
+held-out test partition. Table~\ref{tab:exp3-delta} expresses each as a
+relative change from the reference full model (\texttt{wph1nhvj}).
+
+\begin{table}[htbp]
+    \centering
+    \caption[RIoT v4 test-set results]%
+    {RIoT v4 results on the held-out chronological test partition
+    (81 nodes; 24 inductive stations). Forecast RMSE and MAE are in raw
+    counts. Imputation MSE and kriging metrics are in standardised space
+    (Section~\ref{sec:exp3-protocol}). Best value per column in bold;
+    arrows give the direction of improvement.}
+    \label{tab:exp3-main}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{@{}llrrrrrrr@{}}
+        \toprule
+        & & \multicolumn{3}{c}{\textbf{Forecast}} & \textbf{Recon.}
+          & \multicolumn{3}{c}{\textbf{Kriging (inductive)}} \\
+        \cmidrule(lr){3-5} \cmidrule(lr){6-6} \cmidrule(l){7-9}
+        \textbf{Configuration} & \textbf{Run}
+          & RMSE$\downarrow$ & MAE$\downarrow$ & ZIR
+          & Imp.\ MSE$\downarrow$
+          & RMSE$\downarrow$ & MAE$\downarrow$ & MSLE$\downarrow$ \\
+        \midrule
+        Full model (reference)       & \texttt{wph1nhvj} & 18.164 & \textbf{5.174} & 0.554 & \textbf{0.0241} & 0.2351 & 0.0520 & \textbf{0.0356} \\
+        Non-spatial LSTM             & \texttt{l5ck2j76} & 22.237 & 11.501 & --    & 0.1246 & 0.3873 & 0.2829 & 0.0385 \\
+        \midrule
+        \multicolumn{9}{@{}l}{\emph{Ablations}} \\
+        \quad No imputation loss     & \texttt{vkk1ot7g} & 19.538 & 5.678 & 0.378 & 0.1521 & 0.2490 & 0.0568 & 0.0381 \\
+        \quad No kriging loss        & \texttt{nfdgnlp9} & 18.754 & 5.298 & 0.602 & 0.0265 & 0.4397 & 0.3321 & 0.0794 \\
+        \quad No missingness masks   & \texttt{ak47uk50} & 19.912 & 6.189 & 0.295 & 0.0305 & 0.2683 & 0.0734 & 0.0381 \\
+        \quad No positional encoding & \texttt{pcj4st27} & 18.977 & 5.448 & 0.595 & 0.0265 & 0.2482 & 0.0554 & 0.0372 \\
+        \midrule
+        \multicolumn{9}{@{}l}{\emph{Optimisation variants}} \\
+        \quad Batch size 32          & \texttt{iou8v4o8} & \textbf{16.839} & 5.416 & 0.386 & 0.0268 & \textbf{0.2133} & 0.0526 & 0.0374 \\
+        \quad Dropout 0.3            & \texttt{9f0g2fbv} & 19.527 & 5.570 & 0.362 & 0.0276 & 0.2497 & \textbf{0.0511} & 0.0375 \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+\begin{table}[htbp]
+    \centering
+    \caption[Relative change against the full model]%
+    {Relative change of each configuration against the full model
+    (\texttt{wph1nhvj}). Positive values indicate higher error, except
+    for ZIR, which is given as an absolute change in percentage
+    points (pp). Single-run estimates.}
+    \label{tab:exp3-delta}
+    \small
+    \begin{tabular}{@{}lrrrrrrr@{}}
+        \toprule
+        & \multicolumn{3}{c}{\textbf{Forecast}} & \textbf{Recon.}
+          & \multicolumn{3}{c}{\textbf{Kriging}} \\
+        \cmidrule(lr){2-4} \cmidrule(lr){5-5} \cmidrule(l){6-8}
+        \textbf{Configuration}
+          & $\Delta$RMSE & $\Delta$MAE & $\Delta$ZIR (pp)
+          & $\Delta$MSE
+          & $\Delta$RMSE & $\Delta$MAE & $\Delta$MSLE \\
+        \midrule
+        Non-spatial LSTM       & +22.4\% & +122.3\% & --     & +417\% & +64.7\% & +444\% & +8.1\% \\
+        No imputation loss     & +7.6\%  & +9.7\%   & $-17.6$ & +531\% & +5.9\%  & +9.2\% & +7.0\% \\
+        No kriging loss        & +3.2\%  & +2.4\%   & $+4.8$  & +10.0\% & +87.0\% & +539\% & +123\% \\
+        No missingness masks   & +9.6\%  & +19.6\%  & $-25.9$ & +26.6\% & +14.1\% & +41.2\% & +7.0\% \\
+        No positional encoding & +4.5\%  & +5.3\%   & $+4.2$  & +10.0\% & +5.6\%  & +6.5\% & +4.5\% \\
+        \midrule
+        Batch size 32          & $-7.3$\% & +4.7\%  & $-16.8$ & +11.2\% & $-9.3$\% & +1.2\% & +5.1\% \\
+        Dropout 0.3            & +7.5\%  & +7.7\%   & $-19.2$ & +14.5\% & +6.2\%  & $-1.7$\% & +5.3\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Three regularities are visible before any single mechanism is examined.
+First, every ablation increases forecast RMSE and MAE relative to the
+reference model. No component can be removed without some cost to
+forecasting, although the cost ranges from marginal (kriging loss,
++3.2\% RMSE) to substantial (missingness masks, +19.6\% MAE). Second, the
+ablations are largely \emph{selective}. Each one degrades most sharply
+the output its component was designed to support: removing the kriging
+loss damages kriging, removing the imputation loss damages
+reconstruction, and removing the masks damages zero-classification.
+This selectivity is what one would hope to see if the multi-task
+objective is genuinely factorised and not simply over-parameterised.
+Third, ZIR does not move with forecast accuracy. The two
+configurations with the highest ZIR (no kriging loss, 0.602; no
+positional encoding, 0.595) are both less accurate than the reference
+model, while the most accurate configuration by RMSE (batch size 32) has
+one of the lowest (0.386). This dissociation is taken up in
+Section~\ref{sec:exp3-zero-recall}.
+
+% ---------------------------------------------------------------------
+\section{Discussion}
+\label{sec:exp3-discussion}
+
+\subsection{The inductive value of spatial representation}
+\label{sec:exp3-spatial}
+
+On every metric it reports, the non-spatial LSTM baseline
+(\texttt{l5ck2j76}) is worse than the full model. Forecast RMSE is 22.4\%
+higher, forecast MAE more than doubles (11.50 against 5.17), and on the
+24 inductive stations kriging RMSE and MAE are 64.7\% and 444\% higher.
+Taken at face value, this would be strong evidence that spatial message
+passing contributes to both transductive forecasting and zero-shot
+kriging. Two features of the comparison call for a more measured
+reading.
+
+The first is that the baseline differs from the full model in more than
+its spatial component. It has no zero-inflation head, so its point
+forecast is $\hat{\mu}$ and not $\hat{\mu}(1-\hat{\pi})$. It therefore
+cannot zero out the forecast at the zero-filled outage intervals that
+make up a substantial fraction of the targets
+(Section~\ref{sec:exp3-zero-recall}). An error concentrated at positions
+where $y=0$ inflates MAE disproportionately relative to RMSE, and this is
+exactly the signature observed. The RMSE/MAE ratio is 1.93 for the LSTM,
+against 3.51 for the full model, which indicates that the LSTM's error
+is spread broadly across many moderate misses, not concentrated in a few
+large ones. A substantial share of the 55\% MAE gap is therefore more
+plausibly attributable to the distributional head than to the graph. The
+comparison establishes that the \emph{full RIoT architecture} is
+superior to a recurrent baseline. It does not isolate the contribution
+of spatial message passing. The baseline also receives neither the
+missingness-mask channels nor static node covariates. Its only input is
+the zero-filled dynamic series, and it is trained with a plain MSE loss.
+It therefore lacks both the mask-driven zero mechanism discussed in
+Section~\ref{sec:exp3-zero-recall} and any means of telling an outage
+from an observed zero.
+
+The second concerns what the kriging metrics can distinguish. The LSTM
+has no mechanism for propagating information from observed neighbours
+to an unseen station. Its kriging output for an inductive station is
+simply its reconstruction of that station's zeroed input, produced
+without any location information. This makes it a strict ``spatially
+blind'' reference point. The
+full model's kriging MAE (0.052 in standardised units) is roughly
+one-fifth of this reference (0.283), which is direct evidence that
+information is being transferred from observed to unobserved locations.
+The MSLE gap, by contrast, is small (0.0356 against 0.0385, $-7.5\%$).
+Since MSLE here scores only above-mean traffic on a logarithmic scale,
+this suggests that the spatial model's advantage lies mostly in
+low-to-moderate activity regimes and in the meteorological channels,
+which vary smoothly in space. At high-footfall peaks, where log-scale
+errors dominate, the advantage is modest. Because the kriging RMSE and
+MAE pool the traffic channel with two meteorological covariates, part
+of the headline kriging advantage may reflect interpolation of spatially
+smooth weather fields and not pedestrian dynamics. A traffic-only
+kriging error in raw counts is needed to settle this.
+
+With these qualifications, the strongest spatial evidence in the chapter
+comes not from the baseline comparison but from Ablation~2
+(Section~\ref{sec:exp3-abl-kriging}). There, the graph architecture is
+held fixed and only the inductive supervision is removed. The resulting
+collapse in kriging performance shows that the graph is necessary but
+not sufficient for zero-shot transfer.
+
+Relative to v3, the inductive evaluation is itself the principal
+advance. The v3 simulated zero-history nodes produced pairwise
+correlations of $r = 1.00$, which means the model assigned an identical
+series to all five locations regardless of their coordinates. The 24 v4
+inductive stations are real sensors with real ground truth, and the
+existence of a meaningful gap between the spatially informed model and a
+spatially blind reference is the first evidence in this thesis that RIoT
+discriminates between unseen locations at all.
+% AUTHOR-CHECK: a pairwise-correlation diagnostic across the 24 inductive
+% stations' kriged series would allow a direct v3/v4 degeneracy comparison.
+
+% ---------------------------------------------------------------------
+\subsection{Deconstructing the architecture}
+\label{sec:exp3-ablations}
+
+\subsubsection{Joint reconstruction as a regulariser (Ablation 1)}
+\label{sec:exp3-abl-impute}
+
+Setting $w_{\text{impute}} = 0$ increases forecast RMSE by 7.6\% and MAE
+by 9.7\%, and reduces ZIR by 17.6 percentage points. The
+eightfold rise in imputation MSE (0.024 to 0.152) is expected: without
+supervision, the reconstruction decoder is untrained, so this figure
+tells us nothing about representational quality. The informative
+quantity is the forecasting degradation. It shows that reconstruction
+supervision improves the forecasting head even though the forecasting
+head never sees its output.
+
+The most parsimonious explanation is that the masked-reconstruction
+objective acts as a regulariser on the shared temporal encoder. To
+reconstruct artificially masked entries, the encoder must retain
+information about within-window temporal structure and cross-channel
+dependencies that a one-step-ahead forecasting loss alone would not
+require. The resulting representation appears to be more robust to the
+irregular observation patterns present at test time. This matches the
+general finding from masked auto-encoding that reconstruction pretexts
+encourage representations that transfer beyond the pretext task. It
+extends that finding to a setting where the two tasks are trained
+jointly and not sequentially. The kriging metrics also degrade modestly
+(+5.9\% RMSE), consistent with a shared encoder whose general quality
+has declined.
+
+Two alternative explanations cannot be excluded from a single run. The
+auxiliary loss may simply change the effective learning-rate schedule
+of the shared parameters by adding gradient magnitude. It may also help
+chiefly by teaching the encoder to handle the NaN-injected inputs it
+encounters at test time, since artificial masking is applied during
+evaluation as well as during training. The second explanation is not a
+flaw, since robustness to missing input is the objective, but it implies
+that the benefit is partly specific to the masking regime used here. On
+balance, the evidence favours retaining joint reconstruction. It is not
+an unnecessary auxiliary burden, and on this evidence it earns its
+place in the objective.
+
+\subsubsection{Inductive supervision and spatial generalisation (Ablation 2)}
+\label{sec:exp3-abl-kriging}
+
+Removing the kriging loss produces the most dramatic and most selective
+effect in the ablation set. Forecast RMSE rises by only 3.2\% and
+imputation MSE barely changes, but on the 24 inductive stations kriging
+RMSE rises by 87\%, kriging MAE increases more than sixfold (0.052 to
+0.332), and kriging MSLE more than doubles (0.0356 to 0.0794).
+
+The most consequential observation is that, without the kriging loss,
+the graph model performs \emph{worse} at inductive locations than the
+non-spatial LSTM on all three kriging metrics (MAE 0.332 against 0.283;
+MSLE 0.079 against 0.039). A spatial architecture that is trained only
+on transductive forecasting and reconstruction does not produce usable
+representations for unseen nodes. Its kriging decoder, deprived of
+supervision, performs below a spatially blind reference. Message passing
+over a learned graph provides the \emph{capacity} for spatial transfer,
+but the inductive objective is what converts that capacity into
+behaviour. Spatial generalisation in this architecture is therefore
+learned, not emergent. For practical kriging, this means inductive
+supervision must be part of the training objective. It should not be
+treated as an optional refinement.
+
+The small forecasting cost of removing the kriging term (+3.2\% RMSE)
+indicates that the term also provides mild regularisation to the shared
+representation. The simultaneous \emph{rise} in ZIR to 0.602 is
+harder to interpret. One possibility is that the kriging term competes
+with the zero-inflation head for shared capacity, so that freeing that
+capacity lets the model fit the zero-filled targets more aggressively.
+Section~\ref{sec:exp3-zero-recall} suggests why higher ZIR is not
+necessarily desirable.
+
+\subsubsection{The role of explicit missingness masks (Ablation 3)}
+\label{sec:exp3-abl-masks}
+
+Removing the two missingness-mask channels causes the largest
+forecasting degradation of any ablation. RMSE rises by 9.6\%, MAE by
+19.6\%, and ZIR falls by 25.9 points to 0.295. It is also the
+only ablation for which we have validation figures showing a notably
+larger generalisation gap. Validation-to-test RMSE rises by 7.6\% (18.50
+to 19.91), compared with 1.2\% for the reference model and 3.0\% for the
+batch-size-32 variant.
+
+Two mechanisms, not mutually exclusive, explain why this ablation hurts
+most. The first is \emph{disambiguation}. Once missing values are
+zero-filled, the value channel alone cannot distinguish ``zero
+pedestrians observed'' from ``no observation''. Both map to the same
+standardised constant. The masks resolve that ambiguity for every step
+of the input window. Without them, the encoder must infer outages
+indirectly from the exact recurrence of a constant value, which is
+unreliable in low-footfall periods where true zeros are common. The
+larger validation-to-test gap fits this account: if the pattern of
+outages shifts between chronological folds, a model that must learn
+outage signatures implicitly will generalise less well than one that is
+told about them explicitly.
+
+The second mechanism is \emph{target alignment}, and it is the less
+comfortable of the two. Because unobserved target intervals are scored
+as $y = 0$, and because sensor outages persist over consecutive
+timestamps, the mask state at the final input step is a strong predictor
+of whether the target will be zero. A model with access to the masks can
+learn to set $\hat{\pi} \to 1$ whenever a sensor is currently offline. It
+is then rewarded twice: by the ZINB likelihood during training, and by
+near-zero point error on those positions at test time. Part of the
+accuracy lost in Ablation~3 is therefore accuracy on intervals that have
+no physical ground truth. The ablation shows that the masks are
+indispensable \emph{under the current target definition}. It does not
+by itself show how much of their value comes from better modelling of
+observed dynamics and how much comes from a better ability to predict
+the zero-filling convention. We examine this directly in the next
+section.
+
+\subsubsection{The cost of permutation equivariance (Ablation 4)}
+\label{sec:exp3-abl-pe}
+
+Without sinusoidal positional encodings, the Transformer's temporal
+self-attention is permutation-equivariant over the input window. The
+cost is consistent but moderate: forecast RMSE and MAE rise by 4.5\% and
+5.3\%, imputation MSE by 10\%, and the three kriging metrics by 4.5--6.5\%.
+
+The mildness of this effect needs explaining, since urban pedestrian
+flow is strongly ordered in time. Commuting peaks, lunchtime surges and
+the evening decline all depend on sequence as well as on value. Two
+factors probably limit the penalty. First, with a 12-step (3\,h) window,
+much of the ordinal information is recoverable from content: a
+monotonically rising count sequence during the morning implies its own
+order, even to an order-agnostic mechanism. Second, other components
+likely supply temporal position indirectly, such as any recurrent or
+convolutional encoding stage and the forecasting head's read-out from
+the final step.
+% AUTHOR-CHECK: state whether time-of-day/day-of-week covariates or any
+% order-sensitive layers precede the attention block.
+Positional encoding is thus best described as a low-cost, reliable
+refinement, not a load-bearing component. It removes a structural
+inductive bias that runs against the physics of the problem, and it
+buys roughly 0.8 RMSE for no measurable computational cost. We would
+expect its contribution to grow with longer input windows, where
+content-based recovery of order becomes harder.
+
+% ---------------------------------------------------------------------
+\subsection{ZIR and the risk of shortcut learning}
+\label{sec:exp3-zero-recall}
+
+The reference model reaches a ZIR of 0.554. Whether this counts
+as a success depends entirely on what the zeros are.
+
+\paragraph{The physical bound.}
+Unobserved intervals account for 25.99\% of all timestamps, and 13.40\%
+of all timestamps are unobserved \emph{and} fall between 00:00 and 05:00.
+Night-time therefore accounts for $13.40 / 25.99 \approx 51.5\%$ of
+unobserved intervals. Since these five hours make up only 20.8\% of the
+day, roughly 64\% of night-time timestamps are unobserved, compared with
+roughly 16\% of daytime timestamps. This fourfold concentration of
+missingness at night is itself informative. It is consistent with a
+missing-not-at-random mechanism in which sensors fail to report, or
+report nothing, when there is no pedestrian activity. It supports
+treating night-time gaps as plausible structural zeros. Daytime gaps are
+much harder to justify as physical zeros. They are more plausibly sensor
+or network outages during which pedestrians continued to pass.
+
+It follows that, of the unobserved intervals that enter the ZIR
+denominator as $y = 0$, only about half have a credible claim to being
+true zeros. The 51.5\% figure is a heuristic, not a hard ceiling:
+daytime zeros can be genuine (for example, during street closures), and
+night-time gaps need not be. It does, however, provide a useful
+reference point.
+
+\paragraph{A plausibility band, not a target.}
+A perfect zero identifier would not reach 100\% ZIR. It would flag
+genuine observed zeros and night-time structural gaps, and it would
+decline to flag daytime outages. We therefore treat a ZIR between
+roughly 20\% and 80\% as physically plausible. Values below this band
+would mean the zero-inflation component is effectively unused, while
+values above it would mean the model is equating sensor failure with
+absence of pedestrians. The 51.5\% night-time share falls near the
+centre of the band. Every configuration in Table~\ref{tab:exp3-main}
+(ZIR 0.295--0.602) lies within it. This is reassuring, since no
+configuration has collapsed to either degenerate extreme. It also
+means the band cannot, by itself, rank the configurations. Doing so
+requires the stratified diagnostics set out at the end of this section.
+
+\paragraph{Reading the reference model's ZIR.}
+Because ZIR is computed over observed zeros and all zero-filled
+intervals together, a ZIR of 0.554 cannot be decomposed without
+stratification. Two scenarios bracket the interpretation.
+
+\begin{table}[htbp]
+    \centering
+    \caption[Interpretive bounds on ZIR]%
+    {Composition of the ZIR denominator and the interpretive
+    reference provided by the night-time structural-zero heuristic.
+    Shares are of all timestamps in the full record; the test-partition
+    composition may differ.}
+    \label{tab:exp3-zero-bound}
+    \small
+    \begin{tabular}{@{}lr@{}}
+        \toprule
+        \textbf{Quantity} & \textbf{Value} \\
+        \midrule
+        Unobserved timestamps (zero-filled, scored as $y=0$) & 25.99\% \\
+        \quad of which night-time (00:00--05:00)              & 13.40\% \\
+        \quad of which daytime                                & 12.59\% \\
+        Night-time share of unobserved intervals              & 51.5\% \\
+        Unobserved rate within night-time hours               & $\approx$64\% \\
+        Unobserved rate within daytime hours                  & $\approx$16\% \\
+        \midrule
+        ZIR, full model                               & 55.4\% \\
+        ZIR, no missingness masks                     & 29.5\% \\
+        ZIR, no kriging loss (highest)                & 60.2\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+% AUTHOR-CHECK: recompute the unobserved/night shares on the test
+% partition specifically and add the observed-zero share.
+
+If genuinely observed zeros are rare relative to zero-filled intervals,
+the denominator is dominated by missing positions. In that case, a model
+that fires $\hat{\pi} > 0.5$ on every night-time gap and on no daytime
+gap would achieve a ZIR close to 0.515. The observed 0.554 exceeds
+this, so the model must also be classifying some daytime gaps, or some
+observed zeros, as zero. The configurations with even higher ZIR
+(0.595 without positional encoding, 0.602 without the kriging loss) are
+less accurate on every other metric. That pattern is more consistent
+with a model predicting zeros too readily than with better structural
+understanding. If observed zeros make up a larger share of the
+denominator, the ZIR is more ambiguous, but the same logic applies to
+the portion attributable to daytime gaps.
+
+\paragraph{Evidence bearing on shortcut learning.}
+Three observations together indicate that shortcut learning is not
+merely a residual risk here. It is a feature that the current objective
+actively encourages.
+
+\begin{enumerate}
+    \item \emph{The objective rewards it.} The ZINB likelihood is
+    evaluated on zero-filled targets without a validity mask, and the
+    mask channels expose the current outage state. The loss-minimising
+    policy at an ongoing outage is therefore $\hat{\pi} \to 1$,
+    irrespective of time of day. Nothing in the training signal
+    distinguishes a night-time structural zero from a daytime outage.
+    \item \emph{Ablation 3 is consistent with it.} Removing the masks
+    roughly halves ZIR (0.554 to 0.295). A model that had learned
+    structural zeros from temporal context (time of day, preceding
+    decline in counts, location) would retain much of its ZIR without
+    the masks. The size of the drop shows that the masks, not the
+    dynamics, carry most of the zero-classification signal. Note that
+    the two structural channels are a total-missingness mask and a
+    \emph{night-restricted} missingness mask (missing \emph{and}
+    00:00--05:00), and both are concatenated to the encoder input. The
+    model is therefore given the night-time structural-zero heuristic
+    directly, as a feature. Ablation~3 removes both channels together,
+    and no run has yet disabled the night channel on its own, so the
+    contribution of the explicit heuristic cannot be separated from
+    that of general outage awareness.
+    \item \emph{ZIR is dissociated from accuracy.} Across the
+    eight configurations, higher ZIR is not associated with
+    lower forecast error (Table~\ref{tab:exp3-delta}). The most accurate
+    model by RMSE has one of the lowest ZIRs. If ZIR were tracking
+    genuine structural knowledge, some positive association would be
+    expected.
+\end{enumerate}
+
+None of this implies that the model has learned \emph{nothing} about
+structural zeros. The strong MNAR concentration at night means that a
+mask-driven zero prediction is correct more often than not during those
+hours, and a model exploiting the mask will, as a by-product, be right
+about many genuine structural zeros. The problem is one of
+identifiability: under the present objective and metric, genuine
+learning and shortcut exploitation produce the same numbers. We
+therefore make no claim that a ZIR of 0.554 reflects learned
+knowledge of structural zeros.
+
+The same issue carries over to the forecast errors. Wherever the
+reference model correctly sets $\hat{\pi} \to 1$ at a daytime outage,
+it earns near-zero point error on a target that carries no physical
+information. The headline RMSE and MAE are therefore partly measures of
+agreement with the zero-filling convention. This is particularly
+relevant when comparing configurations with different ZIR, and
+when comparing against the LSTM baseline, which lacks the mechanism
+entirely.
+
+\paragraph{Diagnostics required.}
+Resolving the ambiguity requires no new models, only re-scoring the
+existing checkpoints under additional evaluation masks:
+\begin{enumerate}
+    \item report forecast RMSE and MAE restricted to \emph{observed}
+    target positions, excluding zero-filled intervals;
+    \item stratify ZIR into (a) observed zeros, (b) night-time
+    unobserved and (c) daytime unobserved, and report precision and the
+    calibration of $\hat{\pi}$ within each stratum;
+    \item run a mask-perturbation test in which the final-step mask is
+    flipped at inference, and measure the resulting change in
+    $\hat{\pi}$. Large sensitivity to the mask with little sensitivity
+    to the value history would be direct evidence of a shortcut.
+\end{enumerate}
+In the longer term, the principled remedy is to exclude unobserved
+targets from the forecasting likelihood, or to model them explicitly
+through a separate observation process. The zero-inflation component
+should represent the physical process only, not the sensor process.
+
+% ---------------------------------------------------------------------
+\subsection{Optimisation dynamics: the small-batch result}
+\label{sec:exp3-batch}
+
+Reducing the batch size from 128 to 32 produces the lowest test RMSE
+of any configuration (16.84, $-7.3\%$) and the lowest kriging RMSE
+(0.213, $-9.3\%$). The improvement is visible on validation as well
+(17.94 to 16.34), so it is not an artefact of selecting on the test
+set. The gain is not uniform, however. Test MAE \emph{rises} by 4.7\%
+(5.17 to 5.42), kriging MSLE rises by 5.1\%, and ZIR falls by
+16.8 points.
+
+This pattern of lower RMSE, higher MAE and lower ZIR points
+to a redistribution of error, not a general improvement. RMSE is
+dominated by the largest residuals, which in pedestrian data sit at
+high-footfall peaks. MAE weights all residuals equally and is dominated
+numerically by the large mass of low-count and zero positions. The
+small-batch model has fitted the peaks better at a modest cost on the
+low-count regime, including a reduced willingness to predict zeros. Its
+RMSE/MAE ratio falls from 3.51 to 3.11, which confirms that the gain
+comes from trimming the tail of large errors.
+
+Several mechanisms could produce this.
+
+\begin{itemize}
+    \item \emph{Gradient noise as implicit regularisation.} Smaller
+    batches raise the variance of stochastic gradient estimates, which
+    is widely associated with convergence to flatter minima that
+    generalise better. Peak-hour behaviour is rare and heterogeneous
+    across days, and it is the regime most prone to overfitting, so it
+    would plausibly benefit most.
+    \item \emph{Greater gradient weight on rare events.} In a batch of
+    128, a handful of peak-hour windows contribute a small, averaged
+    share of each update. At a batch size of 32, individual batches that
+    happen to contain peaks produce updates dominated by those peaks.
+    This amounts to an implicit up-weighting of high-count samples in
+    the ZINB mean component.
+    \item \emph{More optimiser steps.} The two configurations are
+    identical apart from batch size, with the same epoch cap (100),
+    early-stopping patience (10 epochs) and learning rate
+    ($3\times10^{-4}$, not rescaled). A batch size of 32 therefore
+    performs four times as many parameter updates per epoch. Part of
+    the gain may simply reflect a less under-trained model, not a
+    qualitatively different solution.
+\end{itemize}
+
+The high-regularisation variant helps to separate these accounts.
+Raising dropout from 0.1 to 0.3 \emph{worsens} RMSE by 7.5\% and MAE by
+7.7\%, which suggests that the reference model is not overfitting in the
+conventional sense and that additional explicit regularisation is
+harmful. If the small-batch benefit were purely a matter of
+regularisation, a similar direction of effect from dropout might have
+been expected. That the two interventions move in opposite directions
+favours the optimisation-trajectory accounts (more updates, greater
+weight on rare events) over a pure flat-minima account. Both variants
+also show a marked fall in ZIR (to 0.386 and 0.362). Any change
+that perturbs the shared representation appears to weaken the
+mask-driven zero policy first, which is a further indication that the
+policy is fragile rather than deeply learned.
+
+For downstream use, choosing between the two batch sizes is a choice of
+loss function. If operational value lies in anticipating crowding peaks,
+for example for public-safety or event management, the batch-size-32
+model is preferable. If it lies in accurate low-activity and zero
+forecasting, for example for energy-saving lighting schedules, the
+reference model is preferable. We retain \texttt{wph1nhvj} as the
+reference configuration for the ablation analysis, because all
+ablations were run relative to it. Describing it as a performance
+``ceiling'' would be inaccurate, however, since the batch-size result
+shows that the v4 hyperparameter space has not been exhausted.
+
+% ---------------------------------------------------------------------
+\subsection{Limitations and threats to validity}
+\label{sec:exp3-limitations}
+
+\begin{enumerate}
+    \item \textbf{Single-seed estimates.} Every configuration is a
+    single run. The smaller effects reported here (kriging loss on
+    forecasting, +3.2\%; positional encoding, +4.5\%) are of a size that
+    seed variance in graph--Transformer models could plausibly produce.
+    The larger effects (kriging loss on inductive kriging, masks on MAE
+    and ZIR, the LSTM gap) are very unlikely to reverse, but
+    their magnitudes should carry confidence intervals from at least
+    three seeds.
+    \item \textbf{Zero-filled targets.} As argued in
+    Section~\ref{sec:exp3-zero-recall}, forecast errors and ZIR
+    both include positions without physical ground truth. Every
+    comparison in this chapter should be re-examined on observed-only
+    targets.
+    \item \textbf{Mixed node scope in forecast metrics.} Forecast RMSE,
+    MAE and ZIR average the 57 transductive and 24 inductive stations
+    together. They should be reported separately for each group.
+    \item \textbf{Night-mask channel at inductive stations.} The
+    night-restricted missingness channel is not blanked for held-out
+    stations (Section~\ref{sec:exp3-protocol}). Kriging and
+    inductive-station forecast metrics should be re-scored with it
+    blanked.
+    \item \textbf{Night channel not separately ablated.} Ablation~3
+    removes the total and night-restricted mask channels together. An
+    ablation that disables only the night channel is needed to establish
+    how much of the zero-inflation behaviour comes from the explicitly
+    supplied heuristic.
+    \item \textbf{Mixed-channel kriging metrics.} Kriging RMSE and MAE
+    pool traffic with meteorological channels in standardised space, so
+    they do not isolate pedestrian kriging skill.
+    \item \textbf{Confounded baseline.} The LSTM differs from RIoT in its
+    distributional head, its access to mask channels and static
+    covariates, and its spatial component. A
+    graph-ablated RIoT (identity adjacency, all else fixed) would
+    provide a clean estimate of the value of message passing.
+    \item \textbf{Cross-generation comparability.} v3 and v4 differ in
+    node population, temporal coverage and target handling. The
+    comparison in Section~\ref{sec:exp3-v3-v4} supports a claim about
+    evaluation reliability, not about architectural gain.
+    \item \textbf{Single-factor design.} Ablations are one-at-a-time
+    relative to a single reference. Interactions, such as whether the
+    masks matter less once imputation supervision is present, are not
+    identified.
+\end{enumerate}
+
+% ---------------------------------------------------------------------
+\subsection{Summary}
+\label{sec:exp3-summary}
+
+Experiment~3 set out to test whether reconstruction-augmented,
+graph-based forecasting could operate on heavily incomplete pedestrian
+data without prior imputation, and to do so under an evaluation
+protocol free of the leakage that affected earlier chapters. Five
+conclusions follow.
+
+\begin{enumerate}
+    \item Under strict chronological splitting with a purge gap and
+    training-only scaling, RIoT v4 achieves a test RMSE of 18.16 and a
+    test MAE of 5.17, with a validation-to-test RMSE gap of only 1.2\%.
+    The main contribution of the v4 overhaul is that these numbers can
+    be trusted as out-of-sample estimates. They are not directly
+    comparable with v3.
+    \item Zero-shot spatial kriging to 24 unseen real stations is
+    achieved and is clearly better than a spatially blind reference.
+    It depends critically on explicit inductive supervision: without the
+    kriging loss, the graph model kriges worse than a non-spatial LSTM.
+    \item Joint masked reconstruction improves forecasting (7.6\% RMSE)
+    and is best understood as a regulariser of the shared temporal
+    encoder.
+    \item Explicit missingness masks are the most influential single
+    component. Part of their value, however, comes from enabling the
+    model to reproduce the zero-filling of unobserved targets. Under the
+    current objective and metric, genuine learning of structural zeros
+    cannot be separated from shortcut exploitation of the mask, and the
+    ZIR of 0.554 should not be read as evidence of the former.
+    \item Hyperparameter changes shift the balance of error across
+    regimes. Small-batch training lowers RMSE by 7.3\% by fitting
+    footfall peaks better, but it raises MAE and weakens
+    zero-classification.
+\end{enumerate}
+
+The most important next step is methodological, not architectural:
+re-scoring the existing models on observed-only targets, with stratified
+zero diagnostics. Until that is done, the forecasting results of this
+chapter should be read as upper-bound estimates of performance on
+physically observed pedestrian activity.

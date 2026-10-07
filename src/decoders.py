@@ -7,12 +7,31 @@ class DecoupledDecoders(nn.Module):
     """
     DecoupledDecoders: Multi-task heads for imputation and uncertainty-aware forecasting.
     """
-    def __init__(self, hidden_dim: int, time_series_dim: int, dropout: float = 0.1, zinb_eps: float = 1e-6):
+    def __init__(self, hidden_dim: int, time_series_dim: int, dropout: float = 0.1, zinb_eps: float = 1e-6,
+                 forecast_likelihood: str = "zinb",
+                 impute_likelihood: str = "msle",
+                 num_quantiles: int = 0,
+                 target_cov_dim: int = 0,
+                 outage_feat_dim: int = 0):
+        """v5 arguments (defaults reproduce the v4 module and state_dict exactly):
+            forecast_likelihood: zinb (3 params) | nb | ztnb | outage_mixture (2 params; the
+                mixture's outage probability q comes from the separate outage head).
+            impute_likelihood:   msle (D outputs) | outage_mixture (mu, theta, q + D-1 weather).
+            num_quantiles:       extra forecast outputs (cumulative-softplus quantiles, raw counts).
+            target_cov_dim:      covariates of the target step concatenated to the forecast /
+                                 outage-head input.
+            outage_feat_dim:     width of the outage-head input (0 = no outage head).
+        """
         super(DecoupledDecoders, self).__init__()
 
         self.hidden_dim = hidden_dim
         self.time_series_dim = time_series_dim
         self.zinb_eps = zinb_eps
+        self.forecast_likelihood = forecast_likelihood
+        self.impute_likelihood = impute_likelihood
+        self.num_quantiles = num_quantiles
+        self.forecast_params = 3 if forecast_likelihood == "zinb" else 2
+        impute_out = time_series_dim if impute_likelihood == "msle" else 3 + (time_series_dim - 1)
 
         # Imputation Decoder: Reconstructs the entire sequence.
         # Deepened to a 2-layer MLP to give the model enough capacity to recover
@@ -21,17 +40,27 @@ class DecoupledDecoders(nn.Module):
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, time_series_dim)
+            nn.Linear(hidden_dim * 2, impute_out)
         )
 
         # Forecasting Decoder: Predicts ZINB parameters (mu, theta, pi).
         # Deepened to match imputation head capacity and reduce gradient starvation.
         self.forecast_layer = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 2),
+            nn.Linear(hidden_dim + target_cov_dim, hidden_dim * 2),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, 3)
+            nn.Linear(hidden_dim * 2, self.forecast_params + num_quantiles)
         )
+
+        # v5 (R4): outage head — q = P(sensor outage at the target | context).
+        assert (forecast_likelihood == "outage_mixture") == (outage_feat_dim > 0), \
+            "CRITICAL: the outage head exists iff forecast_likelihood=outage_mixture"
+        self.outage_layer = nn.Sequential(
+            nn.Linear(outage_feat_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1),
+        ) if outage_feat_dim > 0 else None
 
     def forward(self, latent_embeddings: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list]:
         """
@@ -54,10 +83,12 @@ class DecoupledDecoders(nn.Module):
         last_step_embedding = latent_embeddings[:, :, -1, :] # [batch_size, num_nodes, hidden_dim]
         forecast_logits = self.forecast_layer(last_step_embedding) # [batch_size, num_nodes, 3]
 
-        # Split raw logits
-        mu_logits = forecast_logits[:, :, 0]
-        theta_logits = forecast_logits[:, :, 1]
-        pi_logits = forecast_logits[:, :, 2]
+        # Split raw logits and cast to float32 so parameter activations (sigmoid, softplus)
+        # and clamp boundaries (1.0 - zinb_eps) are evaluated at full precision,
+        # preventing bfloat16 precision limits (mantissa eps ~ 0.0078) from rounding 1.0 - eps to 1.0.
+        mu_logits = forecast_logits[:, :, 0].float()
+        theta_logits = forecast_logits[:, :, 1].float()
+        pi_logits = forecast_logits[:, :, 2].float()
 
         # Apply ZINB constraints (Tripwires from NSTAR_BACKEND_ARCHITECTURE.md)
         pi = torch.clamp(torch.sigmoid(pi_logits), min=self.zinb_eps, max=1.0 - self.zinb_eps)
@@ -65,21 +96,83 @@ class DecoupledDecoders(nn.Module):
         theta = F.softplus(theta_logits) + self.zinb_eps
 
         # Detect Offesive Programming safeguard activations
-        tripwire_logs = []
         pi_clamp = (pi < self.zinb_eps * 10) | (pi > 1.0 - self.zinb_eps * 10)
         mu_clamp = (F.softplus(mu_logits) < self.zinb_eps * 10)
         theta_clamp = (F.softplus(theta_logits) < self.zinb_eps * 10)
-
-        for b in range(batch_size):
-            for n in range(num_nodes):
-                if pi_clamp[b, n]:
-                    tripwire_logs.append({'node_id': n, 'event_type': 'PI_CLAMP'})
-                if mu_clamp[b, n]:
-                    tripwire_logs.append({'node_id': n, 'event_type': 'MU_CLAMP'})
-                if theta_clamp[b, n]:
-                    tripwire_logs.append({'node_id': n, 'event_type': 'THETA_CLAMP'})
+        tripwire_logs = tripwire_events(
+            [pi_clamp, mu_clamp, theta_clamp], ['PI_CLAMP', 'MU_CLAMP', 'THETA_CLAMP']
+        )
 
         return imputed_features, mu, theta, pi, tripwire_logs
+
+    # ------------------------------------------------------------------ #
+    # v5 heads                                                             #
+    # ------------------------------------------------------------------ #
+    def _positive(self, logits: torch.Tensor) -> torch.Tensor:
+        return F.softplus(logits.float()) + self.zinb_eps
+
+    def _prob(self, logits: torch.Tensor) -> torch.Tensor:
+        return torch.clamp(torch.sigmoid(logits.float()), min=self.zinb_eps, max=1.0 - self.zinb_eps)
+
+    def forward_v5(self,
+                   latent_embeddings: torch.Tensor,
+                   impute_latent: torch.Tensor,
+                   target_cov: Optional[torch.Tensor],
+                   outage_feats: Optional[torch.Tensor]) -> dict:
+        """
+        Args:
+            latent_embeddings: [B, N, T, H] encoder output (forecast path).
+            impute_latent:     [B, N, T, H] the same tensor, possibly detached
+                               (loss.detach_impute_latent).
+            target_cov:        [B, N, C] target-step covariates or None.
+            outage_feats:      [B, N, F] outage-head input or None.
+        Returns dict of fp32 distribution parameters (see pipeline._forward_v5).
+        """
+        assert latent_embeddings.dim() == 4, f"Expected 4D embeddings, got {latent_embeddings.shape}"
+        out = {}
+        impute_raw = self.impute_layer(impute_latent)
+        if self.impute_likelihood == "outage_mixture":
+            out["impute_traffic_params"] = (
+                self._positive(impute_raw[..., 0]), self._positive(impute_raw[..., 1]), self._prob(impute_raw[..., 2]),
+            )
+            out["impute_weather"] = impute_raw[..., 3:].float()
+        else:
+            out["impute_traffic_params"] = None
+            out["imputed"] = impute_raw
+
+        head_in = latent_embeddings[:, :, -1, :]
+        if target_cov is not None:
+            head_in = torch.cat([head_in, target_cov.to(head_in.dtype)], dim=-1)
+        logits = self.forecast_layer(head_in)
+        mu_logits, theta_logits = logits[..., 0].float(), logits[..., 1].float()
+        out["mu"] = self._positive(mu_logits)
+        out["theta"] = self._positive(theta_logits)
+        out["pi"] = self._prob(logits[..., 2]) if self.forecast_likelihood == "zinb" else None
+        if self.num_quantiles > 0:
+            increments = F.softplus(logits[..., self.forecast_params:].float())
+            out["quantiles"] = torch.cumsum(increments, dim=-1)        # monotone, raw counts
+        else:
+            out["quantiles"] = None
+        if self.outage_layer is not None:
+            out["q"] = self._prob(self.outage_layer(outage_feats).squeeze(-1))
+        else:
+            out["q"] = None
+
+        flags = [F.softplus(mu_logits) < self.zinb_eps * 10, F.softplus(theta_logits) < self.zinb_eps * 10]
+        names = ['MU_CLAMP', 'THETA_CLAMP']
+        if out["pi"] is not None:
+            flags.insert(0, (out["pi"] < self.zinb_eps * 10) | (out["pi"] > 1.0 - self.zinb_eps * 10))
+            names.insert(0, 'PI_CLAMP')
+        out["tripwires"] = tripwire_events(flags, names)
+        return out
+
+
+def tripwire_events(flags: list, names: list) -> list:
+    """Clamp-tripwire log entries in (batch, node, flag) order — the same order as the
+    original per-element loop, but one device sync instead of B*N*3."""
+    stacked = torch.stack(flags, dim=-1)                       # [B, N, K]
+    hits = stacked.nonzero().tolist()                          # row-major: sorted by (b, n, k)
+    return [{'node_id': n, 'event_type': names[k]} for _, n, k in hits]
 
 class SpatialKrigingDecoder(nn.Module):
     """
@@ -98,16 +191,20 @@ class SpatialKrigingDecoder(nn.Module):
     (the loss weight w_kriging defaults to 0.0). Wiring it into the pipeline,
     dataset holdout masking, and compute_loss happens on exp/spatial-kriging-head.
     """
-    def __init__(self, hidden_dim: int, time_series_dim: int, dropout: float = 0.1):
+    def __init__(self, hidden_dim: int, time_series_dim: int, dropout: float = 0.1, count_head: bool = False):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.time_series_dim = time_series_dim
+        # v5 (R4 E4.7): count_head=True emits NB (mu, theta) for traffic + D-1 weather
+        # channels, so kriging is trained by -log NB on observed slots like the
+        # outage-mixture imputation head. False reproduces v4.
+        self.count_head = count_head
         # Mirrors the imputation head's capacity (doc §4.3).
         self.kriging_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, time_series_dim),
+            nn.Linear(hidden_dim * 2, time_series_dim + 1 if count_head else time_series_dim),
         )
 
     def forward(self, latent_embeddings: torch.Tensor, holdout_mask: torch.Tensor) -> torch.Tensor:
@@ -229,11 +326,15 @@ def compute_zinb_nll(y_true: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor
     If y=0: P(y) = pi + (1-pi) * (theta / (theta + mu))^theta
     If y>0: P(y) = (1-pi) * [Gamma(y+theta)/(y!Gamma(theta))] * (theta/(theta+mu))^theta * (mu/(theta+mu))^y
     """
+    eps = 1e-6
+    mu = mu.float()
+    theta = theta.float()
+    pi = pi.float().clamp(min=eps, max=1.0 - eps)
+    y_true = y_true.float()
+
     assert (mu > 0).all(), "CRITICAL: mu must be strictly positive before safe_log"
     assert (theta > 0).all(), "CRITICAL: theta must be strictly positive before safe_log"
     assert (pi > 0).all() and (pi < 1).all(), "CRITICAL: pi must be in (0, 1)"
-    eps = 1e-6
-    y_true = y_true.float()
 
     # Clamp log operations to eps
     def safe_log(x):

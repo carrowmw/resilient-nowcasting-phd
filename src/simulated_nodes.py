@@ -1,7 +1,8 @@
 import os
+import json
 import random
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import torch
 import numpy as np
 import osmnx as ox
@@ -9,6 +10,9 @@ import osmnx as ox
 from features import StaticFeatureLoader, REQUIRED_KEYS, OSM_CENTER, OSM_DIST
 
 logger = logging.getLogger(__name__)
+
+SIMULATED_NODES_CACHE = "data/external/simulated_nodes_cache.json"
+_CACHED_COORDS: Optional[List[tuple]] = None
 
 class SimulatedNodeInjector:
     """
@@ -44,10 +48,35 @@ class SimulatedNodeInjector:
             self.sim_dynamic = torch.empty((0, self.seq_len, 3), device=self.device)
 
     def _sample_osm_nodes(self, n: int, bbox: Dict[str, float]) -> List[tuple]:
-        """Fetch road graph, filter by bounding box, and deterministically sample n intersections."""
-        # Use cache if possible or fetch
+        """Fetch road graph, filter by bounding box, and deterministically sample n intersections.
+        Checks in-memory process cache and static JSON cache before falling back to live OSMnx download."""
+        global _CACHED_COORDS
+
+        # 1. In-memory process cache (avoids re-reading disk across multiple artifacts in the same export)
+        if _CACHED_COORDS is not None and len(_CACHED_COORDS) >= n:
+            return _CACHED_COORDS[:n]
+
+        # 2. Static JSON cache
+        if os.path.exists(SIMULATED_NODES_CACHE):
+            try:
+                with open(SIMULATED_NODES_CACHE, "r") as f:
+                    cached_data = json.load(f)
+                if isinstance(cached_data, list) and len(cached_data) >= n:
+                    coords = [tuple(c) if isinstance(c, (list, tuple)) else (c["lat"], c["lon"]) for c in cached_data]
+                    # Verify all fall within the requested bbox
+                    if all(bbox['lat_min'] <= lat <= bbox['lat_max'] and bbox['lon_min'] <= lon <= bbox['lon_max'] for lat, lon in coords[:n]):
+                        logger.info(f"Loaded {n} simulated node coordinates from cache: {SIMULATED_NODES_CACHE}")
+                        _CACHED_COORDS = coords
+                        return coords[:n]
+            except Exception as e:
+                logger.warning(f"Failed to read {SIMULATED_NODES_CACHE} ({e}). Falling back to live download.")
+
+        # 3. Live OSMnx download fallback
+        logger.info(f"Downloading Newcastle walking network via OSMnx to sample {n} simulated nodes...")
+        ox.settings.use_cache = True
+        ox.settings.requests_timeout = 300
         G = ox.graph_from_point(OSM_CENTER, dist=OSM_DIST, network_type='walk')
-        
+
         all_nodes = []
         for node, data in G.nodes(data=True):
             lat = data.get('y')
@@ -56,12 +85,24 @@ class SimulatedNodeInjector:
                 continue
             if bbox['lat_min'] <= lat <= bbox['lat_max'] and bbox['lon_min'] <= lon <= bbox['lon_max']:
                 all_nodes.append((lat, lon))
-        
+
         assert len(all_nodes) >= n, f"CRITICAL: Found only {len(all_nodes)} nodes in bounding box, but {n} requested."
-        
+
         # Deterministic sampling
         random.seed(42)
-        return random.sample(all_nodes, n)
+        sampled = random.sample(all_nodes, n)
+
+        # Update disk cache
+        try:
+            os.makedirs(os.path.dirname(SIMULATED_NODES_CACHE), exist_ok=True)
+            with open(SIMULATED_NODES_CACHE, "w") as f:
+                json.dump([[lat, lon] for lat, lon in sampled], f, indent=2)
+            logger.info(f"Saved {n} sampled simulated node coordinates to {SIMULATED_NODES_CACHE}.")
+        except Exception as e:
+            logger.warning(f"Could not write cache to {SIMULATED_NODES_CACHE}: {e}")
+
+        _CACHED_COORDS = sampled
+        return sampled
         
     def _create_nodes_meta(self, coords: List[tuple]) -> List[Dict]:
         meta = []

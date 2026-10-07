@@ -2,17 +2,8 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import useTimeStore from '@/store/useTimeStore';
+import { timestepLabel } from '@/lib/v5';
 import DatePaginator from './DatePaginator';
-
-// Each timestep represents 15 minutes; anchor to midnight of the test day.
-function timestepToLabel(t: number): string {
-  const totalMinutes = t * 15;
-  const hh = Math.floor(totalMinutes / 60)
-    .toString()
-    .padStart(2, '0');
-  const mm = (totalMinutes % 60).toString().padStart(2, '0');
-  return `${hh}:${mm}`;
-}
 
 export default function TimeSlider() {
   const currentTimestep = useTimeStore((s) => s.currentTimestep);
@@ -21,18 +12,17 @@ export default function TimeSlider() {
   const setTimestep = useTimeStore((s) => s.setTimestep);
   const togglePlayback = useTimeStore((s) => s.togglePlayback);
   const incrementTimestep = useTimeStore((s) => s.incrementTimestep);
+  // Labels come from page.timestamps when a page is loaded; else t × 15 min.
+  const timestamps = useTimeStore((s) => s.dayPayload?.page.timestamps);
+  const stepMinutes = useTimeStore((s) => s.dayPayload?.page.step_minutes) ?? 15;
 
-  // Playback animation loop.
-  // animateRef stores the latest callback so the RAF loop can recurse through
-  // the ref rather than closing over the `animate` identifier, which avoids
-  // both the "ref updated during render" and "variable accessed before
-  // declaration" lint rules.
+  // Playback animation loop. animateRef stores the latest callback so the RAF
+  // loop recurses through the ref rather than closing over `animate`.
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number>(0);
   const animateRef = useRef<(now: number) => void>(() => {});
   const TICK_INTERVAL_MS = 300; // one step every 300 ms
 
-  // Keep animateRef.current in sync with the latest incrementTimestep closure.
   const animate = useCallback(
     (now: number) => {
       if (now - lastTickRef.current >= TICK_INTERVAL_MS) {
@@ -65,6 +55,9 @@ export default function TimeSlider() {
     };
   }, [isPlaying, animate]);
 
+  // Seven evenly spaced tick labels across the day.
+  const ticks = Array.from({ length: 7 }, (_, i) => Math.round((i * maxTimesteps) / 6));
+
   return (
     <div
       className="
@@ -81,7 +74,7 @@ export default function TimeSlider() {
       <div className="flex w-full items-center justify-between text-xs font-mono text-slate-300">
         <DatePaginator />
         <span className="text-base font-semibold text-white tabular-nums">
-          {timestepToLabel(currentTimestep)}
+          {timestepLabel(currentTimestep, timestamps, stepMinutes)}
         </span>
         <span>
           t = {currentTimestep} / {maxTimesteps}
@@ -99,11 +92,10 @@ export default function TimeSlider() {
         aria-label="Timestep selector"
       />
 
-      {/* Tick marks for every 4 steps (= 1 hour) */}
       <div className="flex w-full justify-between px-0.5">
-        {Array.from({ length: 7 }, (_, i) => (
+        {ticks.map((t, i) => (
           <span key={i} className="text-[10px] text-slate-400 font-mono">
-            {String(i * 4).padStart(2, '0')}h
+            {timestepLabel(t, timestamps, stepMinutes).slice(0, 2)}h
           </span>
         ))}
       </div>

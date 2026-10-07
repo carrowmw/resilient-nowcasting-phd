@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Accuracy, resilience and held-out stations across all runs</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/v5_runs.js"></script>
+<style>
+  #top { position: absolute; left: 0; top: 0; right: 0; display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+</style>
+</head>
+<body>
+<div id="top">
+  <div class="controls"><div class="seg" id="view"></div></div>
+  <div id="legend"></div>
+</div>
+<svg id="chart" role="img" aria-label="Scatter of every Experiment 3 run: normal accuracy against outage error, or transductive against held-out error"></svg>
+<script>
+const { C, MODEL } = Fig;
+const { w: W, h: H } = Fig.size();
+// The transductive-profile run is an oracle (held-out stations see their own profile): excluded.
+const runs = window.DATA_V5_RUNS.runs.filter((r) => r.experiment !== "e3_3a_profile_transductive" && r.test_so_12_forecast_rmse != null);
+const HL = ["v4r_full", "e2_1_unify_iid", "e3_3d_profile_inductive_zero", "v5_full", "naive_profile"];
+const naive = runs.find((r) => r.experiment === "naive_profile");
+
+const VIEWS = [
+  { key: "ar", label: "Normal accuracy vs outage resilience",
+    x: "test_obs_all_rmse", y: "test_so_12_forecast_rmse",
+    xl: "Normal forecast RMSE, all 81 sensors →", yl: "RMSE during a 3 h outage →",
+    xd: [23.5, 33], yd: [12, 34] },
+  { key: "ti", label: "Known vs held-out sensors",
+    x: "test_obs_trans_rmse", y: "test_obs_ind_rmse",
+    xl: "RMSE at the 57 training sensors →", yl: "RMSE at the 24 held-out sensors →",
+    xd: [11, 27], yd: [36, 53] },
+];
+let view = VIEWS[0];
+const seg = document.getElementById("view");
+VIEWS.forEach((v, i) => {
+  const b = document.createElement("button");
+  b.textContent = v.label;
+  b.setAttribute("aria-pressed", i === 0);
+  b.onclick = () => setView(i);
+  seg.appendChild(b);
+});
+Fig.legend(document.getElementById("legend"), [
+  ...HL.map((k) => ({ label: MODEL[k].short, color: MODEL[k].color, shape: "dot" })),
+  { label: "Other runs", color: C.rule, shape: "dot" },
+]);
+
+const M = { l: 110, r: 60, t: 80, b: 80 };
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const x = d3.scaleLinear().range([M.l, W - M.r]);
+const y = d3.scaleLinear().range([H - M.b, M.t]);
+const gx = svg.append("g").attr("class", "grid").attr("transform", `translate(0,${H - M.b})`);
+const gy = svg.append("g").attr("class", "grid").attr("transform", `translate(${M.l},0)`);
+const xl = svg.append("text").attr("class", "axis-label").attr("text-anchor", "end").attr("x", W - M.r).attr("y", H - 22);
+const yl = svg.append("text").attr("class", "axis-label").attr("transform", `translate(30,${M.t}) rotate(-90)`).attr("text-anchor", "end");
+const gRef = svg.append("g"), gAnn = svg.append("g"), gDots = svg.append("g"), gLab = svg.append("g");
+
+function setView(i) {
+  view = VIEWS[i];
+  seg.querySelectorAll("button").forEach((b, j) => b.setAttribute("aria-pressed", i === j));
+  draw();
+}
+
+function draw() {
+  const T = 450;
+  x.domain(view.xd); y.domain(view.yd);
+  gx.transition().duration(T).call(d3.axisBottom(x).ticks(8).tickSize(-(H - M.t - M.b)))
+    .on("end", function () { d3.select(this).select(".domain").remove(); d3.select(this).selectAll(".tick text").attr("dy", 14); });
+  gy.transition().duration(T).call(d3.axisLeft(y).ticks(7).tickSize(-(W - M.l - M.r)))
+    .on("end", function () { d3.select(this).select(".domain").remove(); d3.select(this).selectAll(".tick text").attr("x", -12); });
+  xl.text(view.xl); yl.text(view.yl);
+
+  // Naive-baseline crosshair: anything right of / above it loses to a seasonal median.
+  const nx = naive[view.x], ny = naive[view.y];
+  gRef.selectAll("line").data([["v", nx], ["h", ny]]).join("line")
+    .attr("stroke", C.text2).attr("stroke-width", 2).attr("stroke-dasharray", "6 6")
+    .transition().duration(T)
+    .attr("x1", (d) => (d[0] === "v" ? x(d[1]) : M.l)).attr("x2", (d) => (d[0] === "v" ? x(d[1]) : W - M.r))
+    .attr("y1", (d) => (d[0] === "v" ? M.t : y(d[1]))).attr("y2", (d) => (d[0] === "v" ? H - M.b : y(d[1])));
+
+  const ann = view.key === "ar"
+    ? [{ x: view.xd[0] + 0.15, y: view.yd[0] + 1.6, t: "Empty corner: no run combines", anchor: "start" },
+       { x: view.xd[0] + 0.15, y: view.yd[0] + 0.6, t: "E2.1 accuracy with V5F resilience", anchor: "start" }]
+    : [{ x: view.xd[1] - 0.2, y: view.yd[0] + 0.8, t: "Below the dashed line = beats the seasonal profile at held-out sensors", anchor: "end" }];
+  gAnn.selectAll("text").data(ann).join("text").attr("class", "annot").attr("text-anchor", (d) => d.anchor)
+    .transition().duration(T).attr("x", (d) => x(d.x)).attr("y", (d) => y(d.y)).text((d) => d.t);
+  gAnn.selectAll("rect").data(view.key === "ar" ? [0] : []).join("rect")
+    .attr("fill", C.panel).attr("opacity", 0.8).lower()
+    .attr("x", x(view.xd[0])).attr("y", y(view.yd[0] + 3.2)).attr("width", x(view.xd[0] + 2.4) - x(view.xd[0])).attr("height", y(view.yd[0]) - y(view.yd[0] + 3.2));
+  gAnn.lower(); gRef.lower();
+
+  const pts = runs.filter((r) => r[view.x] != null && r[view.y] != null)
+    .sort((a, b) => HL.includes(a.experiment) - HL.includes(b.experiment));
+  gDots.selectAll("circle").data(pts, (r) => r.run).join("circle")
+    .attr("r", (r) => (HL.includes(r.experiment) ? 10 : 6.5))
+    .attr("fill", (r) => (HL.includes(r.experiment) ? MODEL[r.experiment].color : C.rule))
+    .attr("stroke", "#fff").attr("stroke-width", 2)
+    .on("pointermove", (ev, r) => Fig.showTip(ev, r.experiment, [
+      { value: r[view.x].toFixed(1), name: view.xl.replace(" →", "") },
+      { value: r[view.y].toFixed(1), name: view.yl.replace(" →", "") },
+      { value: r.desc.slice(0, 60), name: "" },
+    ]))
+    .on("pointerleave", Fig.hideTip)
+    .transition().duration(T)
+    .attr("cx", (r) => x(Math.max(view.xd[0], Math.min(view.xd[1], r[view.x]))))
+    .attr("cy", (r) => y(Math.max(view.yd[0], Math.min(view.yd[1], r[view.y]))));
+
+  const labs = pts.filter((r) => HL.includes(r.experiment));
+  gLab.selectAll("text").data(labs, (r) => r.run).join("text").attr("class", "label").attr("font-weight", 700)
+    .transition().duration(T)
+    .attr("x", (r) => x(r[view.x]) + 16).attr("y", (r) => y(r[view.y]) - 10).text((r) => MODEL[r.experiment].short);
+}
+draw();
+Fig.onStep((s) => setView(Math.min(1, s)), 1);
+</script>
+</body>
+</html>

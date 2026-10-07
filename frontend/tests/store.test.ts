@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import useTimeStore from '@/store/useTimeStore';
+import { makeBundle, makeRegistry, makeRegistryEntry } from './fixtures/v5';
 
 // Reset store state before every test so cases are fully isolated.
 beforeEach(() => {
@@ -156,5 +157,49 @@ describe('setGlobalAttentionThreshold', () => {
   it('clamps above 1', () => {
     useTimeStore.getState().setGlobalAttentionThreshold(2);
     expect(useTimeStore.getState().globalAttentionThreshold).toBe(1);
+  });
+});
+
+// ── v5 payload state ─────────────────────────────────────────────────────────
+
+describe('v5 payload state', () => {
+  it('no longer exposes the v4 simulated-node toggle', () => {
+    const s = useTimeStore.getState() as unknown as Record<string, unknown>;
+    expect('showSimulatedNodes' in s).toBe(false);
+    expect('setShowSimulatedNodes' in s).toBe(false);
+  });
+
+  it('setRunRegistry stores runs and the selection rule', () => {
+    const reg = makeRegistry([makeRegistryEntry({ runId: 'a', rank: 1 }), makeRegistryEntry({ runId: 'b', rank: 2 })]);
+    useTimeStore.getState().setRunRegistry(reg.runs, reg.selection_rule);
+    expect(useTimeStore.getState().runRegistry.map((r) => r.run_id)).toEqual(['a', 'b']);
+    expect(useTimeStore.getState().selectionRule).toBe(reg.selection_rule);
+    useTimeStore.getState().setRunRegistry([]);
+    expect(useTimeStore.getState().selectionRule).toBeNull();
+  });
+
+  it('setSpatial / setDayPayload hold one run-consistent bundle', () => {
+    const { spatial, page } = makeBundle({ runId: 'v5_full-s42' });
+    useTimeStore.getState().setSpatial(spatial);
+    useTimeStore.getState().setDayPayload({ runId: 'v5_full-s42', date: page.date, spatial, page });
+    const st = useTimeStore.getState();
+    expect(st.spatial).toBe(spatial);
+    expect(st.dayPayload?.page).toBe(page);
+    expect(st.dayPayload?.spatial.metadata.run_id).toBe('v5_full-s42');
+    useTimeStore.getState().setDayPayload(null);
+    expect(useTimeStore.getState().dayPayload).toBeNull();
+  });
+
+  it('navigateDay steps through availableDates and stops at the bounds', () => {
+    const dates = ['2026-05-01', '2026-05-02', '2026-05-03'];
+    useTimeStore.setState({ availableDates: dates, activeDate: dates[0] });
+    const { navigateDay } = useTimeStore.getState();
+    navigateDay('prev');
+    expect(useTimeStore.getState().activeDate).toBe(dates[0]);
+    navigateDay('next');
+    navigateDay('next');
+    expect(useTimeStore.getState().activeDate).toBe(dates[2]);
+    navigateDay('next');
+    expect(useTimeStore.getState().activeDate).toBe(dates[2]);
   });
 });

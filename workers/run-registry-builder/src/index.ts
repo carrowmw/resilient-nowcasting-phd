@@ -1,11 +1,38 @@
 /**
  * Cloudflare Worker to dynamically rebuild the run_registry.json
  * from the contents of an R2 bucket.
+ *
+ * Mirrors scripts/build_run_registry.py: RunRegistry (schema_version 5,
+ * frontend/src/types/registry.ts), runs ordered by registry.rank, the reference
+ * run (v5_full-s42) as the default. spatial.json files that are not schema 5 are
+ * skipped, so stale v4 objects can never reach the frontend.
  */
 
 export interface Env {
   PAYLOAD_BUCKET: R2Bucket;
   WORKER_REBUILD_TOKEN: string;
+}
+
+const SCHEMA_VERSION = 5;
+
+// RunInfo fields + RunRegistryEntry fields copied verbatim from spatial.json metadata.
+const ENTRY_KEYS = [
+  "run_id", "experiment", "group", "description", "model_type", "forecast_likelihood",
+  "quantile_levels", "capabilities", "seq_len", "wandb_run_id", "wandb_artifact",
+  "git_commit_hash", "generated_at",
+  "registry", "available_dates", "num_nodes", "num_holdout_nodes", "num_ghost_nodes", "holdout_manifest_sha",
+  "test_metrics", "window_metrics", "hyperparameters",
+] as const;
+
+async function readJson(bucket: R2Bucket, key: string): Promise<any | null> {
+  const file = await bucket.get(key);
+  if (!file) return null;
+  let bodyStream = file.body;
+  if (file.httpMetadata?.contentEncoding === "gzip") {
+    // @ts-ignore - TS dom types sometimes lack DecompressionStream but it exists in CF Workers
+    bodyStream = bodyStream.pipeThrough(new DecompressionStream("gzip"));
+  }
+  return new Response(bodyStream).json();
 }
 
 export default {
@@ -26,87 +53,68 @@ export default {
     }
 
     try {
-      const runs = [];
-      let defaultRunId: string | null = null;
+      const runs: any[] = [];
+      const skipped: string[] = [];
       let cursor: string | undefined = undefined;
 
-      // Paginate through all runs/*/spatial.json keys
+      // One "directory" per run: list runs/<run_id>/ prefixes, not every day object.
       do {
-        const listed = await env.PAYLOAD_BUCKET.list({
+        const listed: R2Objects = await env.PAYLOAD_BUCKET.list({
           prefix: "runs/",
+          delimiter: "/",
           cursor: cursor,
         });
 
-        const spatialKeys = listed.objects.filter((obj) => obj.key.endsWith("/spatial.json"));
-
-        for (const obj of spatialKeys) {
-          const file = await env.PAYLOAD_BUCKET.get(obj.key);
-          if (!file) continue;
-
-          const encoding = file.httpMetadata?.contentEncoding;
-          let bodyStream = file.body;
-          if (encoding === "gzip") {
-            // @ts-ignore - TS dom types sometimes lack DecompressionStream but it exists in CF Workers
-            bodyStream = bodyStream.pipeThrough(new DecompressionStream("gzip"));
+        for (const prefix of listed.delimitedPrefixes) {
+          const key = `${prefix}spatial.json`;
+          const data = await readJson(env.PAYLOAD_BUCKET, key);
+          const metadata = data?.metadata;
+          if (!metadata || metadata.schema_version !== SCHEMA_VERSION) {
+            console.warn(`Skipping ${key}: missing or not schema_version ${SCHEMA_VERSION}`);
+            skipped.push(key);
+            continue;
           }
-
-          const response = new Response(bodyStream);
-          const data = await response.json();
-          const metadata = data.metadata;
-          
-          if (!metadata || !metadata.run_id) {
-            console.warn(`Skipping ${obj.key}: Invalid metadata format`);
+          const missing = ENTRY_KEYS.filter((k) => !(k in metadata));
+          if (missing.length > 0) {
+            console.warn(`Skipping ${key}: metadata missing ${missing.join(", ")}`);
+            skipped.push(key);
             continue;
           }
 
-          runs.push({
-            run_id: metadata.run_id,
-            wandb_run_id: metadata.wandb_run_id,
-            wandb_run_name: metadata.run_id, // we use run_id for wandb_run_name as fallback in python
-            git_commit: metadata.git_commit_hash,
-            generated_at: metadata.generated_at,
-            analysis_period: {
-              start_date: metadata.start_date,
-              end_date: metadata.end_date,
-            },
-            train_config: metadata.hyperparameters || {},
-            metrics_summary: metadata.metrics_summary || {},
-            available_dates: metadata.available_dates || [metadata.start_date],
-            num_nodes: metadata.num_nodes,
-            num_simulated_nodes: metadata.num_simulated_nodes,
-          });
+          const entry: Record<string, unknown> = {};
+          for (const k of ENTRY_KEYS) entry[k] = metadata[k];
+          entry.analysis_period = { start_date: metadata.start_date, end_date: metadata.end_date };
+          runs.push(entry);
         }
-        
+
         cursor = listed.truncated ? listed.cursor : undefined;
       } while (cursor);
-      
-      // Sort runs by generated_at descending (newest first)
-      runs.sort((a, b) => new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime());
-      
-      if (runs.length > 0) {
-          defaultRunId = runs[0].run_id;
-      }
+
+      runs.sort((a, b) => a.registry.rank - b.registry.rank);
+      const reference = runs.find((r) => r.registry.is_reference);
+      const rules = new Set(runs.map((r) => r.registry.selection_rule));
 
       const registry = {
-        default_run_id: defaultRunId,
+        schema_version: SCHEMA_VERSION,
+        generated_at: new Date().toISOString(),
+        default_run_id: reference?.run_id ?? runs[0]?.run_id ?? null,
+        selection_rule: rules.size === 1 ? [...rules][0] : "mixed",
         runs: runs,
       };
 
-      const registryJson = JSON.stringify(registry, null, 2);
-
       // Write back to R2
-      await env.PAYLOAD_BUCKET.put("runs/run_registry.json", registryJson, {
+      await env.PAYLOAD_BUCKET.put("runs/run_registry.json", JSON.stringify(registry), {
         httpMetadata: {
           contentType: "application/json",
           cacheControl: "public, max-age=60",
         },
       });
 
-      return new Response(JSON.stringify({ success: true, count: runs.length }), {
+      return new Response(JSON.stringify({ success: true, count: runs.length, skipped }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
-      
+
     } catch (error: any) {
       console.error(error);
       return new Response(JSON.stringify({ error: error.message }), {

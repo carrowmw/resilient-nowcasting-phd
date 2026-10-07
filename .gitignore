@@ -6,17 +6,22 @@ digest.txt
 node_modules/
 build/
 logs/
+symlinks/
 .next/
 .pytest_cache/
 
 src/__pycache__/
 __pycache__/
-.DS_Store
+*.DS_Store
 .vscode/
+
+cache/
+data/external/.weather_cache_coords/
 
 venv/
 .venv/
 *.ipynb
+*.pyc
 
 .env
 *.parquet
@@ -42,5 +47,7 @@ r2_temp.json
 registry_temp.json
 dummy.txt
 run.log
+temp/
 frontend/frontend/
 frontend/frontend_runtime_errors.log
+symlinks

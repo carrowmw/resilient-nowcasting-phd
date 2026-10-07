@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The lack-of-data problem: data funnel and sensor-density scaling</title>
+<link rel="stylesheet" href="lib/fig.css">
+<script src="../vendor/d3.min.js"></script>
+<script src="lib/fig.js"></script>
+<script src="data/scaling.js"></script>
+<script src="data/exp1.js"></script>
+</head>
+<body>
+<svg id="chart" role="img" aria-label="Left: how many sensor streams survive each data requirement. Right: held-out RMSE against the number of training stations for the model and a neighbour-donor baseline"></svg>
+<script>
+const { C } = Fig;
+const S = window.DATA_SCALING;
+const E1 = window.DATA_EXP1;
+const { w: W, h: H } = Fig.size();
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+
+// ── Left: the funnel ─────────────────────────────────────────────────────────
+const FUNNEL = [
+  { label: "Candidate directional streams", v: E1.nCandidate, note: "Experiment 1 archive" },
+  { label: "Enough clean windows to train and test", v: E1.nViable, note: "Experiment 1 viability rule" },
+  { label: "Stations in the RIoT network", v: 81, note: "Experiment 3" },
+  { label: "Stations used for training", v: 57, note: "" },
+  { label: "Held-out stations", v: 24, note: "" },
+  { label: "…with any observed test data", v: 14, note: "the whole inductive test set" },
+];
+const lw = W * 0.44;
+const L = { l: 0, t: 90 };
+svg.append("text").attr("class", "panel-title").attr("x", 0).attr("y", 26).text("Where the data runs out");
+svg.append("text").attr("class", "panel-sub").attr("x", 0).attr("y", 52).text("Each requirement removes sensors before modelling starts");
+const fx = d3.scaleLinear().domain([0, 222]).range([0, lw - 330]);
+const fy = d3.scaleBand().domain(FUNNEL.map((d) => d.label)).range([L.t, H - 30]).padding(0.5);
+const fg = svg.selectAll("g.f").data(FUNNEL).join("g").attr("class", "f").attr("transform", (d) => `translate(0,${fy(d.label)})`);
+fg.append("text").attr("class", "label").attr("x", 0).attr("y", -8).text((d) => d.label);
+fg.append("path").attr("fill", (d, i) => (i >= 4 ? C.orange : C.blue)).attr("d", (d) => {
+  const w = fx(d.v), h = Math.min(24, fy.bandwidth()), r = 4;
+  return `M0,0H${w - r}q${r},0 ${r},${r}V${h - r}q0,${r} ${-r},${r}H0Z`;
+});
+fg.append("text").attr("class", "annot-strong").attr("x", (d) => fx(d.v) + 12).attr("y", 19).text((d) => d.v);
+fg.append("text").attr("class", "annot").attr("x", (d) => fx(d.v) + 60).attr("y", 19).text((d) => d.note);
+
+// ── Right: density scaling ───────────────────────────────────────────────────
+const rx0 = lw + 110, rw = W - rx0 - 40, R = { t: 110, b: 80 };
+const right = svg.append("g").attr("class", "step").attr("data-step", 1);
+right.append("text").attr("class", "panel-title").attr("x", lw + 40).attr("y", 26).text("More sensors, better inference?");
+right.append("text").attr("class", "panel-sub").attr("x", lw + 40).attr("y", 52)
+  .text(`Error at the same ${S.heldOut} held-out stations as training stations are added · single seed`);
+const x = d3.scaleLinear().domain([10, 68]).range([rx0, rx0 + rw]);
+const y = d3.scaleLinear().domain([36, 50]).range([H - R.b, R.t]);
+right.append("g").attr("class", "grid").attr("transform", `translate(0,${H - R.b})`)
+  .call(d3.axisBottom(x).tickValues(S.points.map((p) => p.n)).tickSize(-(H - R.t - R.b)))
+  .call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("dy", 14));
+right.append("g").attr("class", "grid").attr("transform", `translate(${rx0},0)`)
+  .call(d3.axisLeft(y).ticks(6).tickSize(-rw)).call((a) => a.select(".domain").remove()).call((a) => a.selectAll(".tick text").attr("x", -12));
+right.append("text").attr("class", "axis-label").attr("x", rx0 + rw).attr("y", H - 24).attr("text-anchor", "end").text("Number of training stations →");
+right.append("text").attr("class", "axis-label").attr("transform", `translate(${rx0 - 64},${R.t}) rotate(-90)`).attr("text-anchor", "end").text("Held-out RMSE ↑");
+
+const naive = S.points.filter((p) => p.naive != null);
+right.append("path").attr("d", d3.line().x((p) => x(p.n)).y((p) => y(p.naive))(naive)).attr("fill", "none").attr("stroke", C.text2).attr("stroke-width", 2.5);
+right.selectAll("circle.naive").data(naive).join("circle").attr("class", "naive").attr("cx", (p) => x(p.n)).attr("cy", (p) => y(p.naive)).attr("r", 6.5)
+  .attr("fill", C.text2).attr("stroke", "#fff").attr("stroke-width", 2);
+const last = naive[naive.length - 1];
+right.append("text").attr("class", "label").attr("x", x(naive[0].n) + 14).attr("y", y(naive[0].naive) - 16).text("Neighbour-donor baseline");
+
+const done = S.points.filter((p) => p.model != null);
+// Solid between adjacent finished densities; dashed across the densities still training.
+done.slice(1).forEach((p, i) => {
+  const a = done[i], adjacent = S.points.indexOf(p) - S.points.indexOf(a) === 1;
+  right.append("line").attr("x1", x(a.n)).attr("y1", y(a.model)).attr("x2", x(p.n)).attr("y2", y(p.model))
+    .attr("stroke", C.blue).attr("stroke-width", adjacent ? 3.5 : 2).attr("stroke-dasharray", adjacent ? null : "8 8");
+});
+right.selectAll("circle.model").data(done).join("circle").attr("class", "model").attr("cx", (p) => x(p.n)).attr("cy", (p) => y(p.model)).attr("r", 9)
+  .attr("fill", C.blue).attr("stroke", "#fff").attr("stroke-width", 2);
+const lastDone = done[done.length - 1];
+right.append("text").attr("class", "label").attr("font-weight", 700).attr("x", x(lastDone.n) + 16).attr("y", y(lastDone.model) + 6).text("RIoT (E3.3d)");
+
+// Runs still training: hollow markers on the axis.
+const pending = S.points.filter((p) => p.status === "running");
+right.selectAll("g.pending").data(pending).join("g").attr("class", "pending").call((g) => {
+  g.append("circle").attr("cx", (p) => x(p.n)).attr("cy", H - R.b - 22).attr("r", 9).attr("fill", "#fff").attr("stroke", C.blue).attr("stroke-width", 3);
+  g.append("text").attr("class", "annot").attr("x", (p) => x(p.n)).attr("y", H - R.b - 42).attr("text-anchor", "middle").text("running");
+});
+
+const all = S.points.filter((p) => p.naive != null);
+right.selectAll("rect.hit").data(all).join("rect").attr("class", "hit").attr("x", (p) => x(p.n) - 40).attr("width", 80)
+  .attr("y", R.t).attr("height", H - R.t - R.b).attr("fill", "transparent")
+  .on("pointermove", (ev, p) => Fig.showTip(ev, `${p.n} training stations`, [
+    { color: C.blue, value: p.model == null ? "training…" : p.model.toFixed(1), name: "RIoT held-out RMSE" + (p.source ? ` (${p.source})` : "") },
+    { color: C.text2, value: p.naive.toFixed(1), name: "neighbour-donor baseline" },
+  ]))
+  .on("pointerleave", Fig.hideTip);
+
+Fig.onStep((s) => Fig.showSteps(document.body, s), 1);
+</script>
+</body>
+</html>

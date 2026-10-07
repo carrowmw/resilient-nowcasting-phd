@@ -73,6 +73,18 @@ models:
     patience: 2
     scheduler_step_size: 5
     scheduler_gamma: 0.7
+  gru_uv:
+    type: gru
+    feature_groups: [count]
+    hidden_dim: 16
+    num_layers: 1
+    dropout: 0.1
+    lr: 0.003
+    batch_size: 256
+    epochs: 2
+    patience: 2
+    scheduler_step_size: 5
+    scheduler_gamma: 0.7
 
 ablation:
   model: lstm_mv
@@ -83,7 +95,7 @@ ablation:
 run:
   output_dir: "artifacts/quality_smoke"
   sensors: 3                    # int = first N viable sensors (smoke only)
-  models: [persistence, snaive_daily, arima, lstm_uv, lstm_mv]
+  models: [persistence, snaive_daily, arima, lstm_uv, lstm_mv, gru_uv]
   horizons: [8]
   interpolation_variants: [none, night_zero]
   run_ablations: false

@@ -57,10 +57,19 @@ def evaluate_batch(
 
     out: Dict[str, Optional[float]] = {}
 
-    # Forecast RMSE / MAE — every model has mu.
+    # Forecast RMSE / MAE — point prediction evaluated as E[Y] = mu * (1 - pi) (F-C06 fix)
     target_forecast = batch["target_forecast"]
-    out["rmse"] = torch.sqrt(torch.mean((target_forecast - preds.mu) ** 2)).item()
-    out["mae"] = torch.mean(torch.abs(target_forecast - preds.mu)).item()
+    if preds.point is not None:
+        # v5: the likelihood-specific scored point (likelihoods.point_forecast).
+        point_pred = preds.point
+    elif caps.zero_inflation and preds.pi is not None:
+        point_pred = preds.mu * (1.0 - preds.pi)
+    else:
+        point_pred = preds.mu
+
+    out["rmse"] = torch.sqrt(torch.mean((target_forecast - point_pred) ** 2)).item()
+    out["mae"] = torch.mean(torch.abs(target_forecast - point_pred)).item()
+    out["rmse_active"] = torch.sqrt(torch.mean((target_forecast - preds.mu) ** 2)).item()
 
     # Zero-accuracy counts — gated on a real zero-inflation head.
     if caps.zero_inflation:
