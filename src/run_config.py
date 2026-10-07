@@ -47,6 +47,8 @@ LEGACY_V4_EQUIVALENTS: Dict[str, Dict] = {
         "log1p_inputs": False,
         "complete_weather": False,               # v4 zero-filled weather at missing-traffic slots
         "ablate_masks": False,                   # v4 key; v5 prefers mask_channels=none
+        "train_node_count": None,                # None -> every non-holdout station is in the network
+        "train_node_seed": 0,                    # draw order of the nested training-station subsets
     },
     "model": {
         "sensor_embedding_dim": 0,
@@ -124,6 +126,10 @@ _ENUMS = {
 
 V5_SCHEMA = {section: tuple(keys) for section, keys in LEGACY_V4_EQUIVALENTS.items()}
 
+# Keys added to the v5 schema after the 209-run suite was generated. Configs saved by
+# that suite lack them; their legacy value is exactly the behaviour those runs had.
+V5_LATE_KEYS = (("data", "train_node_count"), ("data", "train_node_seed"))
+
 
 def resolve_config(config: dict) -> dict:
     """Return a fully-specified copy of `config` (never mutates the input)."""
@@ -134,6 +140,9 @@ def resolve_config(config: dict) -> dict:
             f"CRITICAL: config pipeline_version={cfg['pipeline_version']} but this code is "
             f"pipeline v{PIPELINE_VERSION}"
         )
+        for section, key in V5_LATE_KEYS:
+            if section in cfg and key not in cfg[section]:
+                cfg[section][key] = copy.deepcopy(LEGACY_V4_EQUIVALENTS[section][key])
         missing = [
             f"{section}.{key}"
             for section, keys in V5_SCHEMA.items()
@@ -223,6 +232,13 @@ def validate_config(cfg: dict) -> None:
             "CRITICAL: model.naive_kind must be 'none' for learned models"
     if model["sensor_embedding_dim"] == 0:
         assert model["sensor_embedding_dropout"] == 0.0
+    if data["train_node_count"] is not None:
+        # The training-station pool is "every station outside the inductive holdout",
+        # so subsampling it is only defined against a fixed inductive split.
+        assert cfg["eval_mode"] == "inductive", \
+            "CRITICAL: data.train_node_count requires eval_mode=inductive"
+        assert isinstance(data["train_node_count"], int) and data["train_node_count"] >= 1, \
+            f"CRITICAL: data.train_node_count must be a positive int, got {data['train_node_count']!r}"
 
 
 assert all(

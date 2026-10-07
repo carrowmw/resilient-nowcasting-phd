@@ -15,6 +15,9 @@
 #   ./scripts/riotv5/start_v5_suite.sh --gpus 0 1 2 3 --groups thesis_v4 p7_v5_suite
 #   ./scripts/riotv5/start_v5_suite.sh --gpus 0 1 2 3 --dry-run
 # (any argument list replaces the default "--gpus 0 1 2 3", so pass --gpus explicitly)
+#
+# Other job lists (e.g. start_scaling_sweep.sh) set V5_CONTAINER_NAME, V5_MANIFEST and
+# V5_LOGS_DIR to run in their own container with their own status files.
 # ==============================================================================
 
 set -euo pipefail
@@ -23,8 +26,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${WORKSPACE_ROOT}"
 
-CONTAINER_NAME="riot-v5-suite-runner"
-MANIFEST="configs/train/v5/suite_manifest.yaml"
+CONTAINER_NAME="${V5_CONTAINER_NAME:-riot-v5-suite-runner}"
+MANIFEST="${V5_MANIFEST:-configs/train/v5/suite_manifest.yaml}"
+LOGS="${V5_LOGS_DIR:-logs/v5_suite}"
 
 if docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
@@ -50,7 +54,7 @@ fi
 
 if [ ! -f "${MANIFEST}" ]; then
     echo "ERROR: ${MANIFEST} not found. Generate the configs first:" >&2
-    echo "  python scripts/riotv5/generate_v5_configs.py --check" >&2
+    echo "  python scripts/riotv5/generate_v5_configs.py --check   (or generate_scaling_configs.py)" >&2
     exit 1
 fi
 
@@ -62,6 +66,7 @@ fi
 echo "==================================================================="
 echo " Starting RIoT v5 experiment suite in a detached container"
 echo " Container: ${CONTAINER_NAME}   Service: gpu-runner"
+echo " Manifest:   ${MANIFEST}"
 echo " Suite args: ${ARGS[*]}"
 echo " Workspace:  ${WORKSPACE_ROOT}"
 echo "==================================================================="
@@ -70,18 +75,18 @@ ${COMPOSE} run \
     -d \
     --name "${CONTAINER_NAME}" \
     gpu-runner \
-    python3 scripts/riotv5/run_v5_suite.py "${ARGS[@]}"
+    python3 scripts/riotv5/run_v5_suite.py --manifest "${MANIFEST}" "${ARGS[@]}"
 
 echo ""
 echo "[✓] Container '${CONTAINER_NAME}' started in the background."
 echo ""
 echo "Helpful commands:"
-echo "  • Re-attach to logs:     ./scripts/riotv5/show_v5_logs.sh"
-echo "  • One run's log:         tail -f logs/v5_suite/runs/<run-name>.log"
-echo "  • Stop the suite:        ./scripts/riotv5/stop_v5_suite.sh"
-echo "  • Per-experiment CSV:    logs/v5_suite/v5_suite_summary.csv"
-echo "  • LaTeX tables:          logs/v5_suite/tables/<group>.tex"
-echo "  • Rebuild summaries:     python scripts/riotv5/run_v5_suite.py --summarise-only"
+echo "  • Re-attach to logs:     V5_CONTAINER_NAME=${CONTAINER_NAME} ./scripts/riotv5/show_v5_logs.sh"
+echo "  • One run's log:         tail -f ${LOGS}/runs/<run-name>.log"
+echo "  • Stop the suite:        V5_CONTAINER_NAME=${CONTAINER_NAME} ./scripts/riotv5/stop_v5_suite.sh"
+echo "  • Per-experiment CSV:    ${LOGS}/v5_suite_summary.csv"
+echo "  • LaTeX tables:          ${LOGS}/tables/<group>.tex"
+echo "  • Rebuild summaries:     python scripts/riotv5/run_v5_suite.py --manifest ${MANIFEST} --summarise-only"
 echo ""
 echo "-------------------------------------------------------------------"
 echo " Streaming live logs (Press Ctrl+C to detach without stopping)"

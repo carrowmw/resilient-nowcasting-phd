@@ -1,0 +1,64 @@
+% =====================================================================
+% Abstract -- DRAFT (2026-10-07)
+% ---------------------------------------------------------------------
+% Sources: MDPI Sensors paper (Experiment 1), chapter4_methodology.tex,
+% chapter7_experiment3_reconstruction.tex and the RIoT v5 results report
+% (docs/experiments/riot_v5/riot_v5_results_report.md).
+% Lines marked "% AUTHOR-CHECK" need confirming before submission.
+% All v5 figures are single-seed (seed 42, 103 runs); re-check them once
+% the tier-3 seeds (43/44) have run.
+% =====================================================================
+
+\begin{abstract}
+Low-cost sensor networks give cities a near-real-time picture of how
+people move, but the data they produce are fragmented: sensors drop out
+for minutes or days, and a missing interval is easily mistaken for an
+absence of activity. This thesis investigates how spatio-temporal deep
+learning can deliver reliable pedestrian forecasts for operational
+situational awareness when its inputs are incomplete, through three
+progressive experiments on the Newcastle Urban Observatory
+pedestrian-counting network.
+
+Experiment~1 forecasts 110 sensor streams individually and shows that
+the structure of missingness, not its volume, governs accuracy. Error
+rises sharply once the mean uninterrupted sequence falls below about
+three hours, and completeness has no independent effect once sequence
+length is controlled for. Experiment~2 adds graph-structured spatial
+modelling across 54 stations
+% AUTHOR-CHECK: add the one-sentence headline result of Experiment 2
+% (Chapter 6); it was not available when this draft was written.
+[\textit{key result}]. Experiment~3 develops RIoT, a multi-task
+architecture that couples a graph learnt from urban morphology, GATv2
+spatial attention and a Transformer temporal encoder with joint
+forecasting, imputation and zero-shot kriging heads. It is trained on
+three years of 15-minute counts from 81 stations, 24 of which are
+withheld entirely to test transfer to unseen locations.
+
+A controlled study of 103 configurations, scored on observed values
+under a leakage-free chronological protocol, shows that the original
+formulation, which treated missing targets as zeros, learnt to forecast
+zero during outages, and that its evaluation metric rewarded this
+collapse. Training on observed targets removes the collapse. The
+principal resilience mechanism is a unified missing-data encoding that
+makes artificial and genuine gaps indistinguishable to the model,
+combined with structured artificial gaps during training. The final
+model reduces forecast error under synthetic 3--24-hour outages by
+50\% and at stations seen in training by 23\%, and keeps predicted
+volume during day-long outages at the true level rather than near zero.
+% AUTHOR-CHECK: 50% = SO@12 RMSE 31.8 -> 15.8 (V4R -> V5F); 23% =
+% transductive RMSE 17.0 -> 13.1; SO@96 mass ratio 0.00 -> 1.01.
+Removing the unified encoding alone reverses most of this gain. Graph
+message passing matters chiefly during long outages. The results also
+mark clear limits: at unseen stations neither the forecaster nor the
+kriging head outperforms a neighbour-based seasonal profile, and every
+model under-predicts the highest counts. Several earlier conclusions,
+including the benefit of auxiliary imputation and the weakness of a
+recurrent baseline, prove to be artefacts of how missing data were
+scored.
+
+The thesis contributes an empirical account of how data quality limits
+urban forecasting, an outage-resilient forecasting architecture whose
+robustness is traced to specific ablated components, and a
+demonstration that the scoring of missing data can invert the
+conclusions of a forecasting study.
+\end{abstract}

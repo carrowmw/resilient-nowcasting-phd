@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import pandas as pd
 import logging
-from typing import Optional
+from typing import Callable, List, Optional
 from sklearn.preprocessing import StandardScaler
 
 from db_connector import DataConnector
@@ -47,7 +47,8 @@ class RealIoTDataset(Dataset):
                  train_split: Optional[float] = None,
                  ablate_masks: bool = False,
                  log1p_inputs: bool = False,
-                 complete_weather: bool = False):
+                 complete_weather: bool = False,
+                 location_filter: Optional[Callable[[List[str]], List[str]]] = None):
 
         logger.info(f"Loading data via connector {type(connector).__name__} "
                     f"between {start_date} and {end_date}")
@@ -119,9 +120,15 @@ class RealIoTDataset(Dataset):
                 f"veh_class='{target_veh_class}', dir='{target_dir}'."
             )
 
-        # 3. Extract dimensions
-        self.locations = sorted(df['location'].unique())
+        # 3. Extract dimensions. The time axis is fixed over ALL stations before any
+        # station filtering, so a reduced network keeps identical train/val/test windows.
+        self.all_locations = sorted(df['location'].unique())
         self.times = sorted(df['dt'].unique())
+        if location_filter is not None:
+            keep = location_filter(self.all_locations)
+            df = df[df['location'].isin(keep)]
+            logger.info(f"Station filter: keeping {len(keep)}/{len(self.all_locations)} locations.")
+        self.locations = sorted(df['location'].unique())
         self.seq_len = seq_len
         self.num_nodes = len(self.locations)
 
@@ -132,6 +139,7 @@ class RealIoTDataset(Dataset):
 
         # Dynamic features
         dyn_df = df[['value', 'Humidity', 'Solar Radiation']].unstack('location')
+        dyn_df = dyn_df.reindex(pd.Index(self.times, name='dt'))  # no-op without a station filter
         locations_idx = pd.Index(self.locations, name='location')
 
         val_df = dyn_df['value'].reindex(columns=locations_idx)

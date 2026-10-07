@@ -283,10 +283,9 @@ Go to **GitHub → Settings → Secrets and variables → Actions → New reposi
 2. Select **"Build and Publish Payloads to R2"**
 3. Click **"Run workflow"**
 4. Fill in parameters:
-   - **artifact_ref**: (leave empty)
-   - **all_artifacts**: ☐ (unchecked - we'll do one artifact first)
-   - **start_date**: `2026-06-01`
-   - **end_date**: `2026-06-15` (just 2 weeks for testing)
+   - **runs**: `v5_full-s42` (one run first)
+   - **top_k**: (ignored when **runs** is set)
+   - The analysis window comes from `configs/analysis/analysis.yaml`
 5. Click **"Run workflow"**
 6. Watch logs in real-time
 

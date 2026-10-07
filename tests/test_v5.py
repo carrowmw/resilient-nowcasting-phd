@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "riotv5"))
 
 from harness.adapters import build_adapter  # noqa: E402
 from harness.batch_prep import BatchPreparer  # noqa: E402
-from harness.holdout import make_fixed_holdout_mask  # noqa: E402
+from harness.holdout import inductive_holdout_ids, make_fixed_holdout_mask, select_network_locations  # noqa: E402
 from likelihoods import nb_log_p0, nb_logpmf, ztnb_logpmf  # noqa: E402
 from losses import TrafficScale, masked_mean, mixture_terms  # noqa: E402
 from model_factory import build_model  # noqa: E402
@@ -263,3 +263,61 @@ def test_v5_adapters_step_and_predict(name, dataset):
 def traffic_scale(dataset, cfg):
     return TrafficScale(torch.tensor(dataset.traffic_mean), torch.tensor(dataset.traffic_std),
                         cfg["data"]["log1p_inputs"])
+
+
+# --------------------------------------------------------------------------- #
+# Sensor-density subsampling (data.train_node_count)                            #
+# --------------------------------------------------------------------------- #
+def test_network_subsets_are_nested_and_keep_the_holdout():
+    locs = [f"loc{i:03d}" for i in range(81)]
+    held = inductive_holdout_ids(locs, 0.2, 42)
+    prev = set()
+    for n in (15, 25, 35, 45, 57):
+        keep = select_network_locations(locs, 0.2, 42, n, 0)
+        assert set(held) <= set(keep), "the inductive holdout never changes with density"
+        train = set(keep) - set(held)
+        assert len(train) == n and prev <= train, "subsets must be nested"
+        prev = train
+    assert len(held) + 57 == 81
+    with pytest.raises(AssertionError):
+        select_network_locations(locs, 0.2, 42, 58, 0)
+
+
+def test_late_v5_keys_backfill_and_validate():
+    cfg = copy.deepcopy(gen.V5F)
+    del cfg["data"]["train_node_count"], cfg["data"]["train_node_seed"]
+    resolved = resolve_config(cfg)  # a config saved by the original 209-run suite
+    assert resolved["data"]["train_node_count"] is None
+    cfg = copy.deepcopy(gen.V5F)
+    cfg["eval_mode"], cfg["data"]["train_node_count"] = "temporal", 20
+    with pytest.raises(AssertionError):
+        resolve_config(cfg)
+
+
+def test_station_filter_keeps_time_axis_and_is_identity_at_full_count(v4r_cfg, dataset):
+    cfg = copy.deepcopy(v4r_cfg)
+    pool = NODES - len(inductive_holdout_ids(dataset.all_locations, 0.2, 42))
+    cfg["data"]["train_node_count"] = pool
+    full = build_dataset(cfg, use_mock_data=True)
+    assert torch.equal(full.dynamic_data, dataset.dynamic_data)
+    assert torch.equal(full.profile_log1p, dataset.profile_log1p)
+    cfg["data"]["train_node_count"] = pool - 2
+    sub = build_dataset(cfg, use_mock_data=True)
+    assert sub.num_nodes == NODES - 2 and sub.all_locations == dataset.all_locations
+    assert sub.times == dataset.times, "dropping stations must not shift the chronological splits"
+    cols = [dataset.locations.index(loc) for loc in sub.locations]
+    assert torch.equal(sub.observed, dataset.observed[:, cols])
+
+
+def test_scaling_sweep_replicates_the_v5_runs_except_for_density():
+    import generate_scaling_configs as scaling
+
+    jobs = scaling.build_jobs(scaling.N_TRAIN, [42], [0])
+    assert len(jobs) == 2 * len(scaling.N_TRAIN)
+    for j in jobs:
+        source = scaling.experiment_cfg(j["source_experiment"])
+        cfg = resolve_config(copy.deepcopy(j["cfg"]))
+        assert cfg["data"]["train_node_count"] == j["n_train"]
+        cfg["data"]["train_node_count"], cfg["data"]["train_node_seed"] = None, 0
+        cfg["wandb"] = source["wandb"]
+        assert cfg == resolve_config(copy.deepcopy(source)), f"{j['name']} drifted from {j['source_experiment']}"

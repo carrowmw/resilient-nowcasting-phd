@@ -30,6 +30,10 @@ Usage:
   python scripts/riotv5/run_v5_suite.py --dry-run                    # print the plan
   python scripts/riotv5/run_v5_suite.py --summarise-only             # rebuild CSV / LaTeX
   python scripts/riotv5/run_v5_suite.py --gpus 0 --use_mock_data --smoke --jobs v5_full-s42
+  python scripts/riotv5/run_v5_suite.py --manifest configs/train/v5_scaling/suite_manifest.yaml
+
+--manifest runs another job list (e.g. the sensor-density sweep); its `logs_dir` field
+replaces logs/v5_suite, so status files and summaries never mix with the main suite.
 """
 import argparse
 import csv
@@ -83,6 +87,8 @@ LATEX_METRICS = [
 def parse_args():
     ap = argparse.ArgumentParser(description="Run the RIoT v5 experiment suite on multiple GPUs")
     ap.add_argument("--gpus", nargs="+", type=int, default=[0, 1, 2, 3])
+    ap.add_argument("--manifest", type=Path, default=MANIFEST,
+                    help="job list (default: the 209-run suite); its logs_dir field sets the output dir")
     ap.add_argument("--jobs-per-gpu", type=int, default=1,
                     help="concurrent jobs per GPU (1 is safest; 2 if memory allows)")
     ap.add_argument("--groups", nargs="+", default=None, help="experiment groups to include")
@@ -100,10 +106,18 @@ def parse_args():
     return ap.parse_args()
 
 
-def use_mock_dirs():
-    """Mock / smoke runs keep their own status and summaries (never mixed with real runs)."""
-    global LOGS_DIR, RUN_LOGS, STATUS_DIR, TABLES_DIR, SMOKE_DIR
-    LOGS_DIR = PROJECT_ROOT / "logs" / "v5_suite_mock"
+def use_dirs(manifest: Path, mock: bool):
+    """Point every output path at the manifest's logs_dir. Mock / smoke runs keep their
+    own status and summaries (never mixed with real runs)."""
+    global MANIFEST, LOGS_DIR, RUN_LOGS, STATUS_DIR, TABLES_DIR, SMOKE_DIR
+    MANIFEST = manifest if manifest.is_absolute() else PROJECT_ROOT / manifest
+    assert MANIFEST.exists(), f"{MANIFEST} not found — generate the configs first"
+    with open(MANIFEST) as f:
+        logs_dir = yaml.safe_load(f).get("logs_dir")
+    if logs_dir is not None:
+        LOGS_DIR = PROJECT_ROOT / logs_dir
+    if mock:
+        LOGS_DIR = LOGS_DIR.with_name(LOGS_DIR.name + "_mock")
     RUN_LOGS, STATUS_DIR = LOGS_DIR / "runs", LOGS_DIR / "status"
     TABLES_DIR, SMOKE_DIR = LOGS_DIR / "tables", LOGS_DIR / "smoke_configs"
 
@@ -161,7 +175,8 @@ def smoke_config(job: Dict) -> Path:
     """A shrunken copy of the job config for --smoke (structure unchanged)."""
     with open(PROJECT_ROOT / job["config"]) as f:
         cfg = yaml.safe_load(f)
-    cfg["model"]["num_nodes"] = 12
+    # Density runs need a synthetic city at least as large as the real one (81 stations).
+    cfg["model"]["num_nodes"] = 12 if cfg["data"].get("train_node_count") is None else cfg["model"]["num_nodes"]
     cfg["training"]["epochs"] = 2
     cfg["training"]["early_stop_patience"] = 1
     cfg["loss"]["impute_pretrain_epochs"] = min(cfg["loss"]["impute_pretrain_epochs"], 1)
@@ -394,8 +409,7 @@ def _write_latex(group: str, rows: List[Dict]):
 def main():
     args = parse_args()
     assert not args.smoke or args.use_mock_data, "--smoke requires --use_mock_data"
-    if args.use_mock_data:
-        use_mock_dirs()
+    use_dirs(args.manifest, args.use_mock_data)
     logger = setup_logger()
     with open(MANIFEST) as f:
         project = yaml.safe_load(f)["wandb_project"]

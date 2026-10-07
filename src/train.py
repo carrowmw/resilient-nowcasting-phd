@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 # Perform early GPU selection before ANY PyTorch or W&B bindings are loaded
 if __name__ == "__main__":
@@ -10,13 +10,16 @@ if __name__ == "__main__":
 
     if not early_args.use_mock_data:
         existing_gpus = os.environ.get("CUDA_VISIBLE_DEVICES")
-        if not existing_gpus:
+        if existing_gpus is None:
             from gpu_selector import select_gpus
             selected_gpus = select_gpus()
             if selected_gpus:
                 os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpus
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import copy
+import functools
 import logging
 import math
 from datetime import datetime
@@ -42,7 +45,9 @@ from synthetic_connector import SyntheticConnector
 from harness import (
     MetricAccumulator,
     evaluate_batch,
-    make_fixed_holdout_mask,
+    inductive_holdout_ids,
+    mask_from_manifest,
+    select_network_locations,
     save_holdout_manifest,
     load_holdout_manifest,
     manifest_sha,
@@ -168,6 +173,22 @@ def chronological_purged_split(
 MOCK_DAYS = 21
 
 
+def _network_filter(config: dict) -> Optional[Callable[[List[str]], List[str]]]:
+    """Sensor-density runs (data.train_node_count): the stations the dataset keeps.
+    Dropped stations leave the network entirely — no inputs, no loss, no graph
+    node, no profile donor — as if they were never installed."""
+    data_cfg = config["data"]
+    if data_cfg["train_node_count"] is None:
+        return None
+    return functools.partial(
+        select_network_locations,
+        holdout_frac=data_cfg["inductive_holdout_frac"],
+        holdout_seed=data_cfg["inductive_holdout_seed"],
+        train_node_count=data_cfg["train_node_count"],
+        train_node_seed=data_cfg["train_node_seed"],
+    )
+
+
 def build_dataset(config: dict, use_mock_data: bool) -> RealIoTDataset:
     """The full dataset for a resolved config (shared with tune.py so a pre-loaded
     sweep dataset is built with exactly the run's v5 data options)."""
@@ -180,6 +201,7 @@ def build_dataset(config: dict, use_mock_data: bool) -> RealIoTDataset:
         ablate_masks=data_cfg["ablate_masks"],
         log1p_inputs=data_cfg["log1p_inputs"],
         complete_weather=data_cfg["complete_weather"],
+        location_filter=_network_filter(config),
     )
     if use_mock_data:
         start = pd.Timestamp(data_cfg["start_date"])
@@ -393,18 +415,27 @@ def run_training(
     inductive_holdout_mask = None   # [N] bool — fixed, never trained on
     loss_node_mask = None           # [N] bool — True = node participates in losses
     holdout_manifest = None
+    n_train_nodes = None            # stations the model learns from (inductive mode)
 
     if eval_mode == "inductive":
         # v5: the inductive split has its own seed (v4 coupled it to random_seed,
         # so seed replicates silently changed the evaluation nodes).
         inductive_seed = data_cfg["inductive_holdout_seed"]
         inductive_frac = data_cfg["inductive_holdout_frac"]
-        inductive_holdout_mask = make_fixed_holdout_mask(
-            num_nodes=num_nodes,
-            holdout_frac=inductive_frac,
-            seed=inductive_seed,
-            device=device,
+        # Drawn over the full station list, so a run with fewer training stations
+        # (data.train_node_count) is still scored on exactly the same held-out nodes.
+        held_ids = inductive_holdout_ids(full_dataset.all_locations, inductive_frac, inductive_seed)
+        inductive_holdout_mask = mask_from_manifest(
+            {"holdout_location_ids": held_ids}, location_ids, device=device,
         )
+        assert int(inductive_holdout_mask.sum()) == len(held_ids), \
+            "CRITICAL: held-out stations missing from the dataset"
+        n_train_nodes = num_nodes - len(held_ids)
+        if data_cfg["train_node_count"] is not None:
+            assert n_train_nodes == data_cfg["train_node_count"], (
+                f"CRITICAL: dataset has {n_train_nodes} training stations, config asks for "
+                f"{data_cfg['train_node_count']} (pre-built dataset from another config?)"
+            )
         loss_node_mask = ~inductive_holdout_mask
 
         # Manifest: resolved location IDs, not just the seed — this is the bridge
@@ -416,7 +447,8 @@ def run_training(
         holdout_manifest = load_holdout_manifest(checkpoint_dir)
         logger.info(
             f"HARNESS inductive holdout: {int(inductive_holdout_mask.sum())}/{num_nodes} nodes "
-            f"held out (seed={inductive_seed}), manifest={manifest_path}, "
+            f"held out (seed={inductive_seed}), {n_train_nodes} training stations "
+            f"(of {len(full_dataset.all_locations) - len(held_ids)}), manifest={manifest_path}, "
             f"sha={manifest_sha(holdout_manifest)}"
         )
 
@@ -758,6 +790,8 @@ def run_training(
         "best_epoch": best_epoch,
         "seed": train_cfg["random_seed"],
         "holdout_manifest_sha": manifest_sha(holdout_manifest),
+        "num_nodes": num_nodes,
+        "train_node_count": n_train_nodes,
         "selection_metric": selection_metric,
         "selection_score": best_score,
         "metrics": best_val_metrics,

@@ -3,13 +3,13 @@ name: Build and Publish Payloads to R2
 on:
   workflow_dispatch: # Manual trigger
     inputs:
-      artifact_ref:
-        description: "W&B artifact ref (e.g., entity/project/name:v0)"
+      runs:
+        description: "Space-separated v5 W&B run names (e.g. v5_full-s42); empty = top_k selection"
         required: false
-      all_artifacts:
-        description: "Process all artifacts in collection"
-        type: boolean
-        default: false
+      top_k:
+        description: "v5_full-s42 reference + best (top_k - 1) runs by val_obs_all_rmse"
+        required: false
+        default: "10"
 
 jobs:
   build-and-upload:
@@ -47,8 +47,8 @@ jobs:
       - name: Export and Upload Payloads
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
-          ARTIFACT_REF: ${{ github.event.inputs.artifact_ref }}
-          ALL_ARTIFACTS: ${{ github.event.inputs.all_artifacts }}
+          RUNS: ${{ github.event.inputs.runs }}
+          TOP_K: ${{ github.event.inputs.top_k }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -64,8 +64,8 @@ jobs:
             -e R2_BUCKET_NAME -e R2_PUBLIC_URL \
             -e PAYLOAD_DIR \
             -e GOOGLE_PLACES_API_KEY \
-            -e ARTIFACT_REF \
-            -e ALL_ARTIFACTS \
+            -e RUNS \
+            -e TOP_K \
             -v /data:/data:ro \
             ci-payload-runner bash -c '
               set -euo pipefail
@@ -73,14 +73,15 @@ jobs:
               rm -rf "$PAYLOAD_DIR"/*
 
               ARGS="--config configs/analysis/analysis.yaml --output_dir $PAYLOAD_DIR"
-              if [ "$ALL_ARTIFACTS" = "true" ]; then
-                ARGS="$ARGS --all_artifacts"
-              elif [ -n "$ARTIFACT_REF" ]; then
-                ARGS="$ARGS --artifact $ARTIFACT_REF"
+              if [ -n "$RUNS" ]; then
+                ARGS="$ARGS --runs $RUNS"
+              else
+                ARGS="$ARGS --top_k ${TOP_K:-10}"
               fi
 
               echo "Exporting payloads..."
               python src/export_paginated_payload.py $ARGS
+              python scripts/build_run_registry.py "$PAYLOAD_DIR"
 
               echo "Uploading to R2..."
               python scripts/upload_to_r2.py --runs-dir "$PAYLOAD_DIR" --prefix runs

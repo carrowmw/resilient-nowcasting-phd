@@ -47,6 +47,7 @@ r2_temp.json
 registry_temp.json
 dummy.txt
 run.log
+temp/
 frontend/frontend/
 frontend/frontend_runtime_errors.log
 symlinks

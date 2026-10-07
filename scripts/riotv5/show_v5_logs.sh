@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}/../.."
 
-CONTAINER_NAME="riot-v5-suite-runner"
+CONTAINER_NAME="${V5_CONTAINER_NAME:-riot-v5-suite-runner}"
 
 if [ -z "$(docker ps -a -q -f name="^/${CONTAINER_NAME}$")" ]; then
     echo "No container named '${CONTAINER_NAME}' found."

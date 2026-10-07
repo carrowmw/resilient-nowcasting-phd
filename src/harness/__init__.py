@@ -9,6 +9,8 @@ from harness.contract import Capabilities, Predictions, Losses, BATCH_DATA_KEYS
 from harness.evaluate import validate_predictions, MetricAccumulator, evaluate_batch
 from harness.holdout import (
     make_fixed_holdout_mask,
+    inductive_holdout_ids,
+    select_network_locations,
     save_holdout_manifest,
     load_holdout_manifest,
     mask_from_manifest,
@@ -30,6 +32,8 @@ __all__ = [
     "MetricAccumulator",
     "evaluate_batch",
     "make_fixed_holdout_mask",
+    "inductive_holdout_ids",
+    "select_network_locations",
     "save_holdout_manifest",
     "load_holdout_manifest",
     "mask_from_manifest",

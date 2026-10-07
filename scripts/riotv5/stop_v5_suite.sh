@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-CONTAINER_NAME="riot-v5-suite-runner"
+CONTAINER_NAME="${V5_CONTAINER_NAME:-riot-v5-suite-runner}"
 
 if [ -z "$(docker ps -q -f name="^/${CONTAINER_NAME}$")" ]; then
     echo "No running container named '${CONTAINER_NAME}' was found."
