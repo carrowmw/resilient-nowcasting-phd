@@ -3,7 +3,6 @@
 import useTimeStore from "@/store/useTimeStore";
 
 export default function MapLegend() {
-  const showSimulatedNodes = useTimeStore((s) => s.showSimulatedNodes);
   const selectedNodeId = useTimeStore((s) => s.selectedNodeId);
 
   return (
@@ -39,11 +38,11 @@ export default function MapLegend() {
           </svg>
           <div>
             <div style={{ fontWeight: 500, color: "#f1f5f9" }}>Observed Sensor</div>
-            <div style={{ color: "#94a3b8", fontSize: "10px" }}>Real physical sensor station.</div>
+            <div style={{ color: "#94a3b8", fontSize: "10px" }}>Model sees its history when online.</div>
           </div>
         </div>
 
-        {/* Holdout/Masked Nodes */}
+        {/* Holdout Nodes */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <svg width="20" height="20" viewBox="0 0 20 20" style={{ overflow: "visible" }}>
             <circle cx="10" cy="10" r="5" fill="#f59e0b" />
@@ -52,22 +51,32 @@ export default function MapLegend() {
           </svg>
           <div>
             <div style={{ fontWeight: 500, color: "#a78bfa" }}>Holdout (Zero-Shot)</div>
-            <div style={{ color: "#94a3b8", fontSize: "10px" }}>Real node masked in training; tested for generalization.</div>
+            <div style={{ color: "#94a3b8", fontSize: "10px" }}>Never trained on; blanked at inference.</div>
           </div>
         </div>
 
-        {/* Simulated Nodes */}
-        {showSimulatedNodes && (
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <svg width="20" height="20" viewBox="0 0 20 20" style={{ overflow: "visible" }}>
-              <circle cx="10" cy="10" r="6" fill="none" stroke="#f59e0b" strokeWidth="2" />
-            </svg>
-            <div>
-              <div style={{ fontWeight: 500, color: "#f59e0b" }}>Simulated Node</div>
-              <div style={{ color: "#94a3b8", fontSize: "10px" }}>Synthetic node without physical sensor.</div>
-            </div>
+        {/* No interval */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" style={{ overflow: "visible" }}>
+            <circle cx="10" cy="10" r="6" fill="rgb(100,116,139)" />
+          </svg>
+          <div>
+            <div style={{ fontWeight: 500, color: "#cbd5e1" }}>No Interval</div>
+            <div style={{ color: "#94a3b8", fontSize: "10px" }}>Model has no predictive distribution.</div>
           </div>
-        )}
+        </div>
+
+        {/* Ghost nodes */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" style={{ overflow: "visible" }}>
+            <circle cx="6" cy="10" r="4" fill="none" stroke="rgba(148,163,184,0.6)" strokeWidth="1.5" />
+            <circle cx="15" cy="10" r="4" fill="none" stroke="rgba(167,139,250,0.5)" strokeWidth="1.5" />
+          </svg>
+          <div>
+            <div style={{ fontWeight: 500, color: "#94a3b8" }}>Ghost (No Data)</div>
+            <div style={{ color: "#94a3b8", fontSize: "10px" }}>No readings this window; forecast can&apos;t be checked.</div>
+          </div>
+        </div>
 
         {/* Graph Attention Edge */}
         {selectedNodeId === null && (
@@ -108,11 +117,16 @@ export default function MapLegend() {
       </div>
 
       <div style={{ borderTop: "1px solid rgba(255, 255, 255, 0.08)", marginTop: "10px", paddingTop: "8px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8", fontSize: "9px" }}>
-          <span>Node Radius = Traffic Volume (μ)</span>
-        </div>
+        <div style={{ height: 6, borderRadius: 3, background: "linear-gradient(90deg, rgb(0,200,0), rgb(255,200,0), rgb(255,0,0))" }} />
         <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8", fontSize: "9px", marginTop: "2px" }}>
-          <span>Node Color = Uncertainty (σ/μ)</span>
+          <span>narrow</span>
+          <span>≥ 2× wide</span>
+        </div>
+        <div style={{ color: "#94a3b8", fontSize: "9px", marginTop: "4px" }}>
+          Node Color = relative 80% interval width (hi−lo)/(point+1)
+        </div>
+        <div style={{ color: "#94a3b8", fontSize: "9px", marginTop: "2px" }}>
+          Radius = point forecast
         </div>
       </div>
     </div>

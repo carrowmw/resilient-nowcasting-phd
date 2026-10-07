@@ -3,13 +3,15 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import useTimeStore from "@/store/useTimeStore";
+import type { Capabilities } from "@/types/payload";
 import type { RunRegistryEntry } from "@/types/registry";
+import { fmt, fmtPct } from "@/lib/v5";
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "2px 0" }}>
       <span style={{ color: "#94a3b8" }}>{label}</span>
-      <span style={{ color: "#e2e8f0", fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      <span style={{ color: "#e2e8f0", fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{value}</span>
     </div>
   );
 }
@@ -22,30 +24,65 @@ function Section({ title }: { title: string }) {
   );
 }
 
-function num(v: unknown, digits = 3): string {
-  return typeof v === "number" ? v.toFixed(digits) : "—";
+function section(hp: Record<string, unknown>, key: string): Record<string, unknown> {
+  const v = hp[key];
+  return v != null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+function str(v: unknown): string {
+  return v == null ? "—" : String(v);
+}
+
+const CAPABILITY_LABELS: [keyof Capabilities, string][] = [
+  ["uncertainty", "interval"],
+  ["zero_inflation", "π"],
+  ["imputation", "impute"],
+  ["kriging", "kriging"],
+  ["graph", "graph"],
+  ["outage", "outage"],
+  ["quantiles", "quantiles"],
+];
+
+function CapabilityChips({ caps }: { caps: Capabilities }) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+      {CAPABILITY_LABELS.map(([key, label]) => (
+        <span
+          key={key}
+          title={key}
+          style={{
+            fontSize: 10,
+            padding: "1px 6px",
+            borderRadius: 6,
+            border: `1px solid ${caps[key] ? "rgba(52,211,153,0.5)" : "rgba(100,116,139,0.35)"}`,
+            color: caps[key] ? "#6ee7b7" : "#475569",
+            textDecoration: caps[key] ? "none" : "line-through",
+          }}
+        >
+          {label}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /**
- * Glassmorphic card showing the active run's training config, metrics and
- * analysis period. Self-contained: an "i" button toggles the card. Data comes
- * entirely from the run registry entry (no extra fetch).
+ * Glassmorphic card for the active run: registry placement, capabilities,
+ * architecture, held-out test metrics, exporter window metrics and provenance.
+ * Data comes entirely from the run registry entry (no extra fetch).
  */
 export default function ModelInfoOverlay() {
   const [open, setOpen] = useState(false);
   const runRegistry = useTimeStore((s) => s.runRegistry);
   const activeRunId = useTimeStore((s) => s.activeRunId);
-  const showSimulatedNodes = useTimeStore((s) => s.showSimulatedNodes);
-  const setShowSimulatedNodes = useTimeStore((s) => s.setShowSimulatedNodes);
 
-  const entry: RunRegistryEntry | undefined = runRegistry.find(
-    (r) => r.run_id === activeRunId,
-  );
+  const entry: RunRegistryEntry | undefined = runRegistry.find((r) => r.run_id === activeRunId);
   if (!entry) return null;
 
-  const model = (entry.train_config?.model ?? {}) as Record<string, unknown>;
-  const training = (entry.train_config?.training ?? {}) as Record<string, unknown>;
-  const m = entry.metrics_summary ?? {};
+  const model = section(entry.hyperparameters, "model");
+  const training = section(entry.hyperparameters, "training");
+  const tm = entry.test_metrics;
+  const wm = entry.window_metrics;
 
   return (
     <>
@@ -75,12 +112,16 @@ export default function ModelInfoOverlay() {
 
       {open && (
         <div
+          role="dialog"
+          aria-label="Model info"
           style={{
             position: "absolute",
             top: 70,
             left: 88,
             zIndex: 25,
-            width: 300,
+            width: 320,
+            maxHeight: "calc(100vh - 220px)",
+            overflowY: "auto",
             background: "rgba(10,12,16,0.92)",
             border: "1px solid rgba(96,165,250,0.35)",
             backdropFilter: "blur(10px)",
@@ -92,64 +133,78 @@ export default function ModelInfoOverlay() {
             boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <strong style={{ fontSize: 14 }}>{entry.run_id}</strong>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <strong style={{ fontSize: 14 }}>
+              #{entry.registry.rank} {entry.run_id}
+            </strong>
+            {entry.registry.is_reference && (
+              <span style={{ fontSize: 10, color: "#fbbf24", border: "1px solid rgba(251,191,36,0.5)", borderRadius: 6, padding: "0 6px" }}>
+                REFERENCE
+              </span>
+            )}
             <button
               type="button"
               onClick={() => setOpen(false)}
               aria-label="Close model info"
-              style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 16 }}
+              style={{ marginLeft: "auto", background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 16 }}
             >
               ✕
             </button>
           </div>
+          <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 4 }}>{entry.description}</div>
 
-          <Section title="ARCHITECTURE" />
-          <Row label="Hidden" value={String(model.hidden_dim ?? "—")} />
-          <Row label="Layers" value={String(model.num_layers ?? "—")} />
-          <Row label="Heads" value={String(model.num_heads ?? "—")} />
-          <Row label="Embed" value={String(model.embedding_dim ?? "—")} />
-          <Row label="Dropout" value={String(model.dropout ?? "—")} />
+          <Section title="MODEL" />
+          <Row label="Experiment" value={entry.experiment} />
+          <Row label="Group" value={entry.group} />
+          <Row label="Likelihood" value={entry.forecast_likelihood} />
+          <Row label="Look-back" value={`${entry.seq_len} slots`} />
+          {entry.quantile_levels.length > 0 && (
+            <Row label="Quantiles" value={entry.quantile_levels.join(", ")} />
+          )}
+          <CapabilityChips caps={entry.capabilities} />
+
+          {Object.keys(model).length > 0 && (
+            <>
+              <Section title="ARCHITECTURE" />
+              <Row label="Hidden" value={str(model.hidden_dim)} />
+              <Row label="Layers" value={str(model.num_layers)} />
+              <Row label="Heads" value={str(model.num_heads)} />
+              <Row label="Embed" value={str(model.embedding_dim)} />
+              <Row label="Dropout" value={str(model.dropout)} />
+            </>
+          )}
 
           {Object.keys(training).length > 0 && (
             <>
               <Section title="TRAINING" />
-              {training.epochs != null && <Row label="Epochs" value={String(training.epochs)} />}
-              {training.batch_size != null && <Row label="Batch" value={String(training.batch_size)} />}
-              {training.learning_rate != null && <Row label="LR" value={String(training.learning_rate)} />}
+              {training.epochs != null && <Row label="Epochs" value={str(training.epochs)} />}
+              {training.batch_size != null && <Row label="Batch" value={str(training.batch_size)} />}
+              {training.learning_rate != null && <Row label="LR" value={str(training.learning_rate)} />}
             </>
           )}
 
-          <Section title="VALIDATION" />
-          <Row label="RMSE" value={num(m.val_rmse)} />
-          <Row label="MAE" value={num(m.val_mae)} />
-          <Row label="Zero Acc" value={num(m.val_zero_acc)} />
+          <Section title="HELD-OUT TEST" />
+          <Row label="Val RMSE (rank key)" value={fmt(tm.val_obs_all_rmse)} />
+          <Row label="RMSE all / ind" value={`${fmt(tm.test_obs_all_rmse)} / ${fmt(tm.test_obs_ind_rmse)}`} />
+          <Row label="3 h outage RMSE" value={fmt(tm.test_so_12_forecast_rmse)} />
+          <Row label="CRPS" value={fmt(tm.test_crps)} />
+          <Row label="Collapse rate" value={fmtPct(tm.test_collapse_rate)} />
+          <Row label="Gap mass ratio" value={fmt(tm.test_real_gap_mass_ratio)} />
+          <Row label="q90 coverage" value={fmtPct(tm.test_q90_coverage)} />
 
-          <Section title="ANALYSIS" />
-          <Row
-            label="Period"
-            value={`${entry.analysis_period.start_date ?? "—"} → ${entry.analysis_period.end_date ?? "—"}`}
-          />
+          <Section title="ANALYSIS WINDOW" />
+          <Row label="Period" value={`${entry.analysis_period.start_date} → ${entry.analysis_period.end_date}`} />
           <Row label="Days" value={String(entry.available_dates.length)} />
-          <Row
-            label="Nodes"
-            value={`${entry.num_nodes} (${entry.num_nodes - entry.num_simulated_nodes} real + ${entry.num_simulated_nodes} sim)`}
-          />
-
-          <Section title="VISUALIZATION" />
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
-            <span style={{ color: "#94a3b8" }}>Simulated Nodes</span>
-            <input 
-              type="checkbox" 
-              checked={showSimulatedNodes} 
-              onChange={(e) => setShowSimulatedNodes(e.target.checked)}
-              style={{ cursor: "pointer" }}
-            />
-          </div>
+          <Row label="Nodes" value={`${entry.num_nodes} (${entry.num_holdout_nodes} holdout, ${entry.num_ghost_nodes} ghost)`} />
+          <Row label="Observed" value={fmtPct(wm.observed_frac)} />
+          <Row label="RMSE all / ind" value={`${fmt(wm.obs_all_rmse)} / ${fmt(wm.obs_ind_rmse)}`} />
+          <Row label="80% coverage" value={fmtPct(wm.interval80_coverage)} />
+          <Row label="Gap mass ratio" value={fmt(wm.real_gap_mass_ratio)} />
 
           <Section title="PROVENANCE" />
-          <Row label="W&B run" value={entry.wandb_run_id} />
-          <Row label="Commit" value={String(entry.git_commit).slice(0, 9)} />
+          <Row label="W&B run" value={entry.wandb_run_id ?? "—"} />
+          <Row label="Commit" value={entry.git_commit_hash ? entry.git_commit_hash.slice(0, 9) : "—"} />
+          <Row label="Holdout sha" value={entry.holdout_manifest_sha ? entry.holdout_manifest_sha.slice(0, 9) : "—"} />
         </div>
       )}
     </>

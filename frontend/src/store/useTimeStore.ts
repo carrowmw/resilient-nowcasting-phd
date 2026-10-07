@@ -1,6 +1,14 @@
 import { create } from 'zustand';
-import type { AttentionEdge } from '@/types/payload';
-import type { RunRegistryEntry } from '@/types/registry';
+import type { AttentionEdge, TemporalPage } from '@/types/payload';
+import type { RunRegistryEntry, SpatialIndex } from '@/types/registry';
+
+/** One loaded day of one run: spatial index + page, always for the same run. */
+export interface DayPayload {
+  runId: string;
+  date: string;
+  spatial: SpatialIndex;
+  page: TemporalPage;
+}
 
 interface TimeState {
   currentTimestep: number;
@@ -8,15 +16,19 @@ interface TimeState {
   isPlaying: boolean;
   selectedNodeId: number | null;
   globalAttentionThreshold: number;
-  showSimulatedNodes: boolean;
   egoGraphEdges: AttentionEdge[] | null;
 
-  // --- Multi-run + pagination state (Phase 1) ---
+  // --- Multi-run + pagination state ---
   activeRunId: string | null;
   activeDate: string | null;            // "2026-05-01"
   availableDates: string[];             // sorted, from spatial.json metadata
-  runRegistry: RunRegistryEntry[];      // from run_registry.json
+  runRegistry: RunRegistryEntry[];      // from run_registry.json, ordered by rank
+  selectionRule: string | null;         // run_registry.json selection_rule
   isLoadingPage: boolean;               // true during a page.json fetch
+
+  // --- Loaded payloads (shared by the map, overlays and analytics page) ---
+  spatial: SpatialIndex | null;         // latest spatial.json (may lead dayPayload on run switch)
+  dayPayload: DayPayload | null;        // spatial + page of the same run, set atomically
 
   setTimestep: (step: number) => void;
   setMaxTimesteps: (max: number) => void;
@@ -24,16 +36,16 @@ interface TimeState {
   incrementTimestep: () => void;
   setSelectedNodeId: (id: number | null) => void;
   setGlobalAttentionThreshold: (v: number) => void;
-  setShowSimulatedNodes: (v: boolean) => void;
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => void;
 
-  // --- Multi-run + pagination actions ---
   setActiveRunId: (runId: string) => void;
   setActiveDate: (date: string) => void;
   setAvailableDates: (dates: string[]) => void;
-  setRunRegistry: (runs: RunRegistryEntry[]) => void;
+  setRunRegistry: (runs: RunRegistryEntry[], selectionRule?: string | null) => void;
   setIsLoadingPage: (loading: boolean) => void;
   navigateDay: (direction: 'prev' | 'next') => void;
+  setSpatial: (spatial: SpatialIndex | null) => void;
+  setDayPayload: (payload: DayPayload | null) => void;
 }
 
 const useTimeStore = create<TimeState>((set, get) => ({
@@ -42,14 +54,17 @@ const useTimeStore = create<TimeState>((set, get) => ({
   isPlaying: false,
   selectedNodeId: null,
   globalAttentionThreshold: 0.5,
-  showSimulatedNodes: true,
   egoGraphEdges: null,
 
   activeRunId: null,
   activeDate: null,
   availableDates: [],
   runRegistry: [],
+  selectionRule: null,
   isLoadingPage: false,
+
+  spatial: null,
+  dayPayload: null,
 
   setTimestep: (step: number) =>
     set({ currentTimestep: Math.max(0, Math.min(step, get().maxTimesteps)) }),
@@ -72,8 +87,6 @@ const useTimeStore = create<TimeState>((set, get) => ({
   setGlobalAttentionThreshold: (v: number) =>
     set({ globalAttentionThreshold: Math.max(0, Math.min(1, v)) }),
 
-  setShowSimulatedNodes: (v: boolean) => set({ showSimulatedNodes: v }),
-
   setEgoGraphEdges: (edges: AttentionEdge[] | null) => set({ egoGraphEdges: edges }),
 
   setActiveRunId: (runId: string) => set({ activeRunId: runId }),
@@ -82,7 +95,8 @@ const useTimeStore = create<TimeState>((set, get) => ({
 
   setAvailableDates: (dates: string[]) => set({ availableDates: dates }),
 
-  setRunRegistry: (runs: RunRegistryEntry[]) => set({ runRegistry: runs }),
+  setRunRegistry: (runs: RunRegistryEntry[], selectionRule: string | null = null) =>
+    set({ runRegistry: runs, selectionRule }),
 
   setIsLoadingPage: (loading: boolean) => set({ isLoadingPage: loading }),
 
@@ -95,6 +109,10 @@ const useTimeStore = create<TimeState>((set, get) => ({
     if (nextIdx < 0 || nextIdx >= availableDates.length) return; // boundary
     set({ activeDate: availableDates[nextIdx] });
   },
+
+  setSpatial: (spatial: SpatialIndex | null) => set({ spatial }),
+
+  setDayPayload: (payload: DayPayload | null) => set({ dayPayload: payload }),
 }));
 
 export default useTimeStore;
