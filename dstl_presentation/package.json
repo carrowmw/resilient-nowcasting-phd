@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Dstl sponsor presentation: resilient spatiotemporal forecasting for urban digital twins (reveal.js)",
   "scripts": {
+    "build": "echo 'Static presentation ready'",
     "vendor": "node scripts/vendor.mjs",
     "data": "python3 scripts/build_figure_data.py",
     "serve": "npx --yes http-server -p 8000 -c-1 ."

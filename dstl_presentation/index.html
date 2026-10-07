@@ -38,7 +38,7 @@
     <p class="kicker">DSTL Review · October 2026</p>
     <h1>Intelligence from<br>imperfect sensors</h1>
     <p class="subtitle">Resilient spatiotemporal forecasting for urban digital twins</p>
-    <p class="meta"><strong>Carrow Morris-Wiltshire</strong><br>PhD researcher, Newcastle University · Urban Observatory</p>
+    <p class="meta"><strong>Carrow Morris-Wiltshire</strong><br>PhD researcher, Newcastle University · Geospatial Systems CDT</p>
   </div>
   <aside class="notes">
     [0:30] Thank you for the time. Over the next thirty minutes I want to show you where the thesis has got to,
@@ -71,7 +71,7 @@
     </div>
     <div class="person">
       <div class="avatar">KH</div>
-      <div><h3><span>Keith Hermiston</span></h3><p>Defence Science and Technology Laboratory<br><span></span></p></div>
+      <div><h3><span>Keith Hermiston</span></h3><p>DSTL<br><span></span></p></div>
     </div>
     <div class="person">
       <div class="avatar"><img src="images/stuart-barr.jpeg" alt="Stuart Barr"></div>
@@ -91,7 +91,7 @@
 <section data-part="context">
   <header class="slide-head">
     <p class="kicker">The idea</p>
-    <h2>Data in, whatever its quality. Intelligence out, with honest uncertainty.</h2>
+    <h2>Data in, whatever its quality. Intelligence out, with an estimate of its uncertainty.</h2>
   </header>
   <iframe class="fig-frame" data-src="figures/degradation-concept.html" style="height: 560px;" title="Graceful degradation schematic"></iframe>
   <div class="cols cols-3" style="margin-top: 22px; gap: 40px;">
@@ -160,7 +160,7 @@
 <section data-part="context">
   <header class="slide-head">
     <p class="kicker">Where resilient forecasting stands</p>
-    <h2>The methods exist. The benchmarks are too clean.</h2>
+    <h2>The methods exist but the benchmarks are too clean</h2>
   </header>
   <div class="cols cols-wide-left" style="gap: 64px;">
     <iframe class="fig-frame" data-src="figures/benchmark-missingness.html" style="height: 600px;" title="Missingness in benchmark datasets"></iframe>
@@ -258,7 +258,7 @@
 <section data-part="data">
   <header class="slide-head">
     <p class="kicker">The data</p>
-    <h2>Newcastle's pedestrian network: rich, real and full of holes</h2>
+    <h2>UO mobility network: rich, real and full of holes</h2>
   </header>
   <div class="cols cols-wide-left" style="gap: 64px;">
     <iframe class="fig-frame" data-src="figures/availability-heatmap.html" style="height: 690px;" title="Weekly data availability heat map"></iframe>
@@ -332,7 +332,7 @@
 <section data-part="twin">
   <header class="slide-head">
     <p class="kicker">The geospatial digital twin</p>
-    <h2>From raw feeds to a (live), explorable picture</h2>
+    <h2>From raw feeds to a live and explorable picture</h2>
   </header>
   <div class="flow" style="margin-top: 30px;">
     <div class="node fragment fade-up" data-fragment-index="0"><h3>Ingest</h3><p>Urban Observatory counts, Open-Meteo weather, OpenStreetMap context. Gaps preserved, never filled.</p></div>
@@ -346,7 +346,7 @@
     <div class="node fragment fade-up" data-fragment-index="4" style="background: #e8f1f8;"><h3>See</h3><p>WebGL map with time slider, station inspector and uncertainty, for any model in the registry.</p></div>
   </div>
   <div class="cols cols-3" style="margin-top: 60px; gap: 48px;">
-    <div class="stat"><div class="value">81</div><div class="label">stations, plus 29 simulated "ghost" locations queried by kriging</div></div>
+    <div class="stat"><div class="value">81</div><div class="label">stations, including 29 "ghost" locations from induction</div></div>
     <div class="stat"><div class="value">15 min</div><div class="label">resolution; any day of the test period can be replayed</div></div>
     <div class="stat"><div class="value">1 click</div><div class="label">to switch between models and compare their behaviour on the same day</div></div>
   </div>
@@ -619,17 +619,18 @@
   <div class="cols cols-3" style="margin-top: 14px; gap: 40px;">
     <p class="small"><strong style="color: var(--text);">Compute is cheap.</strong> 184k parameters; 103 runs cost 277 GPU-hours. Seed replicates need about 260 more.</p>
     <p class="small"><strong style="color: var(--text);">Data are scarce.</strong> The whole inductive test rests on 14 stations with any observed test data.</p>
-    <p class="small fragment"><strong style="color: var(--text);">Density sweep running.</strong> At full density the model beats the baseline by 8%; at 15–25 stations it does not reliably. 35 and 45 are training now.</p>
+    <p class="small fragment"><strong style="color: var(--text);">Density sweep running.</strong> At full density the model beats the baseline by 8%; across 15–45 stations single-seed transfer hovers noisily around the donor baseline. Full seeded sweep is currently running.</p>
   </div>
   <aside class="notes">
     [1:15] Scalability. On the left, how data requirements whittle the network down: 222 candidate streams, 110 usable
     for single-sensor forecasting, 81 stations, 24 held out, and only 14 of those with any observed data in the test
     window. That is the real ceiling on what we can claim about inference at unsensed locations.
     [Advance] On the right, the density sweep: train on 15, 25, 35, 45 or 57 stations and test on the same 24.
-    At full density the model beats the neighbour baseline; at 15 and 25 the result is noisy and crosses it. 35 and 45
-    are training now. Compute is not the issue: the model is small and the whole suite cost 277 GPU-hours. More, and more
-    diverse, sensors would help most. A caveat: the 57-station point comes from the main suite, trained under the same
-    configuration but a longer epoch budget.
+    Across 15 to 45 stations on a single seed, inductive transfer is noisy and oscillates around the neighbour baseline.
+    At full density (57 stations) the model pulls ahead by ~8%. Compute is not the issue: the model is small and the whole
+    suite cost 277 GPU-hours. More, and more diverse, sensors would help most. A caveat: the plotted 57-station point comes
+    from the main suite (E3.3d), trained under the same configuration but with a 100-epoch budget rather than 50; the strictly
+    matched 50-epoch run is training now.
   </aside>
 </section>
 
@@ -699,7 +700,7 @@
     <thead><tr><th style="width: 18%;">Type</th><th>Output</th><th style="width: 18%;">Status</th></tr></thead>
     <tbody>
       <tr><td>Journal</td><td>Quality-aware AIoT-enabled wireless urban sensor networks using deep-learning - <em>[MDPI Sensors]</em></td><td><span class="tag green">In Press</span></td></tr>
-      <tr><td>Conference</td><td>Resilience-First Graph Attention for Operational Urban IoT: Zero-Inflated Probabilistic Nowcasting under Ambiguous Zeros - <em>[IEEE WCCI 2026]</em></td><td><span class="tag green">Presented & In Press</span></td></tr>
+      <tr><td>Conference & Journal</td><td>Resilience-First Graph Attention for Operational Urban IoT: Zero-Inflated Probabilistic Nowcasting under Ambiguous Zeros - <em>[IEEE WCCI 2026]</em></td><td><span class="tag green">Presented & In Press</span></td></tr>
       <tr><td>Journal</td><td>Unified missing encoding and evaluation pitfalls for resilient multi-task forecasting - <em>[Target: IEEE]</em></td><td><span class="tag grey">In preparation</span></td></tr>
       <tr><td>Thesis</td><td>Chapter 7 being finalised following RIoT v5 results.</td><td><span class="tag grey">In progress</span></td></tr>
       <tr><td>Software</td><td>RIoT pipeline, experiment harness and the geospatial digital-twin dashboard.</td><td><span class="tag">Working system</span></td></tr>
