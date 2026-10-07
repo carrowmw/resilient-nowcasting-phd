@@ -16,7 +16,7 @@ const { w: W, h: H } = Fig.size();
 const runs = window.DATA_V5_RUNS.runs;
 
 const PHASES = [
-  { g: "thesis_v4", label: "Thesis re-run", q: "Do the published ablations hold?", base: "v4r_full" },
+  { g: "thesis_v4", label: "V4 re-run", q: "Do the ablations hold?", base: "v4r_full" },
   { g: "p1_hygiene", label: "P1 Loss hygiene", q: "Stop scoring gaps as zero", base: "e1_6_complete_weather" },
   { g: "p2_masking", label: "P2 Masking", q: "Make training gaps look real", base: "e2_7_mixed_030" },
   { g: "p3_inputs", label: "P3 Inputs", q: "Which covariates help?", base: "e3_stack" },

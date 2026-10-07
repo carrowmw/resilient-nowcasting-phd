@@ -91,7 +91,7 @@
 <section data-part="context">
   <header class="slide-head">
     <p class="kicker">The idea</p>
-    <h2>Data in, whatever its quality. Intelligence out, with an estimate of its uncertainty.</h2>
+    <h2>Data in, whatever its quality. Intelligence out, with an estimate of uncertainty.</h2>
   </header>
   <iframe class="fig-frame" data-src="figures/degradation-concept.html" style="height: 560px;" title="Graceful degradation schematic"></iframe>
   <div class="cols cols-3" style="margin-top: 22px; gap: 40px;">
@@ -235,12 +235,12 @@
     <div class="node" style="background: #e8f1f8;">
       <p class="tag" style="margin-bottom: 14px !important;">Experiment 3 · resilience</p>
       <h3>Can one model do all three, under outages?</h3>
-      <p>81 stations, 24 held out; RIoT multi-task model; 103 runs.</p>
+      <p>81 stations, 24 held out; RIoT (Resilient IoT) multi-task model; 103 runs.</p>
       <p style="margin-top: 14px; color: var(--text);"><strong>Today's focus.</strong></p>
     </div>
   </div>
   <div class="cols cols-2" style="margin-top: 56px; gap: 64px;">
-    <p class="inset">Common thread: <strong>no imputation before modelling</strong>. Gaps stay gaps; the model handles them, and error is scored only where data were observed.</p>
+    <p class="inset">Common thread: <strong>no imputation before modelling</strong>. Gaps stay gaps; the model handles them, and error is scored only where data were observed. Critical in real-time modelling.</p>
     <p class="small" style="margin-top: 6px;">All three use the same Newcastle archive (2023–2026, 15-minute resolution). Each widens the scope: one stream, then the network, then the network under outages with stations held out.</p>
   </div>
   <aside class="notes">
@@ -311,7 +311,7 @@
 <section data-part="data">
   <header class="slide-head" style="margin-bottom: 24px;">
     <p class="kicker">Experiment 1 · single sensors</p>
-    <h2>How the data break matters as much as how much is missing</h2>
+    <h2>Patterns of missingness and their importance</h2>
   </header>
   <iframe class="fig-frame" data-src="figures/exp1-fragmentation.html" style="height: 615px;" title="Experiment 1 fragmentation and imputation"></iframe>
   <p class="inset" style="margin-top: 16px;">Error falls steeply until contiguous runs reach about <strong>3 hours</strong>, then flattens. kNN imputation makes the deep models <strong>worse</strong>, not better.</p>
@@ -327,7 +327,46 @@
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════
-     11 · DIGITAL TWIN WALK-THROUGH                                 1:00
+     11 · EXPERIMENT 2: THE NETWORK                                 1:15
+     ════════════════════════════════════════════════════════════════════ -->
+<section data-part="evidence">
+  <header class="slide-head">
+    <p class="kicker">Experiment 2 · the network</p>
+    <h2>A richer model is needed</h2>
+  </header>
+  <div class="cols cols-wide-left" style="gap: 56px;">
+    <div>
+      <p class="small" style="margin-bottom: 8px !important;"><strong style="color: var(--text);">Experiment 2:</strong> 54 stations, three seeds</p>
+      <iframe class="fig-frame" data-src="figures/exp2-tiers.html" style="height: 600px;" title="Experiment 2 model tiers"></iframe>
+    </div>
+    <div>
+    <table class="gov" style="margin-top: 36px;">
+      <thead><tr><th>Capability</th><th>Single-sensor model</th><th>RIoT</th></tr></thead>
+      <tbody>
+        <tr><td>Forecast with clean history</td><td>✓</td><td>✓</td></tr>
+        <tr><td>Forecast while its sensor is down</td><td>✗</td><td>✓</td></tr>
+        <tr><td>Estimate where there is no sensor</td><td>✗</td><td>✓</td></tr>
+        <tr><td>Calibrated range</td><td>rarely</td><td>✓</td></tr>
+        <tr><td>Flag its own blindness</td><td>✗</td><td>✓</td></tr>
+      </tbody>
+    </table>
+    <p class="inset" style="margin-top: 36px; font-size: 25px;">Graph vs single-sensor LSTM: <strong>−5%</strong> at 15 min, <strong>−10%</strong> at 60 min. More heads or layers: within ±2%.</p>
+    </div>
+  </div>
+  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
+  <aside class="notes">
+    [1:15] In Experiment 2 we widened from single sensors to the network: 54 stations across three seeds.
+    It showed three tiers: naive baselines, temporal deep models, and spatial graph models.
+    Adding neighbours cuts error by about 5% at 15 minutes and 10% at an hour [advance through horizons].
+    Crucially, more heads or layers changed nothing (within 2%): the bottleneck is network structure, not parameter size.
+    Furthermore, single-sensor models only work when data is clean. As the table shows, real-time deployment needs five
+    distinct capabilities: forecasting through outages, estimates at unsensed places, a calibrated range and an outage flag.
+    To deliver all of these in a unified operational system, we built the Geospatial Digital Twin.
+  </aside>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     12 · DIGITAL TWIN WALK-THROUGH                                 1:00
      ════════════════════════════════════════════════════════════════════ -->
 <section data-part="twin">
   <header class="slide-head">
@@ -351,7 +390,7 @@
     <div class="stat"><div class="value">1 click</div><div class="label">to switch between models and compare their behaviour on the same day</div></div>
   </div>
   <aside class="notes">
-    [1:00] Before the results, a quick tour of the system they live in. Data are ingested with gaps preserved.
+    [1:00] Here is the system that delivers those capabilities in practice. Data are ingested with gaps preserved.
     Everything sits on a regular 15-minute grid in TimescaleDB, with a station graph whose edges carry walking distance
     and road type from OpenStreetMap. Models train in containers and every run is tracked with its exact held-out set.
     Each run publishes daily payloads, and the front end renders them on a map. Let me show you.
@@ -359,7 +398,7 @@
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════
-     12 · LIVE DASHBOARD (full screen)                              2:00
+     13 · LIVE DASHBOARD (full screen)                              2:00
      ════════════════════════════════════════════════════════════════════ -->
 <section data-part="twin" data-chrome="none" data-background-color="#0b0c0c"
          data-background-iframe="http://localhost:3000" data-background-interactive>
@@ -369,44 +408,6 @@
     3) click Pilgrim Street: its sensor is offline from 09:45 to 17:15, yet the forecast and interval continue;
     4) click a held-out station to show a kriged estimate; 5) switch model to show the difference.
     If the demo fails, skip: slide 18 shows the same Pilgrim Street outage as a static figure.
-  </aside>
-</section>
-
-<!-- ════════════════════════════════════════════════════════════════════
-     13 · LIMITS OF SMALLER MODELS                                  1:15
-     ════════════════════════════════════════════════════════════════════ -->
-<section data-part="evidence">
-  <header class="slide-head">
-    <p class="kicker">Why a richer model</p>
-    <h2>Small models forecast well on clean data. That is not the job.</h2>
-  </header>
-  <div class="cols cols-wide-left" style="gap: 56px;">
-    <div>
-      <p class="small" style="margin-bottom: 8px !important;"><strong style="color: var(--text);">Experiment 2:</strong> 54 stations, three seeds</p>
-      <iframe class="fig-frame" data-src="figures/exp2-tiers.html" style="height: 600px;" title="Experiment 2 model tiers"></iframe>
-    </div>
-    <div>
-    <table class="gov" style="margin-top: 36px;">
-      <thead><tr><th>Capability</th><th>Single-sensor model</th><th>RIoT</th></tr></thead>
-      <tbody>
-        <tr><td>Forecast with clean history</td><td>✓</td><td>✓</td></tr>
-        <tr><td>Forecast while its sensor is down</td><td>✗</td><td>✓</td></tr>
-        <tr><td>Estimate where there is no sensor</td><td>✗</td><td>✓</td></tr>
-        <tr><td>Calibrated range</td><td>rarely</td><td>✓</td></tr>
-        <tr><td>Flag its own blindness</td><td>✗</td><td>✓</td></tr>
-      </tbody>
-    </table>
-    <p class="inset" style="margin-top: 36px; font-size: 25px;">Graph vs single-sensor LSTM: <strong>−5%</strong> at 15 min, <strong>−10%</strong> at 60 min. More heads or layers: within ±2%.</p>
-    </div>
-  </div>
-  <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
-  <aside class="notes">
-    [1:15] Experiment 2 showed three tiers: naive baselines, temporal deep models, and spatial graph models.
-    Adding neighbours cuts error by about 5% at 15 minutes and 10% at an hour [advance through horizons].
-    But more heads or layers changed nothing (within 2%): the bottleneck is data and structure, not size.
-    So "a larger model" really means a model with more capabilities, not more parameters. RIoT is only 184 thousand
-    parameters; small enough for edge hardware. What it adds is the right-hand column: forecasting through outages,
-    estimates at unsensed places, a calibrated range and an outage flag.
   </aside>
 </section>
 
@@ -421,7 +422,8 @@
   <iframe class="fig-frame" data-src="figures/riot-architecture.html?zoom=1.1" style="height: 680px;" title="RIoT architecture"></iframe>
   <span class="fragment" aria-hidden="true"></span><span class="fragment" aria-hidden="true"></span>
   <aside class="notes">
-    [1:15] Inputs per station: counts over a three-hour window, with a unified encoding for missing values, plus weather,
+    [1:15] Now let's look at the neural network powering what you just saw in the digital twin: RIoT.
+    Inputs per station: counts over a three-hour window, with a unified encoding for missing values, plus weather,
     calendar and static context. [Advance] During training we deliberately hide blocks of data shaped like real gaps.
     A learned graph decides which stations inform each other, using walking distance and road type, never raw
     coordinates. The encoder alternates graph attention across space with a Transformer across time.
@@ -650,6 +652,9 @@
     <div class="finding fragment fade-up"><div class="n">5</div><div><h3>Unsensed locations remain open</h3><p>Held-out inference does not always beat a neighbour profile; peaks are often under-predicted.</p></div></div>
     <div class="finding fragment fade-up"><div class="n">6</div><div><h3>Data, not compute, is the limit</h3><p>Fourteen held-out stations bound every inductive claim. Scaling estimates suggest large increase in inductive performance with increased density.</p></div></div>
   </div>
+    <div>
+      Distance matters for induction.
+    </div>
   <aside class="notes">
     [1:00] Six things we can now say, in order of confidence. The first three are large effects that agree between
     validation and test. The last three are limits that define the remaining work.
@@ -725,7 +730,7 @@
     <div class="title-rule"></div>
     <h1>Thank you</h1>
     <p class="subtitle">Questions and discussion</p>
-    <p class="meta"><strong>Carrow Morris-Wiltshire</strong><br>Newcastle University · <span>carrow.m.w@gmail.com</span></p>
+    <p class="meta"><strong>Carrow Morris-Wiltshire</strong><br><a style="color: inherit;" href="https://carrow.me.uk">carrow.me.uk</a> · <span>carrow.m.w@gmail.com</span></p>
   </div>
   <aside class="notes">Thank you. Happy to take questions, or to return to the live dashboard.</aside>
 </section>
