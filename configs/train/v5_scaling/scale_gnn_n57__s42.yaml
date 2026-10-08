@@ -59,7 +59,7 @@ model:
   baseline_inputs: dynamic
   baseline_head: mse
   naive_kind: none
-training: {epochs: 100, batch_size: 128, lr: 0.0003, grad_clip_max_norm: 1.0, early_stop_patience: 10,
+training: {epochs: 100, batch_size: 128, lr: 0.0003, grad_clip_max_norm: 1.0, early_stop_patience: 20,
   early_stop_min_delta: 0.001, random_seed: 42, grad_accum_steps: 1, grad_cosine_every: 100}
 loss: {w_forecast: 1.0, w_impute: 1.0, w_kriging: 0.5, target_mask: observed, impute_positions: masked_observed,
   impute_aux_weight: 0.0, kriging_observed_only: true, forecast_likelihood: nb, impute_likelihood: msle,

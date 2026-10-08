@@ -32,6 +32,7 @@ Usage:
   python scripts/riotv5/generate_scaling_configs.py                       # 5 GNN + 5 naive
   python scripts/riotv5/generate_scaling_configs.py --seeds 42 43 44      # optimisation variance
   python scripts/riotv5/generate_scaling_configs.py --draws 0 1 2         # station-draw variance
+  python scripts/riotv5/generate_scaling_configs.py --patience 20         # early stopping patience override
   ./scripts/riotv5/start_scaling_sweep.sh --gpus 0 1 2 3                  # launch
   python scripts/riotv5/analyse_scaling.py                                # fit + crossover
 """
@@ -81,7 +82,7 @@ def node_cost(cfg: dict, n_train: int) -> float:
     return round(gen.relative_cost(cfg) * (n_train + ALL_NODES - FULL_TRAIN_POOL) / ALL_NODES, 2)
 
 
-def build_jobs(counts, seeds, draws):
+def build_jobs(counts, seeds, draws, patience: int = None):
     jobs = []
     for arm, (source, arm_desc) in ARMS.items():
         base = experiment_cfg(source)
@@ -96,11 +97,14 @@ def build_jobs(counts, seeds, draws):
                     continue  # every draw keeps all 57 stations
                 exp = f"scale_{arm}_n{n:02d}" + (f"_d{draw}" if draw else "")
                 for seed in arm_seeds:
-                    cfg = gen.derive(base, {
+                    overrides = {
                         "data.train_node_count": n,
                         "data.train_node_seed": draw,
                         "training.random_seed": seed,
-                    })
+                    }
+                    if patience is not None:
+                        overrides["training.early_stop_patience"] = patience
+                    cfg = gen.derive(base, overrides)
                     run_name = f"{exp}-s{seed}"
                     cfg["wandb"]["collection"] = f"riot-v5-{GROUP}-{exp}"
                     cfg["wandb"]["run_name"] = run_name
@@ -130,9 +134,10 @@ def main():
     ap.add_argument("--counts", nargs="+", type=int, default=N_TRAIN, help="N_train values")
     ap.add_argument("--seeds", nargs="+", type=int, default=[42], help="training seeds (GNN arm)")
     ap.add_argument("--draws", nargs="+", type=int, default=[0], help="train_node_seed values (station draws)")
+    ap.add_argument("--patience", type=int, default=None, help="early stopping patience (default: inherited from base config)")
     args = ap.parse_args()
 
-    jobs = build_jobs(sorted(args.counts), args.seeds, args.draws)
+    jobs = build_jobs(sorted(args.counts), args.seeds, args.draws, patience=args.patience)
     if OUT_DIR.exists():
         shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True)

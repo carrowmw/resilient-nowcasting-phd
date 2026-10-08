@@ -16,45 +16,6 @@ jobs:
   n_train: 15
   draw: 0
   source_experiment: e3_3d_profile_inductive_zero
-- name: scale_gnn_n25-s42
-  experiment: scale_gnn_n25
-  group: scaling
-  seed: 42
-  tier: 1
-  desc: "clean inductive GNN (e3_3d stack), N_train=25 (draw 0) \u2014 replicates\
-    \ e3_3d_profile_inductive_zero at N=57"
-  config: configs/train/v5_scaling/scale_gnn_n25__s42.yaml
-  cost: 0.64
-  arm: gnn
-  n_train: 25
-  draw: 0
-  source_experiment: e3_3d_profile_inductive_zero
-- name: scale_gnn_n35-s42
-  experiment: scale_gnn_n35
-  group: scaling
-  seed: 42
-  tier: 1
-  desc: "clean inductive GNN (e3_3d stack), N_train=35 (draw 0) \u2014 replicates\
-    \ e3_3d_profile_inductive_zero at N=57"
-  config: configs/train/v5_scaling/scale_gnn_n35__s42.yaml
-  cost: 0.76
-  arm: gnn
-  n_train: 35
-  draw: 0
-  source_experiment: e3_3d_profile_inductive_zero
-- name: scale_gnn_n45-s42
-  experiment: scale_gnn_n45
-  group: scaling
-  seed: 42
-  tier: 1
-  desc: "clean inductive GNN (e3_3d stack), N_train=45 (draw 0) \u2014 replicates\
-    \ e3_3d_profile_inductive_zero at N=57"
-  config: configs/train/v5_scaling/scale_gnn_n45__s42.yaml
-  cost: 0.89
-  arm: gnn
-  n_train: 45
-  draw: 0
-  source_experiment: e3_3d_profile_inductive_zero
 - name: scale_gnn_n57-s42
   experiment: scale_gnn_n57
   group: scaling
@@ -79,45 +40,6 @@ jobs:
   cost: 0.02
   arm: naive
   n_train: 15
-  draw: 0
-  source_experiment: naive_profile
-- name: scale_naive_n25-s42
-  experiment: scale_naive_n25
-  group: scaling
-  seed: 42
-  tier: 1
-  desc: "naive seasonal-profile donor baseline, N_train=25 (draw 0) \u2014 replicates\
-    \ naive_profile at N=57"
-  config: configs/train/v5_scaling/scale_naive_n25__s42.yaml
-  cost: 0.03
-  arm: naive
-  n_train: 25
-  draw: 0
-  source_experiment: naive_profile
-- name: scale_naive_n35-s42
-  experiment: scale_naive_n35
-  group: scaling
-  seed: 42
-  tier: 1
-  desc: "naive seasonal-profile donor baseline, N_train=35 (draw 0) \u2014 replicates\
-    \ naive_profile at N=57"
-  config: configs/train/v5_scaling/scale_naive_n35__s42.yaml
-  cost: 0.04
-  arm: naive
-  n_train: 35
-  draw: 0
-  source_experiment: naive_profile
-- name: scale_naive_n45-s42
-  experiment: scale_naive_n45
-  group: scaling
-  seed: 42
-  tier: 1
-  desc: "naive seasonal-profile donor baseline, N_train=45 (draw 0) \u2014 replicates\
-    \ naive_profile at N=57"
-  config: configs/train/v5_scaling/scale_naive_n45__s42.yaml
-  cost: 0.04
-  arm: naive
-  n_train: 45
   draw: 0
   source_experiment: naive_profile
 - name: scale_naive_n57-s42
