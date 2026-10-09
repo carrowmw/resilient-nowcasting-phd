@@ -1,0 +1,61 @@
+{
+  "metric": "v5_test_metrics.obs_ind_rmse",
+  "held_out_stations": 24,
+  "holdout_check": "identical to the v5 suite (seed 42)",
+  "hull_area_km2": 21.01831224247301,
+  "runs": 63,
+  "fits": {
+    "gnn": {
+      "A": 32.124791221312435,
+      "alpha": 0.3388373321894284,
+      "rmse_inf": 35.00000000000014,
+      "noise_sd": 1.6326796586538461,
+      "noise_source": "pooled replicate sd over 41 runs at 5 N",
+      "alpha_at_bound": false,
+      "boot_alpha_ci90": [
+        0.2922620405956477,
+        2.1464362852509695
+      ],
+      "boot_rmse_inf_ci90": [
+        35.00000000000001,
+        43.99999999999999
+      ]
+    },
+    "naive": {
+      "A": 80465.60793910605,
+      "alpha": 3.9999999999999996,
+      "rmse_inf": 42.83294093474802,
+      "noise_sd": 0.8333520631814337,
+      "noise_source": "pooled replicate sd over 20 runs at 4 N",
+      "alpha_at_bound": true,
+      "boot_alpha_ci90": [
+        0.15622222956071163,
+        3.9999999999999996
+      ],
+      "boot_rmse_inf_ci90": [
+        35.00000000000001,
+        43.279667873814866
+      ]
+    }
+  },
+  "crossover": {
+    "n_star": 65.0,
+    "n_star_95": "inf",
+    "boot_n_star_median": 81.0,
+    "boot_n_star_ci90": [
+      47.0,
+      "inf"
+    ],
+    "boot_draws": 500,
+    "boot_frac_never": 0.316,
+    "boot_frac_always": 0.0,
+    "boot_frac_finite": 0.684,
+    "density_n_star_per_km2": 3.092541363461642,
+    "density_n_star95_per_km2": null,
+    "extrapolated": true,
+    "grid": [
+      5.0,
+      400.0
+    ]
+  }
+}

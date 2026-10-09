@@ -160,18 +160,24 @@ def power_law(n, a, alpha, r_inf):
     return a * np.power(n, -alpha) + r_inf
 
 
-def fit_arm(n: np.ndarray, y: np.ndarray):
-    """Least-squares fit with A >= 0, 0 <= alpha <= ALPHA_MAX, RMSE_inf >= 0.
-    Returns params or None when the fit is not identifiable (< 4 distinct N)."""
+def fit_arm(n: np.ndarray, y: np.ndarray, r_inf_bounds=(35.0, 44.0), balance_n: bool = True):
+    """Least-squares fit with A >= 0, 0 <= alpha <= ALPHA_MAX, r_inf bounded.
+    Weights are balanced so each N has equal aggregate weight."""
     if len(np.unique(n)) < 4:
         return None
-    r0 = max(float(y.min()) * 0.9, 0.0)
+    r0 = float(np.clip(y.min() * 0.95, r_inf_bounds[0], r_inf_bounds[1]))
     a0 = max(float(y.max() - r0), 1e-3) * float(n.min()) ** 0.5
+    sigma = None
+    if balance_n:
+        counts = {val: float((n == val).sum()) for val in np.unique(n)}
+        sigma = np.array([np.sqrt(counts[val]) for val in n], dtype=float)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", OptimizeWarning)
         try:
-            p, _ = curve_fit(power_law, n, y, p0=[a0, 0.5, r0],
-                             bounds=([0.0, 0.0, 0.0], [np.inf, ALPHA_MAX, np.inf]), maxfev=20000)
+            p, _ = curve_fit(power_law, n, y, sigma=sigma, absolute_sigma=False,
+                             p0=[a0, 0.5, r0],
+                             bounds=([0.0, 0.0, r_inf_bounds[0]], [np.inf, ALPHA_MAX, r_inf_bounds[1]]),
+                             maxfev=20000)
         except RuntimeError:
             return None
     return p
@@ -199,7 +205,8 @@ def crossover(delta: np.ndarray) -> float:
     return -math.inf if len(above) == 0 else float(N_GRID[above[-1] + 1])
 
 
-def bootstrap(fits: dict, data: dict, sds: dict, n_boot: int, rng: np.random.Generator):
+def bootstrap(fits: dict, data: dict, sds: dict, n_boot: int, rng: np.random.Generator,
+              r_inf_bounds=(35.0, 44.0), balance_n: bool = True):
     curves = {arm: [] for arm in fits}
     params = {arm: [] for arm in fits}
     xs = []
@@ -208,7 +215,7 @@ def bootstrap(fits: dict, data: dict, sds: dict, n_boot: int, rng: np.random.Gen
         for arm, p in fits.items():
             n = data[arm][0]
             y = power_law(n, *p) + rng.normal(0.0, sds[arm], size=len(n))
-            draw[arm] = fit_arm(n, y)
+            draw[arm] = fit_arm(n, y, r_inf_bounds=r_inf_bounds, balance_n=balance_n)
         if any(v is None for v in draw.values()):
             continue
         for arm, pb in draw.items():
@@ -248,7 +255,8 @@ def fmt_n(x: float, lo: float, hi: float) -> str:
 # --------------------------------------------------------------------------- #
 # Figure                                                                        #
 # --------------------------------------------------------------------------- #
-def plot(runs, fits, boot, p_better, n_star, n_star95, area, path: Path):
+def plot(runs, fits, boot, p_better, n_star, n_star95, area, path: Path,
+         ylim_bottom: float = 36.0, ylim_top: float = 52.0):
     fig, (ax, axd) = plt.subplots(2, 1, figsize=(6.4, 6.2), sharex=True,
                                   gridspec_kw={"height_ratios": [3, 2], "hspace": 0.08})
     n_obs = runs.n_train.unique()
@@ -268,11 +276,21 @@ def plot(runs, fits, boot, p_better, n_star, n_star95, area, path: Path):
             ax.annotate(f"{label}\nα={p[1]:.2f}, RMSE∞={p[2]:.1f}", (N_GRID[view][-1], power_law(N_GRID[view][-1], *p)),
                         xytext=(-4, 10 if arm == "naive" else -24), textcoords="offset points",
                         ha="right", fontsize=8, color=INK)
-        ax.scatter(sub.n_train, sub.rmse, s=42, color=color, edgecolor="white", linewidth=1.5,
+        
+        in_bounds = sub[sub.rmse <= ylim_top]
+        outliers = sub[sub.rmse > ylim_top]
+        ax.scatter(in_bounds.n_train, in_bounds.rmse, s=42, color=color, edgecolor="white", linewidth=1.5,
                    zorder=4, label=label, marker="o" if arm == "gnn" else "s")
+        for _, r in outliers.iterrows():
+            ax.scatter([r.n_train], [ylim_top - 0.6], s=48, marker="^", color=color, edgecolor="black", lw=1.2, zorder=5)
+            ax.annotate(f"▲ {r.rmse:.1f} (seed {r.seed} diverged)",
+                        (r.n_train, ylim_top - 0.6), xytext=(-8, -3),
+                        textcoords="offset points", ha="right", va="center", fontsize=7.5, color=color, fontweight="bold")
+                        
     for arm, (run, value) in V5_ANCHORS.items():
         ax.scatter([57], [value], s=60, facecolor="none", edgecolor=ARM_STYLE[arm][0], lw=1.2, zorder=3)
     ax.scatter([], [], s=60, facecolor="none", edgecolor=GRAY, lw=1.2, label="v5 suite run (N=57 replicate)")
+    ax.set_ylim(ylim_bottom, ylim_top)
     ax.set_ylabel("Held-out station RMSE (counts / 15 min)")
     ax.set_title(f"Zero-shot RMSE at {len(runs.holdout_ids.iloc[0])} frozen held-out stations vs training-station count",
                  loc="left", pad=34 if area else 6)
@@ -326,6 +344,11 @@ def main():
     ap.add_argument("--n-boot", type=int, default=2000)
     ap.add_argument("--gnn-noise-sd", type=float, default=None, help="override the GNN noise sd")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--ylim-bottom", type=float, default=36.0, help="bottom y-limit for the RMSE plot (chops unphysical 0)")
+    ap.add_argument("--ylim-top", type=float, default=52.0, help="top y-limit for the RMSE plot")
+    ap.add_argument("--max-valid-rmse", type=float, default=80.0, help="threshold to exclude diverged runs from fits")
+    ap.add_argument("--rmse-inf-min", type=float, default=35.0, help="minimum bound for RMSE_inf asymptote")
+    ap.add_argument("--rmse-inf-max", type=float, default=44.0, help="maximum bound for RMSE_inf asymptote")
     args = ap.parse_args()
     logs_dir = args.logs_dir.with_name(args.logs_dir.name + "_mock") if args.mock else args.logs_dir
 
@@ -333,11 +356,12 @@ def main():
     holdout_check = check_reference_holdout(runs)
     runs, area = add_geography(runs)
 
+    r_inf_bounds = (args.rmse_inf_min, args.rmse_inf_max)
     data, fits, sds = {}, {}, {}
     for arm in ARM_STYLE:
-        sub = runs[runs.arm == arm]
+        sub = runs[(runs.arm == arm) & (runs.rmse <= args.max_valid_rmse)]
         data[arm] = (sub.n_train.to_numpy(float), sub.rmse.to_numpy(float))
-        fits[arm] = fit_arm(*data[arm])
+        fits[arm] = fit_arm(*data[arm], r_inf_bounds=r_inf_bounds, balance_n=True)
         if fits[arm] is not None:
             sds[arm] = noise_sd(*data[arm], fits[arm])
     if args.gnn_noise_sd is not None and "gnn" in sds:
@@ -354,7 +378,8 @@ def main():
     lo_obs, hi_obs = runs.n_train.min(), runs.n_train.max()
     if fitted:
         rng = np.random.default_rng(args.seed)
-        boot, boot_params, xs = bootstrap(fits, data, {a: sds[a][0] for a in sds}, args.n_boot, rng)
+        boot, boot_params, xs = bootstrap(fits, data, {a: sds[a][0] for a in sds}, args.n_boot, rng,
+                                          r_inf_bounds=r_inf_bounds, balance_n=True)
         delta_boot = boot["gnn"] - boot["naive"]
         p_better = (delta_boot < 0).mean(axis=0)
         n_star = crossover(power_law(N_GRID, *fits["gnn"]) - power_law(N_GRID, *fits["naive"]))
@@ -387,7 +412,8 @@ def main():
     runs.drop(columns=["train_ids", "holdout_ids"]).to_csv(args.out / "data" / "scaling_runs.csv", index=False)
     (args.out / "data" / "scaling_fit.json").write_text(json.dumps(jsonable(summary), indent=2))
     fig_path = args.out / "figures" / "scaling_crossover.png"
-    plot(runs, fits, boot, p_better, n_star, n_star95, area, fig_path)
+    plot(runs, fits, boot, p_better, n_star, n_star95, area, fig_path,
+         ylim_bottom=args.ylim_bottom, ylim_top=args.ylim_top)
     write_markdown(args.out / "scaling_summary.md", runs, table, summary, fitted, area)
 
     print(table.round(2).to_string())

@@ -21,8 +21,8 @@
 # ==============================================================================
 
 # Default values
-CONFIG_FILE="configs/train/ablation/spatial_int/train_ablation_old_arch.yaml"
-GPUS="3"
+CONFIG_FILE="configs/train/ablation/spatial_int/ablation_d1_holdout_04.yaml"
+GPUS="0"
 DETACH=true
 USE_MOCK_DATA=false
 
