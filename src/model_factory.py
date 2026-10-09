@@ -64,6 +64,7 @@ def build_model(
             holdout_night_channel=data_cfg["holdout_night_channel"],
             detach_impute_latent=loss_cfg["detach_impute_latent"],
             traffic_log1p=data_cfg["log1p_inputs"],
+            residual_to_profile=model_cfg["residual_to_profile"],
         ).to(device)
         model.set_scaler_stats(dataset.traffic_mean, dataset.traffic_std)
         if model.node_missing_rate is not None:

@@ -4,6 +4,8 @@
 Tier 3 (seeds 43/44, 106 runs) has not run yet. Every number below is a single-seed result.
 **Purpose.** Input for the rewrite of thesis Chapter 7 (Experiment 3) and the zero-collapse follow-up.
 **Date.** 2026-10-05.
+**Superseded in part.** Tier 3 has since completed. For 3-seed re-scoring of every claim below and the
+changed verdicts, see [`riot_v5_seed_report.md`](riot_v5_seed_report.md) (2026-10-08).
 
 **Reproduce.**
 

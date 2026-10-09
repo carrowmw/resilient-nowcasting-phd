@@ -68,16 +68,41 @@ def select_network_locations(
     return [loc for loc in all_location_ids if loc in keep]
 
 
+def validation_station_ids(
+    location_ids: List[str],
+    held_ids: List[str],
+    count: int,
+    seed: int,
+) -> List[str]:
+    """v6: `count` training stations drawn as inductive validation nodes. They are
+    blanked and loss-excluded exactly like the test holdout, and scored at validation
+    time so a checkpoint can be selected on unseen stations without touching the test
+    holdout. The draw depends only on `seed` (not training.random_seed), so every seed
+    of a configuration validates on the same stations."""
+    held = set(held_ids)
+    pool = [loc for loc in location_ids if loc not in held]
+    assert 0 < count < len(pool), (
+        f"CRITICAL: data.val_station_count={count} must leave training stations (pool {len(pool)})"
+    )
+    order = np.random.RandomState(seed).permutation(len(pool))
+    chosen = {pool[i] for i in order[:count]}
+    return [loc for loc in location_ids if loc in chosen]
+
+
 def save_holdout_manifest(
     checkpoint_dir: str,
     location_ids: List[str],
     holdout_mask: torch.Tensor,
     seed: int,
     holdout_frac: float,
+    val_station_mask: Optional[torch.Tensor] = None,
 ) -> str:
     assert len(location_ids) == holdout_mask.shape[0], (
         f"CRITICAL: {len(location_ids)} location_ids vs mask of {holdout_mask.shape[0]}"
     )
+    unseen_val = val_station_mask.tolist() if val_station_mask is not None else [False] * len(location_ids)
+    assert not any(h and v for h, v in zip(holdout_mask.tolist(), unseen_val)), \
+        "CRITICAL: a validation station is also in the test holdout"
     manifest = {
         "seed": seed,
         "holdout_frac": holdout_frac,
@@ -87,8 +112,11 @@ def save_holdout_manifest(
         ],
         # Not part of manifest_sha: the stations the model could learn from.
         "train_location_ids": [
-            loc for loc, held in zip(location_ids, holdout_mask.tolist()) if not held
+            loc for loc, held, val in zip(location_ids, holdout_mask.tolist(), unseen_val)
+            if not held and not val
         ],
+        # Not part of manifest_sha (v6): inductive validation stations (never trained on).
+        "val_location_ids": [loc for loc, val in zip(location_ids, unseen_val) if val],
     }
     path = os.path.join(checkpoint_dir, HOLDOUT_MANIFEST_FILENAME)
     with open(path, "w") as f:

@@ -118,7 +118,8 @@ class DecoupledDecoders(nn.Module):
                    latent_embeddings: torch.Tensor,
                    impute_latent: torch.Tensor,
                    target_cov: Optional[torch.Tensor],
-                   outage_feats: Optional[torch.Tensor]) -> dict:
+                   outage_feats: Optional[torch.Tensor],
+                   mu_anchor: Optional[torch.Tensor] = None) -> dict:
         """
         Args:
             latent_embeddings: [B, N, T, H] encoder output (forecast path).
@@ -126,6 +127,8 @@ class DecoupledDecoders(nn.Module):
                                (loss.detach_impute_latent).
             target_cov:        [B, N, C] target-step covariates or None.
             outage_feats:      [B, N, F] outage-head input or None.
+            mu_anchor:         [B, N] positive raw-count anchor or None (v6
+                               residual_to_profile): mu = anchor * exp(logit).
         Returns dict of fp32 distribution parameters (see pipeline._forward_v5).
         """
         assert latent_embeddings.dim() == 4, f"Expected 4D embeddings, got {latent_embeddings.shape}"
@@ -145,7 +148,12 @@ class DecoupledDecoders(nn.Module):
             head_in = torch.cat([head_in, target_cov.to(head_in.dtype)], dim=-1)
         logits = self.forecast_layer(head_in)
         mu_logits, theta_logits = logits[..., 0].float(), logits[..., 1].float()
-        out["mu"] = self._positive(mu_logits)
+        if mu_anchor is None:
+            out["mu"] = self._positive(mu_logits)
+        else:
+            # Log-space residual around the anchor; the clamp bounds the multiplier to
+            # [e^-8, e^6] so an early bad step cannot overflow the NB likelihood.
+            out["mu"] = mu_anchor.float() * torch.exp(mu_logits.clamp(-8.0, 6.0)) + self.zinb_eps
         out["theta"] = self._positive(theta_logits)
         out["pi"] = self._prob(logits[..., 2]) if self.forecast_likelihood == "zinb" else None
         if self.num_quantiles > 0:

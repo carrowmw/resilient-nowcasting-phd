@@ -19,6 +19,7 @@ Metric families
                       kriging_raw_{rmse,mae} (holdout nodes, observed slots)
   synthetic outages   so_{L}_{forecast_rmse,forecast_mae,mass_ratio,impute_rmse,collapse,outage_auc}
   diagnostics (test)  crps, pit_b0..b9, q90_coverage, quantile coverage,
+                      peak_q90_{rmse,mae,underpred_rate} (predictive q90 as the peak forecast),
                       mask_flip_{dpzero,dpoint}, value_perturb_dpoint,
                       per-node nrmse / inductive correlation vs best transductive peer,
                       inductive pairwise-correlation degeneracy check
@@ -93,7 +94,10 @@ class V5Evaluator:
         device: torch.device,
         diagnostics: bool = False,
         store_series: bool = False,
+        ignore_mask: Optional[torch.Tensor] = None,
     ):
+        """eval_holdout_mask: nodes scored as "ind". ignore_mask (v6): nodes left out of
+        every metric — validation stations at test, the test holdout at validation."""
         self.caps = caps
         self.covariates = covariates
         self.scale = scale
@@ -102,6 +106,9 @@ class V5Evaluator:
         self.store_series = store_series
         self.crps_max_count = config["evaluation"]["crps_max_count"]
         self.holdout = eval_holdout_mask
+        self.ignore = ignore_mask
+        if ignore_mask is not None and eval_holdout_mask is not None:
+            assert not bool((ignore_mask & eval_holdout_mask).any()), "CRITICAL: ignored nodes overlap the ind set"
         self.seq_len = config["data"]["seq_len"]
         self.count_p90 = dataset.count_p90
         self.count_deciles = dataset.count_deciles.to(device)
@@ -112,6 +119,12 @@ class V5Evaluator:
         self.series = defaultdict(list)
 
     # ------------------------------------------------------------------ #
+    def _valid(self, B: int, N: int) -> torch.Tensor:
+        """[B, N] nodes that count in metrics (all but ignored ones)."""
+        if self.ignore is None:
+            return torch.ones(B, N, dtype=torch.bool, device=self.device)
+        return (~self.ignore).view(1, N).expand(B, N)
+
     def _target_index(self, batch) -> torch.Tensor:
         return batch["time_idx"].view(-1, 1) + self.seq_len                     # [B, 1]
 
@@ -120,9 +133,10 @@ class V5Evaluator:
         a = self.acc
         assert preds.point is not None, "CRITICAL: v5 evaluation needs Predictions.point"
         y = batch["target_forecast"].float()
-        obs = batch["target_observed"]
-        point = preds.point.float()
         B, N = y.shape
+        valid = self._valid(B, N)
+        obs = batch["target_observed"] & valid
+        point = preds.point.float()
         err = point - y
         ind = self.holdout.view(1, N).expand(B, N) if self.holdout is not None else torch.zeros_like(obs)
 
@@ -149,7 +163,7 @@ class V5Evaluator:
 
         # Real-gap behaviour against the node's OWN seasonal profile.
         own_profile = self.covariates.profile_raw(batch["time_idx"], None)[..., -1]   # [B, N]
-        miss = ~obs
+        miss = ~batch["target_observed"] & valid
         busy_gap = miss & (own_profile > 10.0)
         a.add("collapse_rate", (point < 1.0).float(), busy_gap)
         a.add("real_gap_point_sum", point, miss)
@@ -170,8 +184,8 @@ class V5Evaluator:
                 a.add(f"zir_{s}_rate", flag, m)
                 a.add(f"zir_{s}_mean", pz, m)
             empty = miss | (y == 0)
-            a.add("zir_precision", empty.float(), pz > 0.5)
-            self.auc["pzero_missing"].add(pz, miss, torch.ones_like(miss))
+            a.add("zir_precision", empty.float(), (pz > 0.5) & valid)
+            self.auc["pzero_missing"].add(pz, miss, valid)
 
         if preds.outage_q is not None:
             a.add("outage_q_missing_mean", preds.outage_q.float(), miss)
@@ -185,7 +199,7 @@ class V5Evaluator:
         # Raw-count imputation on artificial gaps over observed slots.
         if preds.imputed_raw is not None and batch["art"].any():
             truth = self.scale.to_raw(batch["target_impute"][..., 0].float())
-            m = batch["art"] & batch["input_observed"]
+            m = batch["art"] & batch["input_observed"] & valid.unsqueeze(-1)
             e = preds.imputed_raw.float() - truth
             a.add("impute_raw_se", e ** 2, m)
             a.add("impute_raw_mae", e.abs(), m)
@@ -195,6 +209,9 @@ class V5Evaluator:
             pred_raw = self.scale.to_raw(preds.kriging_pred[..., 0].float())
             truth = self.scale.to_raw(batch["target_impute"][:, holdout, :, 0].float())
             m = batch["input_observed"][:, holdout]
+            if self.ignore is not None:
+                # kriging_pred rows follow the holdout order; drop the ignored ones.
+                m = m & ~self.ignore[holdout].view(1, -1, 1)
             e = pred_raw - truth
             a.add("kriging_raw_se", e ** 2, m)
             a.add("kriging_raw_mae", e.abs(), m)
@@ -231,12 +248,18 @@ class V5Evaluator:
         q90 = (cdf < 0.9).sum(dim=-1)
         self.acc.add_total("q90_cov_sum", (ys <= q90).double().sum())
         self.acc.add_total("q90_cov_n", torch.tensor(float(ys.numel()), device=y.device))
+        # v6: the predictive q90 as an operational peak forecast (high-count use case).
+        peak = ys.float() >= self.count_p90
+        e90 = q90.float() - ys.float()
+        self.acc.add("peak_q90_se", e90 ** 2, peak)
+        self.acc.add("peak_q90_mae", e90.abs(), peak)
+        self.acc.add("peak_q90_underpred_rate", (q90.float() < 0.5 * ys.float()).float(), peak)
 
     def update_so(self, length: int, preds: Predictions, batch: dict) -> None:
         """Synthetic-outage pass of `length` steps (BatchPreparer.prepare(so_length=L))."""
         a = self.acc
         y = batch["target_forecast"].float()
-        sel = batch["so_selected"]
+        sel = batch["so_selected"] & self._valid(*y.shape)
         point = preds.point.float()
         err = point - y
         a.add(f"so_{length}_se", err ** 2, sel)
@@ -249,7 +272,7 @@ class V5Evaluator:
             m = batch["so_slots"] & batch["input_observed"]
             a.add(f"so_{length}_impute_se", (preds.imputed_raw.float() - truth) ** 2, m)
         if preds.outage_q is not None:
-            valid = batch["target_observed"]
+            valid = batch["target_observed"] & self._valid(*y.shape)
             if self.holdout is not None:
                 valid = valid & ~self.holdout.view(1, -1)
             self.auc[f"so_{length}_outage"].add(preds.outage_q.float(), sel, valid)
@@ -266,7 +289,7 @@ class V5Evaluator:
         masks[:, :, -1, 0] = 1.0 - masks[:, :, -1, 0]
         flipped["structural_masks"] = masks
         p_flip = adapter.predict(flipped)
-        ones = torch.ones_like(point, dtype=torch.bool)
+        ones = self._valid(*point.shape)
         a.add("mask_flip_dpoint", (p_flip.point.float() - point).abs(), ones)
         if preds.p_zero is not None:
             a.add("mask_flip_dpzero", (p_flip.p_zero.float() - preds.p_zero.float()).abs(), ones)
@@ -287,6 +310,8 @@ class V5Evaluator:
         obs = torch.cat(self.series["obs"]).numpy()
         N = y.shape[1]
         ind = self.holdout.cpu().numpy() if self.holdout is not None else np.zeros(N, bool)
+        ign = self.ignore.cpu().numpy() if self.ignore is not None else np.zeros(N, bool)
+        trans = ~ind & ~ign
         out: Dict[str, Optional[float]] = {}
 
         nrmse = np.full(N, np.nan)
@@ -302,13 +327,13 @@ class V5Evaluator:
         def _nanmedian(v):
             return float(np.nanmedian(v)) if np.isfinite(v).any() else None
 
-        out["node_nrmse_median_trans"] = _nanmedian(nrmse[~ind])
+        out["node_nrmse_median_trans"] = _nanmedian(nrmse[trans])
         out["node_nrmse_median_ind"] = _nanmedian(nrmse[ind]) if ind.any() else None
         if ind.any():
             peer = np.full(N, np.nan)
             for n in np.where(ind)[0]:
                 best = np.nan
-                for j in np.where(~ind)[0]:
+                for j in np.where(trans)[0]:
                     m = obs[:, n] & obs[:, j]
                     if m.sum() < 10 or y[m, n].std() == 0 or y[m, j].std() == 0:
                         continue

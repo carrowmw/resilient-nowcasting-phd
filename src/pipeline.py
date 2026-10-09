@@ -48,7 +48,8 @@ class ResilientIoTPipeline(nn.Module):
                  mask_channels: str = "both",
                  holdout_night_channel: str = "leak",
                  detach_impute_latent: bool = False,
-                 traffic_log1p: bool = False):
+                 traffic_log1p: bool = False,
+                 residual_to_profile: bool = False):
         """v5 keyword arguments default to the v4 architecture (identical state_dict);
         model_factory.build_model passes every one explicitly from the resolved config.
         The v5 options are only honoured by forward(..., return_outputs=True)."""
@@ -73,6 +74,9 @@ class ResilientIoTPipeline(nn.Module):
         self.holdout_night_channel = holdout_night_channel
         self.detach_impute_latent = detach_impute_latent
         self.traffic_log1p = traffic_log1p
+        # v6: forecast mean = (seasonal profile + 1) * exp(head output); the head starts at
+        # the naive-profile forecast and learns a multiplicative correction.
+        self.residual_to_profile = residual_to_profile
 
         # None is a documented API default (hidden_dim * 4); <= 0 is an invalid caller error.
         if dim_feedforward is None:
@@ -300,7 +304,12 @@ class ResilientIoTPipeline(nn.Module):
             outage_feats = torch.cat([f.to(latent.dtype) for f in feats], dim=-1)
 
         impute_latent = latent.detach() if self.detach_impute_latent else latent
-        heads = self.decoders.forward_v5(latent, impute_latent, target_cov, outage_feats)
+        mu_anchor = None
+        if self.residual_to_profile:
+            assert batch.get("profile_target_raw") is not None, \
+                "CRITICAL: residual_to_profile needs batch['profile_target_raw'] (BatchPreparer)"
+            mu_anchor = batch["profile_target_raw"].float() + 1.0
+        heads = self.decoders.forward_v5(latent, impute_latent, target_cov, outage_feats, mu_anchor=mu_anchor)
 
         scale = self.scale
         if heads["impute_traffic_params"] is not None:

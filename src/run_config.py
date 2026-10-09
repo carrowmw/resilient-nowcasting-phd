@@ -49,6 +49,9 @@ LEGACY_V4_EQUIVALENTS: Dict[str, Dict] = {
         "ablate_masks": False,                   # v4 key; v5 prefers mask_channels=none
         "train_node_count": None,                # None -> every non-holdout station is in the network
         "train_node_seed": 0,                    # draw order of the nested training-station subsets
+        "val_station_count": 0,                  # v6: training stations carved out as inductive validation nodes
+        "val_station_seed": 0,                   # draw of the validation stations (independent of training seed)
+        "weather_extreme_features": False,       # v6: wet / dry / dull-day / bright indicator covariates
     },
     "model": {
         "sensor_embedding_dim": 0,
@@ -61,6 +64,7 @@ LEGACY_V4_EQUIVALENTS: Dict[str, Dict] = {
         "baseline_inputs": "dynamic",
         "baseline_head": "mse",
         "naive_kind": "none",                    # profile | last_obs for model_type=naive
+        "residual_to_profile": False,            # v6: forecast mean = (profile + 1) * exp(head output)
     },
     "loss": {
         "target_mask": "all",
@@ -87,6 +91,10 @@ LEGACY_V4_EQUIVALENTS: Dict[str, Dict] = {
     "training": {
         "grad_accum_steps": 1,
         "grad_cosine_every": 0,
+        "lr_schedule": "none",                   # v6: none | cosine (per-epoch, linear warmup)
+        "warmup_epochs": 0,
+        "lr_min_frac": 0.0,                      # cosine floor as a fraction of training.lr
+        "min_epochs": 0,                         # early stopping cannot trigger before this epoch
     },
     "selection": {
         "metric": "val_loss_total",
@@ -122,13 +130,22 @@ _ENUMS = {
     ("loss", "impute_likelihood"): ("msle", "outage_mixture"),
     ("loss", "mtl_balancing"): ("none", "uncertainty", "pcgrad"),
     ("selection", "metric"): ("val_loss_total", "obs_loss", "obs_loss_plus_so"),
+    ("training", "lr_schedule"): ("none", "cosine"),
 }
 
 V5_SCHEMA = {section: tuple(keys) for section, keys in LEGACY_V4_EQUIVALENTS.items()}
 
 # Keys added to the v5 schema after the 209-run suite was generated. Configs saved by
-# that suite lack them; their legacy value is exactly the behaviour those runs had.
-V5_LATE_KEYS = (("data", "train_node_count"), ("data", "train_node_seed"))
+# that suite (and the scaling sweep) lack them; their legacy value is exactly the
+# behaviour those runs had.
+V5_LATE_KEYS = (
+    ("data", "train_node_count"), ("data", "train_node_seed"),
+    # v6 stage (docs/experiments/riot_v5/riot_v5_seed_report.md §14.2)
+    ("data", "val_station_count"), ("data", "val_station_seed"), ("data", "weather_extreme_features"),
+    ("model", "residual_to_profile"),
+    ("training", "lr_schedule"), ("training", "warmup_epochs"), ("training", "lr_min_frac"),
+    ("training", "min_epochs"),
+)
 
 
 def resolve_config(config: dict) -> dict:
@@ -239,6 +256,29 @@ def validate_config(cfg: dict) -> None:
             "CRITICAL: data.train_node_count requires eval_mode=inductive"
         assert isinstance(data["train_node_count"], int) and data["train_node_count"] >= 1, \
             f"CRITICAL: data.train_node_count must be a positive int, got {data['train_node_count']!r}"
+    train = cfg["training"]
+    assert 0 <= train["min_epochs"] <= train["epochs"], \
+        f"CRITICAL: training.min_epochs={train['min_epochs']} outside [0, epochs={train['epochs']}]"
+    assert 0.0 <= train["lr_min_frac"] <= 1.0, "CRITICAL: training.lr_min_frac must lie in [0, 1]"
+    if train["lr_schedule"] == "none":
+        assert train["warmup_epochs"] == 0 and train["lr_min_frac"] == 0.0, \
+            "CRITICAL: warmup_epochs / lr_min_frac only apply to lr_schedule=cosine"
+    else:
+        assert 0 <= train["warmup_epochs"] < train["epochs"], \
+            "CRITICAL: training.warmup_epochs must leave cosine epochs"
+    if data["val_station_count"] > 0:
+        # Validation stations are an inductive split of the training pool: they need the
+        # fixed test holdout to be defined, and a learned model to select a checkpoint for.
+        assert cfg["eval_mode"] == "inductive", "CRITICAL: data.val_station_count requires eval_mode=inductive"
+        assert isinstance(data["val_station_count"], int), "CRITICAL: data.val_station_count must be an int"
+        assert cfg["model_type"] != "naive", "CRITICAL: naive baselines have no checkpoint to select"
+    if data["weather_extreme_features"]:
+        assert data["complete_weather"], \
+            "CRITICAL: weather_extreme_features needs complete_weather=true (zero-filled weather leaks missingness)"
+    if model["residual_to_profile"]:
+        assert cfg["model_type"] == "gnn", "CRITICAL: model.residual_to_profile is implemented for the GNN head"
+        assert data["profile_prior"] != "none", \
+            "CRITICAL: model.residual_to_profile needs data.profile_prior (the anchor)"
 
 
 assert all(

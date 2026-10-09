@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, NamedTuple, Optional, Tuple
 
 # Perform early GPU selection before ANY PyTorch or W&B bindings are loaded
 if __name__ == "__main__":
@@ -48,6 +48,7 @@ from harness import (
     inductive_holdout_ids,
     mask_from_manifest,
     select_network_locations,
+    validation_station_ids,
     save_holdout_manifest,
     load_holdout_manifest,
     manifest_sha,
@@ -247,6 +248,46 @@ def _fmt(v, p=4):
 PERTURB_BATCHES = 8
 
 
+class NodeMasks(NamedTuple):
+    """Inductive node roles for one run (all [N] bool on `device`, or None)."""
+    test_holdout: Optional[torch.Tensor]   # fixed test holdout (scored at test as "ind")
+    val_stations: Optional[torch.Tensor]   # v6 validation stations (scored at val as "ind")
+    unseen: Optional[torch.Tensor]         # never trained on: blanked, loss-excluded, no profile donor
+    held_ids: List[str]
+    val_ids: List[str]
+
+
+def build_node_masks(config: dict, location_ids: List[str], all_location_ids: List[str],
+                     device: torch.device) -> NodeMasks:
+    """Inductive holdout (drawn over the FULL station list, so a run with fewer training
+    stations is still scored on the same held-out nodes) plus, when
+    data.val_station_count > 0, validation stations drawn from the training pool."""
+    data_cfg = config["data"]
+    if config["eval_mode"] != "inductive":
+        return NodeMasks(None, None, None, [], [])
+    held_ids = inductive_holdout_ids(all_location_ids, data_cfg["inductive_holdout_frac"],
+                                     data_cfg["inductive_holdout_seed"])
+    test_holdout = mask_from_manifest({"holdout_location_ids": held_ids}, location_ids, device=device)
+    assert int(test_holdout.sum()) == len(held_ids), "CRITICAL: held-out stations missing from the dataset"
+    val_ids, val_stations, unseen = [], None, test_holdout
+    if data_cfg["val_station_count"] > 0:
+        val_ids = validation_station_ids(location_ids, held_ids, data_cfg["val_station_count"],
+                                         data_cfg["val_station_seed"])
+        val_stations = mask_from_manifest({"holdout_location_ids": val_ids}, location_ids, device=device)
+        assert not bool((val_stations & test_holdout).any()), "CRITICAL: validation and test stations overlap"
+        unseen = test_holdout | val_stations
+    return NodeMasks(test_holdout, val_stations, unseen, held_ids, val_ids)
+
+
+def cosine_lr_factor(epoch: int, epochs: int, warmup: int, floor: float) -> float:
+    """v6 LR multiplier for 0-based `epoch`: linear warmup to 1 over `warmup` epochs,
+    then a half cosine that reaches `floor` at the last epoch of the budget."""
+    if epoch < warmup:
+        return (epoch + 1) / (warmup + 1)
+    progress = min((epoch - warmup) / max(epochs - warmup - 1, 1), 1.0)
+    return floor + (1.0 - floor) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
 def run_training(
     config: dict,
     init_wandb: bool = True,
@@ -412,49 +453,58 @@ def run_training(
     #               excluded from every gradient-producing loss term       #
     #               (zero-shot guarantee); scored at val time only.        #
     # ------------------------------------------------------------------ #
-    inductive_holdout_mask = None   # [N] bool — fixed, never trained on
+    inductive_holdout_mask = None   # [N] bool — fixed test holdout, never trained on
     loss_node_mask = None           # [N] bool — True = node participates in losses
     holdout_manifest = None
     n_train_nodes = None            # stations the model learns from (inductive mode)
 
+    # v5: the inductive split has its own seed (v4 coupled it to random_seed, so seed
+    # replicates silently changed the evaluation nodes). v6: optional validation stations.
+    node_masks = build_node_masks(config, location_ids, full_dataset.all_locations, device)
+    val_station_mask = node_masks.val_stations
+    unseen_mask = node_masks.unseen  # test holdout | validation stations
     if eval_mode == "inductive":
-        # v5: the inductive split has its own seed (v4 coupled it to random_seed,
-        # so seed replicates silently changed the evaluation nodes).
         inductive_seed = data_cfg["inductive_holdout_seed"]
         inductive_frac = data_cfg["inductive_holdout_frac"]
-        # Drawn over the full station list, so a run with fewer training stations
-        # (data.train_node_count) is still scored on exactly the same held-out nodes.
-        held_ids = inductive_holdout_ids(full_dataset.all_locations, inductive_frac, inductive_seed)
-        inductive_holdout_mask = mask_from_manifest(
-            {"holdout_location_ids": held_ids}, location_ids, device=device,
-        )
-        assert int(inductive_holdout_mask.sum()) == len(held_ids), \
-            "CRITICAL: held-out stations missing from the dataset"
+        held_ids = node_masks.held_ids
+        inductive_holdout_mask = node_masks.test_holdout
         n_train_nodes = num_nodes - len(held_ids)
         if data_cfg["train_node_count"] is not None:
             assert n_train_nodes == data_cfg["train_node_count"], (
                 f"CRITICAL: dataset has {n_train_nodes} training stations, config asks for "
                 f"{data_cfg['train_node_count']} (pre-built dataset from another config?)"
             )
-        loss_node_mask = ~inductive_holdout_mask
+        n_train_nodes -= len(node_masks.val_ids)
+        loss_node_mask = ~unseen_mask
 
         # Manifest: resolved location IDs, not just the seed — this is the bridge
         # to the exporters and the cross-model comparability key.
         manifest_path = save_holdout_manifest(
             checkpoint_dir, location_ids, inductive_holdout_mask.cpu(),
             seed=inductive_seed, holdout_frac=inductive_frac,
+            val_station_mask=val_station_mask.cpu() if val_station_mask is not None else None,
         )
         holdout_manifest = load_holdout_manifest(checkpoint_dir)
         logger.info(
             f"HARNESS inductive holdout: {int(inductive_holdout_mask.sum())}/{num_nodes} nodes "
-            f"held out (seed={inductive_seed}), {n_train_nodes} training stations "
+            f"held out (seed={inductive_seed}), {len(node_masks.val_ids)} validation stations "
+            f"(seed={data_cfg['val_station_seed']}), {n_train_nodes} training stations "
             f"(of {len(full_dataset.all_locations) - len(held_ids)}), manifest={manifest_path}, "
             f"sha={manifest_sha(holdout_manifest)}"
         )
 
+    # Node roles per evaluation pass: the preparer blanks every unseen node; the
+    # evaluator scores one set as "ind" and ignores the other (v6 validation stations
+    # are invisible at test, the test holdout is invisible at validation).
+    val_ind_mask, val_ignore_mask = inductive_holdout_mask, None
+    test_ind_mask, test_ignore_mask = inductive_holdout_mask, None
+    if val_station_mask is not None:
+        val_ind_mask, val_ignore_mask = val_station_mask, inductive_holdout_mask
+        test_ignore_mask = val_station_mask
+
     # Validation-time holdout to score kriging/zero-shot reconstruction against.
     if eval_mode == "inductive":
-        val_holdout_mask = inductive_holdout_mask
+        val_holdout_mask = unseen_mask
     elif kriging_active:
         # PHASE 2: deterministic transductive val mask for stable metric tracking.
         val_holdout_mask = make_spatial_holdout_mask(
@@ -475,13 +525,17 @@ def run_training(
             f"spatial_holdout_prob={spatial_holdout_prob})"
         )
 
+    if eval_mode != "inductive":
+        # Temporal mode scores the kriging holdout as "ind" (v5 behaviour).
+        val_ind_mask = test_ind_mask = val_holdout_mask
+
     # Pre-compute constant that only requires a single sync (mask is fixed for the whole run).
     val_holdout_node_count = int(val_holdout_mask.sum().item()) if val_holdout_mask is not None else 0
 
     # v5: one device-side batch builder for every pass (masking, encoding, holdout, covariates).
     preparer = BatchPreparer(
         config, full_dataset, device,
-        inductive_mask=inductive_holdout_mask,
+        inductive_mask=unseen_mask,
         loss_node_mask=loss_node_mask,
         eval_holdout_mask=val_holdout_mask,
         static_features=full_dataset.static_features.to(device),
@@ -520,6 +574,14 @@ def run_training(
     )
 
     epochs = train_cfg["epochs"]
+    # v6 protocol: per-epoch cosine schedule (stepped after each epoch) and a minimum
+    # number of epochs before early stopping may trigger.
+    scheduler = None
+    if trainable and train_cfg["lr_schedule"] == "cosine":
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, functools.partial(
+            cosine_lr_factor, epochs=epochs, warmup=train_cfg["warmup_epochs"], floor=train_cfg["lr_min_frac"],
+        ))
+    min_epochs = train_cfg["min_epochs"]
     grad_clip_max_norm = train_cfg["grad_clip_max_norm"]
     early_stop_patience = train_cfg["early_stop_patience"]
     early_stop_min_delta = train_cfg["early_stop_min_delta"]
@@ -582,6 +644,9 @@ def run_training(
     best_score = float("inf")
     best_epoch = None
     best_val_metrics, best_val_v5 = None, None
+    # v6: second checkpoint selected on validation-station (unseen) RMSE.
+    checkpoint_ind_path = os.path.join(checkpoint_dir, "best_model_ind.pt")
+    best_ind_score, best_epoch_ind, best_val_v5_ind = float("inf"), None, None
     epochs_no_improve = 0
     opt_step = 0
     last_score = float("nan")
@@ -636,12 +701,15 @@ def run_training(
             optimizer.zero_grad()  # drop a trailing partial accumulation window
         avg_train = {k: float(v) / max(n_train, 1) for k, v in epoch_sums.items()}
         assert not math.isnan(avg_train["total"]), "CRITICAL FAILURE: train loss is NaN"
+        epoch_lr = optimizer.param_groups[0]["lr"] if trainable else None
+        if scheduler is not None:
+            scheduler.step()
 
         # Validation — shared harness path (capability-gated metrics).
         model.eval()
         val_accum = MetricAccumulator()
         val_eval = V5Evaluator(full_dataset, preparer.covariates, adapter.capabilities, config,
-                               val_holdout_mask, scale, device)
+                               val_ind_mask, scale, device, ignore_mask=val_ignore_mask)
         with torch.no_grad():
             avg_val = _eval_pass(val_loader, weights, val_eval, val_accum)
             if selection_metric == "obs_loss_plus_so":
@@ -683,6 +751,14 @@ def run_training(
             else:
                 epochs_no_improve += 1
                 logger.info(f"Early stopping counter: {epochs_no_improve} out of {early_stop_patience}")
+            if val_station_mask is not None:
+                ind_score = val_v5.get("obs_ind_rmse")
+                assert ind_score is not None, "CRITICAL: no observed validation-station targets to select on"
+                if ind_score < best_ind_score:
+                    best_ind_score, best_epoch_ind, best_val_v5_ind = ind_score, epoch + 1, val_v5
+                    torch.save(model.state_dict(), checkpoint_ind_path)
+                logger.info(f"Validation stations: indRMSE {ind_score:.2f} "
+                            f"(best {best_ind_score:.2f} at epoch {best_epoch_ind}, lr {_fmt(epoch_lr, 6)})")
 
         # W&B Logging — capability-gated: None metrics are absent, never 0.0.
         if init_wandb or (wandb.run is not None):
@@ -695,6 +771,8 @@ def run_training(
                 "val_selection_score": last_score,
                 "epoch": epoch + 1,
             }
+            if epoch_lr is not None:
+                log_payload["lr"] = epoch_lr
             log_payload.update({f"val_{k}": v for k, v in val_metrics.items() if v is not None})
             log_payload.update({f"val_{k}": v for k, v in val_v5.items() if v is not None})
             if grad_cosines:
@@ -732,40 +810,62 @@ def run_training(
             logger.info("Non-learned baseline: a single evaluation epoch is the whole run.")
             break
         if epochs_no_improve >= early_stop_patience:
-            logger.info(f"Early stopping triggered after {epoch + 1} epochs.")
-            break
+            if epoch + 1 >= min_epochs:
+                logger.info(f"Early stopping triggered after {epoch + 1} epochs.")
+                break
+            logger.info(f"Early stopping deferred: min_epochs={min_epochs} not reached")
 
     logger.info("Training complete.")
 
     # ------------------------------------------------------------------ #
     # Final Evaluation on Held-Out Test Set (F-C01 / Forensic Audit)     #
     # ------------------------------------------------------------------ #
-    test_metrics, test_v5 = None, None
+    test_metrics, test_v5, test_v5_ind = None, None, None
     assert os.path.exists(checkpoint_path), \
         "CRITICAL: no checkpoint was saved (every epoch was imputation pre-training?)"
-    logger.info(f"Restoring best checkpoint from {checkpoint_path} (epoch {best_epoch}) for final evaluation.")
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 
-    if test_loader is not None and len(test_loader) > 0:
-        logger.info(f"Running final evaluation on held-out test partition ({len(test_dataset)} samples)...")
+    def _test_eval():
         model.eval()
         test_accum = MetricAccumulator()
         test_eval = V5Evaluator(
-            full_dataset, preparer.covariates, adapter.capabilities, config, val_holdout_mask, scale, device,
-            diagnostics=eval_cfg["diagnostics"], store_series=eval_cfg["diagnostics"],
+            full_dataset, preparer.covariates, adapter.capabilities, config, test_ind_mask, scale, device,
+            diagnostics=eval_cfg["diagnostics"], store_series=eval_cfg["diagnostics"], ignore_mask=test_ignore_mask,
         )
         with torch.no_grad():
-            avg_test = _eval_pass(
+            avg = _eval_pass(
                 test_loader, loss_weights, test_eval, test_accum,
                 perturb_batches=PERTURB_BATCHES if eval_cfg["diagnostics"] else 0,
             )
             for length in eval_cfg["so_lengths"]:
                 _so_pass(test_loader, length, test_eval)
-        test_metrics = test_accum.summary()
-        test_metrics["test_loss"] = avg_test["total"]
-        test_metrics["test_loss_kriging"] = avg_test["kriging"]
-        test_metrics["test_loss_forecast_nll_obs"] = avg_test["forecast_nll_obs"]
-        test_v5 = test_eval.summary()
+        legacy = test_accum.summary()
+        legacy["test_loss"] = avg["total"]
+        legacy["test_loss_kriging"] = avg["kriging"]
+        legacy["test_loss_forecast_nll_obs"] = avg["forecast_nll_obs"]
+        return legacy, test_eval.summary(), avg
+
+    has_test = test_loader is not None and len(test_loader) > 0
+    if has_test and val_station_mask is not None:
+        assert os.path.exists(checkpoint_ind_path), "CRITICAL: no validation-station checkpoint was saved"
+        logger.info(f"Evaluating the validation-station checkpoint (epoch {best_epoch_ind}) on the test partition...")
+        model.load_state_dict(torch.load(checkpoint_ind_path, map_location=device))
+        _, test_v5_ind, _ = _test_eval()
+        logger.info(
+            f"Final Test Metrics [val-station checkpoint] -> obsRMSE: {_fmt(test_v5_ind.get('obs_all_rmse'), 2)} "
+            f"(trans {_fmt(test_v5_ind.get('obs_trans_rmse'), 2)}, ind {_fmt(test_v5_ind.get('obs_ind_rmse'), 2)}) | "
+            f"SO12 RMSE: {_fmt(test_v5_ind.get('so_12_forecast_rmse'), 2)}"
+        )
+        if init_wandb or (wandb.run is not None):
+            for k, v in test_v5_ind.items():
+                if v is not None:
+                    wandb.run.summary[f"test_indckpt_{k}"] = v
+
+    logger.info(f"Restoring best checkpoint from {checkpoint_path} (epoch {best_epoch}) for final evaluation.")
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+    if has_test:
+        logger.info(f"Running final evaluation on held-out test partition ({len(test_dataset)} samples)...")
+        test_metrics, test_v5, avg_test = _test_eval()
 
         logger.info(
             f"Final Test Metrics -> Loss: {avg_test['total']:.4f} | "
@@ -798,6 +898,12 @@ def run_training(
         "v5_metrics": best_val_v5,
         "test_metrics": test_metrics,
         "v5_test_metrics": test_v5,
+        # v6 validation stations: ids, the unseen-station checkpoint and its scores.
+        "val_station_ids": node_masks.val_ids,
+        "best_epoch_ind": best_epoch_ind,
+        "best_val_ind_rmse": best_ind_score if best_epoch_ind is not None else None,
+        "v5_metrics_ind_ckpt": best_val_v5_ind,
+        "v5_test_metrics_ind_ckpt": test_v5_ind,
         "mask_rng": "cuda",
     })
 
@@ -816,6 +922,9 @@ def run_training(
         metadata=config
     )
     artifact.add_file(checkpoint_path, name="best_model.pt")
+    checkpoint_ind_path = os.path.join(checkpoint_dir, "best_model_ind.pt")
+    if os.path.exists(checkpoint_ind_path):
+        artifact.add_file(checkpoint_ind_path, name="best_model_ind.pt")
 
     if os.path.exists(config_save_path):
         artifact.add_file(config_save_path, name="config.yaml")

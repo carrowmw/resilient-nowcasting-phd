@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Markdown tables for the RIoT v5 results report (test split, seed 42).
+Markdown tables for the RIoT v5 results report (test split, every seed; seed-42 rows unsuffixed).
 
 Input:  docs/experiments/riot_v5/data/runs.csv (collect_v5_results.py)
 Output: docs/experiments/riot_v5/data/appendix_tables.md
@@ -46,13 +46,14 @@ def main():
     r = pd.read_csv(DATA / "runs.csv").copy()
     r["exp"] = r.run.str.replace("-s42", "", regex=False)
     r = r.set_index("exp")
-    out = ["# RIoT v5 — full result tables (test split, seed 42)", "",
+    out = ["# RIoT v5 — full result tables (test split, seeds 42 / 43 / 44)", "",
            "All metrics are raw counts on observed targets. All / Trans / Ind = observed-target RMSE over all, "
            "transductive and held-out nodes; Peak = RMSE where y ≥ 58 (train p90); SO12 / SO96 = forecast RMSE "
            "on nodes with a synthetic outage of 12 / 96 steps; SO96 mass = predicted / true sum on those nodes; "
            "Collapse = P(point < 1 | target missing, own profile > 10); Gap mass = predicted / profile mass in real "
            "gaps; Impute / Kriging = raw-count RMSE of the imputation and kriging heads. "
-           "Best / run ep = selected epoch / epochs trained.", ""]
+           "Best / run ep = selected epoch / epochs trained. Unsuffixed rows are seed 42; `-s43` / `-s44` rows "
+           "are the tier-3 seeds. Mean ± s.d. over seeds is in `seed_summary.csv`.", ""]
     for g, title in GROUPS:
         exps = sorted(r.index[r.group == g])
         out += [f"## {title}", "", table(r, exps), ""]

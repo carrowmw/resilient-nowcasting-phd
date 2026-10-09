@@ -60,12 +60,16 @@ plt.rcParams.update({
 
 
 def load():
-    r = pd.read_csv(DATA / "runs.csv").copy()
+    # Seed 42 only: the tier-3 seeds are analysed separately by seeds_v5_results.py.
+    r = pd.read_csv(DATA / "runs.csv")
+    r = r[r.seed == 42].copy()
     r["exp"] = r.run.str.replace("-s42", "", regex=False)
     r = r.set_index("exp")
     ep = pd.read_csv(DATA / "epochs.csv")
+    ep = ep[ep.run.str.endswith("-s42")].copy()
     ep["exp"] = ep.run.str.replace("-s42", "", regex=False)
     gc = pd.read_csv(DATA / "grad_cosine_history.csv")
+    gc = gc[gc.run.str.endswith("-s42")].copy()
     gc["exp"] = gc.run.str.replace("-s42", "", regex=False)
     return r, ep, gc
 

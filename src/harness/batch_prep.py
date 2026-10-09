@@ -50,6 +50,7 @@ class BatchPreparer:
         self.static_features = static_features
         self.location_ids = location_ids
         self.so_node_frac = config["evaluation"]["so_node_frac"]
+        self.profile_anchor = config["model"]["residual_to_profile"]
         self.weather_zero_scaled = dataset.weather_zero_scaled.to(device)
         # Raw count 0 in the traffic channel's scaled domain (log1p(0) = 0 too).
         self.traffic_zero_scaled = -dataset.traffic_mean / dataset.traffic_std
@@ -171,6 +172,11 @@ class BatchPreparer:
 
         # ---- 4. covariates ---------------------------------------------------------
         covariates, rl_target_raw = self.covariates.build(time_idx, input_missing, blank_mask, outage_start)
+        # v6 residual_to_profile anchor: target-step profile in raw counts, the inductive
+        # substitute at blanked nodes (never the node's own data there).
+        profile_target_raw = (
+            self.covariates.profile_raw(time_idx, blank_mask)[..., T] if self.profile_anchor else None
+        )
 
         batch.update({
             "static_features": self.static_features,
@@ -186,6 +192,7 @@ class BatchPreparer:
             "blank_mask": blank_mask,
             "covariates": covariates,
             "rl_target_raw": rl_target_raw,
+            "profile_target_raw": profile_target_raw,
             "night_flags": night,
             "so_slots": so_slots,
             "so_selected": so_selected,

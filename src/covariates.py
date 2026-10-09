@@ -12,6 +12,10 @@ Channel groups (each enabled by a config key):
   profile_prior          2  seasonal slot-of-week median (traffic-scaled) + own-profile flag
   gap_runlength_feature  2  log-scaled steps since last observation + node-blanked flag
   lag_features[L]        2  value at t - L (traffic-scaled) + observed flag, per lag
+  weather_extreme_features 4  v6: wet / dry (humidity >= train p90 / <= p10), dull day
+                              (daytime solar <= daytime p25), bright (solar >= daytime p90).
+                              Thresholds from the training slice. Column T uses the weather
+                              AT the target step: a perfect-weather-forecast assumption.
 
 Blanked nodes (fixed inductive holdout and per-batch kriging re-rolls) never
 see their own history: run-length = cap, lags blanked, and — for the inductive
@@ -29,7 +33,29 @@ import torch
 logger = logging.getLogger(__name__)
 
 CALENDAR_DIM = 6
+WEATHER_EXTREME_DIM = 4
 RIDGE_LAMBDA = 1.0
+
+
+def _weather_extremes(dataset) -> torch.Tensor:
+    """[num_times, N, 4] float indicators from the (complete) humidity / solar channels.
+    Thresholds are train-slice quantiles of the scaled channels (a monotone transform of
+    the raw readings, so the indicators are the same as on raw values)."""
+    weather = dataset.dynamic_data[:, :, 1:3].numpy()                         # [T, N, 2] scaled
+    night = dataset.is_night.numpy()                                          # [T]
+    t_end = dataset.train_t_end
+    hum, sol = weather[..., 0], weather[..., 1]
+    hum_hi, hum_lo = np.quantile(hum[:t_end], [0.9, 0.1])
+    sol_day = sol[:t_end][~night[:t_end]]
+    assert sol_day.size > 0, "CRITICAL: no daytime steps in the training slice for the solar thresholds"
+    dull, bright = np.quantile(sol_day, [0.25, 0.9])
+    day = ~night[:, None]
+    ext = np.stack([hum >= hum_hi, hum <= hum_lo, day & (sol <= dull), sol >= bright], axis=-1)
+    logger.info(
+        "weather extremes: rates wet %.3f, dry %.3f, dull-day %.3f, bright %.3f",
+        *[float(ext[:t_end, :, k].mean()) for k in range(WEATHER_EXTREME_DIM)],
+    )
+    return torch.from_numpy(ext.astype(np.float32))
 
 
 def _substitute_profiles(
@@ -72,6 +98,7 @@ class CovariateBuilder:
         self.profile_mode = data_cfg["profile_prior"]
         self.runlength_on = data_cfg["gap_runlength_feature"]
         self.lags = list(data_cfg["lag_features"])
+        self.weather_on = data_cfg["weather_extreme_features"]
         self.cap = int(data_cfg["runlength_cap"])
         self.num_nodes = dataset.num_nodes
 
@@ -86,6 +113,7 @@ class CovariateBuilder:
         self.run_length = dataset.run_length.to(device)
         self.observed = dataset.observed.to(device)
         self.traffic_scaled = dataset.dynamic_data[:, :, 0].to(device)
+        self.weather_extremes = _weather_extremes(dataset).to(device) if self.weather_on else None
 
         # Seasonal profile in the traffic channel's scaled domain (directly comparable
         # to the traffic input), plus the substitute table for blanked nodes.
@@ -111,10 +139,11 @@ class CovariateBuilder:
             + (2 if self.profile_mode != "none" else 0)
             + (2 if self.runlength_on else 0)
             + 2 * len(self.lags)
+            + (WEATHER_EXTREME_DIM if self.weather_on else 0)
         )
         logger.info(
             f"CovariateBuilder: dim={self.dim} (calendar={self.calendar_on}, profile={self.profile_mode}, "
-            f"runlength={self.runlength_on}, lags={self.lags}, cap={self.cap})"
+            f"runlength={self.runlength_on}, lags={self.lags}, weather_extremes={self.weather_on}, cap={self.cap})"
         )
 
     def _to_traffic_scaled(self, prof_log1p: np.ndarray, dataset) -> torch.Tensor:
@@ -230,6 +259,12 @@ class CovariateBuilder:
             if outage_start is not None:
                 obs = obs & ~(src.unsqueeze(1) >= outage_start.unsqueeze(-1))
             chans += [torch.where(obs, val, torch.zeros_like(val)).unsqueeze(-1), obs.float().unsqueeze(-1)]
+        if self.weather_on:
+            ext = self.weather_extremes[grid].permute(0, 2, 1, 3)                 # [B, N, T + 1, 4]
+            if blank is not None:
+                # Blanked nodes see no dynamic input of their own, weather included.
+                ext = torch.where(blank.unsqueeze(-1), torch.zeros_like(ext), ext)
+            chans.append(ext)
 
         cov = torch.cat(chans, dim=-1)
         assert cov.shape == (B, N, T + 1, self.dim), f"CRITICAL: covariate shape {tuple(cov.shape)}"

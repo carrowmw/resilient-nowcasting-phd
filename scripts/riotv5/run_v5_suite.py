@@ -31,6 +31,7 @@ Usage:
   python scripts/riotv5/run_v5_suite.py --summarise-only             # rebuild CSV / LaTeX
   python scripts/riotv5/run_v5_suite.py --gpus 0 --use_mock_data --smoke --jobs v5_full-s42
   python scripts/riotv5/run_v5_suite.py --manifest configs/train/v5_scaling/suite_manifest.yaml
+  python scripts/riotv5/run_v5_suite.py --manifest configs/train/v6/suite_manifest.yaml --stop-after-hours 70
 
 --manifest runs another job list (e.g. the sensor-density sweep); its `logs_dir` field
 replaces logs/v5_suite, so status files and summaries never mix with the main suite.
@@ -75,7 +76,10 @@ SUMMARY_METRICS = [
     "zir_obs_zero_rate", "zir_night_missing_rate", "zir_day_missing_rate",
     "mask_flip_dpoint", "node_nrmse_median_trans", "node_nrmse_median_ind",
     "ind_corr_mean", "ind_pred_pairwise_corr_mean", "ind_true_pairwise_corr_mean",
+    "peak_q90_rmse", "peak_q90_underpred_rate",
 ]
+# v6 runs with validation stations: test metrics of the validation-station checkpoint.
+IND_CKPT_METRICS = ["obs_all_rmse", "obs_trans_rmse", "obs_ind_rmse", "peak_rmse", "so_12_forecast_rmse", "crps"]
 # Columns of the per-group LaTeX tables (subset; the CSV has everything).
 LATEX_METRICS = [
     ("obs_trans_rmse", "RMSE$_{tr}$"), ("obs_ind_rmse", "RMSE$_{ind}$"), ("peak_rmse", "Peak RMSE"),
@@ -96,6 +100,8 @@ def parse_args():
     ap.add_argument("--seeds", nargs="+", type=int, default=None, help="seeds to include")
     ap.add_argument("--jobs", nargs="+", default=None, help="run names or glob patterns (e.g. 'v5_*-s42')")
     ap.add_argument("--force", action="store_true", help="re-run jobs that already completed")
+    ap.add_argument("--stop-after-hours", type=float, default=None,
+                    help="start no new job after this many hours (running jobs finish); for a fixed compute window")
     ap.add_argument("--stagger", type=float, default=45.0,
                     help="seconds between job starts (spreads the database load of dataset construction)")
     ap.add_argument("--dry-run", action="store_true")
@@ -179,6 +185,12 @@ def smoke_config(job: Dict) -> Path:
     cfg["model"]["num_nodes"] = 12 if cfg["data"].get("train_node_count") is None else cfg["model"]["num_nodes"]
     cfg["training"]["epochs"] = 2
     cfg["training"]["early_stop_patience"] = 1
+    # v6 protocol keys must stay valid against the 2-epoch budget and the 12-node city.
+    if "min_epochs" in cfg["training"]:
+        cfg["training"]["min_epochs"] = min(cfg["training"]["min_epochs"], 2)
+        cfg["training"]["warmup_epochs"] = min(cfg["training"]["warmup_epochs"], 1)
+    if cfg["data"].get("val_station_count", 0) > 0:
+        cfg["data"]["val_station_count"] = 2
     cfg["loss"]["impute_pretrain_epochs"] = min(cfg["loss"]["impute_pretrain_epochs"], 1)
     SMOKE_DIR.mkdir(parents=True, exist_ok=True)
     path = SMOKE_DIR / f"{job['name']}.yaml"
@@ -275,12 +287,24 @@ class StartGate:
             self.last = time.time()
 
 
-def worker(gpu: int, jobs: "queue.Queue[Dict]", gate: StartGate, args, project, logger, done: List[Dict], lock):
+def worker(gpu: int, jobs: "queue.Queue[Dict]", gate: StartGate, args, project, logger, done: List[Dict], lock,
+           deadline: Optional[float] = None, cost_in_hours: bool = False):
     while not _stop.is_set():
+        if deadline is not None and time.time() >= deadline:
+            logger.info(f"[GPU {gpu}] --stop-after-hours reached: starting no further jobs "
+                        f"({jobs.qsize()} left in the queue)")
+            return
         try:
             job = jobs.get_nowait()
         except queue.Empty:
             return
+        if deadline is not None and cost_in_hours and time.time() + 3600.0 * job["cost"] > deadline:
+            # The manifest's cost is the run's estimated GPU-hours: skip a job that would
+            # overrun the window and keep going with shorter ones.
+            logger.info(f"[GPU {gpu}] skip {job['name']}: ~{job['cost']:.1f} h would overrun --stop-after-hours")
+            with lock:
+                done.append({"name": job["name"], "status": "SKIPPED (deadline)"})
+            continue
         gate.wait()
         rec = run_job(job, gpu, args, project, logger)
         with lock:
@@ -297,6 +321,10 @@ def _load_metrics(record: Dict) -> Dict:
     test = res["v5_test_metrics"] or {}
     row = {m: test.get(m) for m in SUMMARY_METRICS}
     row["best_epoch"] = res["best_epoch"]
+    ind = res.get("v5_test_metrics_ind_ckpt") or {}
+    for m in IND_CKPT_METRICS:
+        row[f"indckpt_{m}"] = ind.get(m)
+    row["best_epoch_ind"] = res.get("best_epoch_ind")
     row["selection_metric"] = res["selection_metric"]
     row["holdout_manifest_sha"] = res["holdout_manifest_sha"]
     return row
@@ -314,8 +342,9 @@ def summarise(all_jobs: List[Dict], logger: logging.Logger, quiet: bool = False)
             continue
         runs.append({**rec, **_load_metrics(rec)})
 
+    agg_metrics = SUMMARY_METRICS + [f"indckpt_{m}" for m in IND_CKPT_METRICS]
     run_fields = ["name", "experiment", "group", "seed", "tier", "status", "duration_sec", "best_epoch",
-                  "selection_metric", "holdout_manifest_sha", *SUMMARY_METRICS]
+                  "best_epoch_ind", "selection_metric", "holdout_manifest_sha", *agg_metrics]
     with open(LOGS_DIR / "v5_suite_runs.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=run_fields, extrasaction="ignore")
         w.writeheader()
@@ -337,14 +366,14 @@ def summarise(all_jobs: List[Dict], logger: logging.Logger, quiet: bool = False)
             continue
         row = {"experiment": exp, "group": e["group"], "desc": e["desc"], "n_seeds": len(e["runs"]),
                "holdout_sha_consistent": len({r["holdout_manifest_sha"] for r in e["runs"]}) == 1}
-        for m in SUMMARY_METRICS:
+        for m in agg_metrics:
             vals = [r[m] for r in e["runs"] if r[m] is not None]
             row[f"{m}_mean"] = statistics.fmean(vals) if vals else None
             row[f"{m}_std"] = statistics.stdev(vals) if len(vals) > 1 else None
         agg_rows.append(row)
 
     agg_fields = ["experiment", "group", "desc", "n_seeds", "holdout_sha_consistent"] + [
-        f"{m}_{s}" for m in SUMMARY_METRICS for s in ("mean", "std")
+        f"{m}_{s}" for m in agg_metrics for s in ("mean", "std")
     ]
     with open(LOGS_DIR / "v5_suite_summary.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=agg_fields)
@@ -432,7 +461,9 @@ def main():
     logger.info(" RIoT pipeline-v5 experiment suite")
     logger.info(f" GPUs: {args.gpus} x {args.jobs_per_gpu} slot(s) | selected {len(selected)} | "
                 f"already complete {len(skipped)} | to run {len(pending)}")
-    logger.info(f" Relative cost {total_cost:.1f} v4-full-run units "
+    with open(MANIFEST) as f:
+        unit = yaml.safe_load(f).get("cost_unit", "v4-full-run units")
+    logger.info(f" Relative cost {total_cost:.1f} {unit} "
                 f"(~{total_cost / max(len(args.gpus), 1):.1f} units of wall time on {len(args.gpus)} GPU(s))")
     logger.info(f" Mock data: {args.use_mock_data} | smoke: {args.smoke} | W&B project: {project}")
     logger.info("=" * 90)
@@ -455,8 +486,11 @@ def main():
     done: List[Dict] = []
     lock = threading.Lock()
     t0 = time.time()
-    threads = [threading.Thread(target=worker, args=(g, q, gate, args, project, logger, done, lock), daemon=True)
-               for g in slots]
+    deadline = t0 + 3600.0 * args.stop_after_hours if args.stop_after_hours is not None else None
+    if deadline is not None:
+        logger.info(f" No job will start after {datetime.fromtimestamp(deadline):%a %Y-%m-%d %H:%M}")
+    threads = [threading.Thread(target=worker, args=(g, q, gate, args, project, logger, done, lock, deadline,
+                                                     unit == "estimated GPU-hours"), daemon=True) for g in slots]
     for t in threads:
         t.start()
     for t in threads:
@@ -464,7 +498,10 @@ def main():
 
     n_ok = sum(r["status"] == "COMPLETED" for r in done)
     logger.info(f"Suite finished in {(time.time() - t0) / 3600:.2f} h: {n_ok}/{len(done)} completed.")
-    failed = [r["name"] for r in done if r["status"] != "COMPLETED"]
+    skipped_deadline = [r["name"] for r in done if r["status"] == "SKIPPED (deadline)"]
+    if skipped_deadline:
+        logger.info(f"Skipped for the deadline ({len(skipped_deadline)}): {' '.join(skipped_deadline)}")
+    failed = [r["name"] for r in done if r["status"] not in ("COMPLETED", "SKIPPED (deadline)")]
     if failed:
         logger.info(f"Failed ({len(failed)}): {' '.join(failed)} — re-launch to retry (completed jobs are skipped).")
     summarise(all_jobs, logger)
