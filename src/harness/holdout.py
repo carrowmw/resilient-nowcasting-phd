@@ -89,6 +89,37 @@ def validation_station_ids(
     return [loc for loc in location_ids if loc in chosen]
 
 
+def stratified_validation_station_ids(
+    location_ids: List[str],
+    held_ids: List[str],
+    count: int,
+    seed: int,
+    level: Dict[str, float],
+    coverage: Dict[str, float],
+    min_coverage: float,
+) -> List[str]:
+    """v7: `count` validation stations, one per volume stratum. The pool is the
+    training stations whose validation-window coverage (fraction of validation target
+    steps observed) is >= `min_coverage`: v6 drew two stations that had no data after
+    early 2024, so its validation score was carried by three quiet stations. The pool
+    is sorted by train-slice level (`level`, never validation/test values), split into
+    `count` contiguous strata, and one station is drawn per stratum with RandomState(seed)."""
+    held = set(held_ids)
+    pool = [
+        loc for loc in location_ids
+        if loc not in held and coverage.get(loc, 0.0) >= min_coverage and np.isfinite(level.get(loc, np.nan))
+    ]
+    n_train = sum(loc not in held for loc in location_ids)
+    assert 0 < count < len(pool) and count < n_train, (
+        f"CRITICAL: data.val_station_count={count} needs a larger covered pool "
+        f"({len(pool)} stations with coverage >= {min_coverage}, {n_train} training stations)"
+    )
+    pool.sort(key=lambda loc: (level[loc], loc))
+    rng = np.random.RandomState(seed)
+    chosen = {str(stratum[rng.randint(len(stratum))]) for stratum in np.array_split(np.array(pool), count)}
+    return [loc for loc in location_ids if loc in chosen]
+
+
 def save_holdout_manifest(
     checkpoint_dir: str,
     location_ids: List[str],

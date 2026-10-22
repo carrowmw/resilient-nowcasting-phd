@@ -16,6 +16,8 @@ Channel groups (each enabled by a config key):
                               (daytime solar <= daytime p25), bright (solar >= daytime p90).
                               Thresholds from the training slice. Column T uses the weather
                               AT the target step: a perfect-weather-forecast assumption.
+                              v7 weather_extreme_step="origin": column T repeats column T-1
+                              (weather observed at the forecast origin only).
 
 Blanked nodes (fixed inductive holdout and per-batch kriging re-rolls) never
 see their own history: run-length = cap, lags blanked, and — for the inductive
@@ -99,6 +101,7 @@ class CovariateBuilder:
         self.runlength_on = data_cfg["gap_runlength_feature"]
         self.lags = list(data_cfg["lag_features"])
         self.weather_on = data_cfg["weather_extreme_features"]
+        self.weather_origin = data_cfg["weather_extreme_step"] == "origin"
         self.cap = int(data_cfg["runlength_cap"])
         self.num_nodes = dataset.num_nodes
 
@@ -261,6 +264,9 @@ class CovariateBuilder:
             chans += [torch.where(obs, val, torch.zeros_like(val)).unsqueeze(-1), obs.float().unsqueeze(-1)]
         if self.weather_on:
             ext = self.weather_extremes[grid].permute(0, 2, 1, 3)                 # [B, N, T + 1, 4]
+            if self.weather_origin:
+                # v7: no forecast weather - the target column repeats the last observed step.
+                ext = torch.cat([ext[:, :, :-1], ext[:, :, -2:-1]], dim=2)
             if blank is not None:
                 # Blanked nodes see no dynamic input of their own, weather included.
                 ext = torch.where(blank.unsqueeze(-1), torch.zeros_like(ext), ext)

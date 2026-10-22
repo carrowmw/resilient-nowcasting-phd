@@ -49,6 +49,7 @@ from harness import (
     mask_from_manifest,
     select_network_locations,
     validation_station_ids,
+    stratified_validation_station_ids,
     save_holdout_manifest,
     load_holdout_manifest,
     manifest_sha,
@@ -123,17 +124,10 @@ def load_config(config_path: str) -> dict:
     return cfg
 
 
-def chronological_purged_split(
-    full_dataset,
-    train_split: float = 0.7,
-    val_split: float = 0.15,
-    purge_steps: int = 13,
-) -> Tuple[torch.utils.data.Subset, torch.utils.data.Subset, Optional[torch.utils.data.Subset]]:
-    """
-    Chronological train/val/test split with purge buffers (F-C01 remediation).
-    Prevents temporal window overlap leakage between train, validation, and test partitions.
-    """
-    total_len = len(full_dataset)
+def split_bounds(total_len: int, train_split: float, val_split: float,
+                 purge_steps: int) -> Tuple[int, int, int, int, int]:
+    """Sample-index bounds (train_end, val_start, val_end, test_start, test_end) of
+    chronological_purged_split. Sample idx forecasts time step idx + seq_len."""
     train_size = int(train_split * total_len)
     val_size = int(val_split * total_len)
 
@@ -150,6 +144,21 @@ def chronological_purged_split(
         val_end = total_len
         test_start = val_end
         test_end = total_len
+    return train_end, val_start, val_end, test_start, test_end
+
+
+def chronological_purged_split(
+    full_dataset,
+    train_split: float = 0.7,
+    val_split: float = 0.15,
+    purge_steps: int = 13,
+) -> Tuple[torch.utils.data.Subset, torch.utils.data.Subset, Optional[torch.utils.data.Subset]]:
+    """
+    Chronological train/val/test split with purge buffers (F-C01 remediation).
+    Prevents temporal window overlap leakage between train, validation, and test partitions.
+    """
+    train_end, val_start, val_end, test_start, test_end = split_bounds(
+        len(full_dataset), train_split, val_split, purge_steps)
 
     train_dataset = torch.utils.data.Subset(full_dataset, list(range(0, train_end)))
     val_dataset = torch.utils.data.Subset(full_dataset, list(range(val_start, val_end)))
@@ -257,11 +266,26 @@ class NodeMasks(NamedTuple):
     val_ids: List[str]
 
 
+def station_window_stats(config: dict, dataset) -> Tuple[dict, dict]:
+    """v7: per-location (train-slice mean level, validation-window coverage). Coverage
+    is the observed fraction of the target steps of the validation split; the level
+    uses the training slice only, so neither touches test data."""
+    seq_len = config["data"]["seq_len"]
+    _, val_start, val_end, _, _ = split_bounds(len(dataset), config["train_split"], config["val_split"],
+                                               seq_len + 1)
+    observed = dataset.observed[val_start + seq_len:val_end + seq_len]
+    coverage = observed.float().mean(0).tolist() if len(observed) else [0.0] * len(dataset.locations)
+    level = dataset.node_train_mean.tolist()
+    locations = list(dataset.locations)
+    return dict(zip(locations, level)), dict(zip(locations, coverage))
+
+
 def build_node_masks(config: dict, location_ids: List[str], all_location_ids: List[str],
-                     device: torch.device) -> NodeMasks:
+                     device: torch.device, dataset=None) -> NodeMasks:
     """Inductive holdout (drawn over the FULL station list, so a run with fewer training
     stations is still scored on the same held-out nodes) plus, when
-    data.val_station_count > 0, validation stations drawn from the training pool."""
+    data.val_station_count > 0, validation stations drawn from the training pool
+    (v7 "stratified": one per volume stratum among covered stations; needs `dataset`)."""
     data_cfg = config["data"]
     if config["eval_mode"] != "inductive":
         return NodeMasks(None, None, None, [], [])
@@ -271,8 +295,15 @@ def build_node_masks(config: dict, location_ids: List[str], all_location_ids: Li
     assert int(test_holdout.sum()) == len(held_ids), "CRITICAL: held-out stations missing from the dataset"
     val_ids, val_stations, unseen = [], None, test_holdout
     if data_cfg["val_station_count"] > 0:
-        val_ids = validation_station_ids(location_ids, held_ids, data_cfg["val_station_count"],
-                                         data_cfg["val_station_seed"])
+        if data_cfg["val_station_strategy"] == "stratified":
+            assert dataset is not None, "CRITICAL: stratified validation stations need the dataset"
+            level, coverage = station_window_stats(config, dataset)
+            val_ids = stratified_validation_station_ids(
+                location_ids, held_ids, data_cfg["val_station_count"], data_cfg["val_station_seed"],
+                level, coverage, data_cfg["val_station_min_coverage"])
+        else:
+            val_ids = validation_station_ids(location_ids, held_ids, data_cfg["val_station_count"],
+                                             data_cfg["val_station_seed"])
         val_stations = mask_from_manifest({"holdout_location_ids": val_ids}, location_ids, device=device)
         assert not bool((val_stations & test_holdout).any()), "CRITICAL: validation and test stations overlap"
         unseen = test_holdout | val_stations
@@ -460,7 +491,7 @@ def run_training(
 
     # v5: the inductive split has its own seed (v4 coupled it to random_seed, so seed
     # replicates silently changed the evaluation nodes). v6: optional validation stations.
-    node_masks = build_node_masks(config, location_ids, full_dataset.all_locations, device)
+    node_masks = build_node_masks(config, location_ids, full_dataset.all_locations, device, full_dataset)
     val_station_mask = node_masks.val_stations
     unseen_mask = node_masks.unseen  # test holdout | validation stations
     if eval_mode == "inductive":

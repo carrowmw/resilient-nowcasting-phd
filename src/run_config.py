@@ -52,6 +52,9 @@ LEGACY_V4_EQUIVALENTS: Dict[str, Dict] = {
         "val_station_count": 0,                  # v6: training stations carved out as inductive validation nodes
         "val_station_seed": 0,                   # draw of the validation stations (independent of training seed)
         "weather_extreme_features": False,       # v6: wet / dry / dull-day / bright indicator covariates
+        "val_station_strategy": "random",        # v7: "stratified" = one station per training-level stratum
+        "val_station_min_coverage": 0.25,        # v7 stratified: min observed fraction in the validation window
+        "weather_extreme_step": "target",        # v7: "origin" = forecast-column indicators from the last input step
     },
     "model": {
         "sensor_embedding_dim": 0,
@@ -131,6 +134,8 @@ _ENUMS = {
     ("loss", "mtl_balancing"): ("none", "uncertainty", "pcgrad"),
     ("selection", "metric"): ("val_loss_total", "obs_loss", "obs_loss_plus_so"),
     ("training", "lr_schedule"): ("none", "cosine"),
+    ("data", "val_station_strategy"): ("random", "stratified"),
+    ("data", "weather_extreme_step"): ("target", "origin"),
 }
 
 V5_SCHEMA = {section: tuple(keys) for section, keys in LEGACY_V4_EQUIVALENTS.items()}
@@ -145,6 +150,8 @@ V5_LATE_KEYS = (
     ("model", "residual_to_profile"),
     ("training", "lr_schedule"), ("training", "warmup_epochs"), ("training", "lr_min_frac"),
     ("training", "min_epochs"),
+    # v7 stage (docs/experiments/riot_v6/riot_v6_seed_report.md §9.2)
+    ("data", "val_station_strategy"), ("data", "val_station_min_coverage"), ("data", "weather_extreme_step"),
 )
 
 
@@ -272,6 +279,12 @@ def validate_config(cfg: dict) -> None:
         assert cfg["eval_mode"] == "inductive", "CRITICAL: data.val_station_count requires eval_mode=inductive"
         assert isinstance(data["val_station_count"], int), "CRITICAL: data.val_station_count must be an int"
         assert cfg["model_type"] != "naive", "CRITICAL: naive baselines have no checkpoint to select"
+    if data["val_station_strategy"] != "random":
+        assert data["val_station_count"] > 0, "CRITICAL: data.val_station_strategy needs data.val_station_count > 0"
+    assert 0.0 <= data["val_station_min_coverage"] <= 1.0, "CRITICAL: data.val_station_min_coverage must lie in [0, 1]"
+    if data["weather_extreme_step"] != "target":
+        assert data["weather_extreme_features"], \
+            "CRITICAL: data.weather_extreme_step only applies with weather_extreme_features=true"
     if data["weather_extreme_features"]:
         assert data["complete_weather"], \
             "CRITICAL: weather_extreme_features needs complete_weather=true (zero-filled weather leaks missingness)"

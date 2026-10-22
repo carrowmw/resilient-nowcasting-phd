@@ -146,7 +146,7 @@ def setup(config: dict, use_mock_data: bool, device: torch.device, batch_size: O
     loader = _loader(test_ds, batch_size or config["training"]["batch_size"],
                      config["training"]["num_workers"], train=False)
     location_ids = list(dataset.locations)
-    masks = build_node_masks(config, location_ids, dataset.all_locations, device)
+    masks = build_node_masks(config, location_ids, dataset.all_locations, device, dataset)
     eval_holdout = masks.unseen
     if config["eval_mode"] != "inductive" and config["data"]["spatial_holdout_prob"] > 0.0:
         raise NotImplementedError("post-hoc evaluation is implemented for eval_mode=inductive runs")

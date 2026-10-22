@@ -1,0 +1,13 @@
+run,experiment,train_bs,eval_bs,mean_of_batches,pooled,n_batches
+v4r_full-s42,v4r_full,128,bs32,16.747,19.85,452
+v4r_full-s42,v4r_full,128,bs128,19.025,19.89,113
+v4r_full-s43,v4r_full,128,bs32,17.647,20.742,452
+v4r_full-s43,v4r_full,128,bs128,20.049,20.763,113
+v4r_full-s44,v4r_full,128,bs32,17.076,20.166,452
+v4r_full-s44,v4r_full,128,bs128,19.376,20.183,113
+v4r_bs32-s42,v4r_bs32,32,bs32,17.195,20.466,452
+v4r_bs32-s42,v4r_bs32,32,bs128,19.578,20.475,113
+v4r_bs32-s43,v4r_bs32,32,bs32,16.01,19.029,452
+v4r_bs32-s43,v4r_bs32,32,bs128,18.251,19.044,113
+v4r_bs32-s44,v4r_bs32,32,bs32,16.323,19.418,452
+v4r_bs32-s44,v4r_bs32,32,bs128,18.575,19.441,113
