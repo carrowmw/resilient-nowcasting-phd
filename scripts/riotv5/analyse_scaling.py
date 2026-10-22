@@ -260,7 +260,7 @@ def plot(runs, fits, boot, p_better, n_star, n_star95, area, path: Path,
     fig, (ax, axd) = plt.subplots(2, 1, figsize=(6.4, 6.2), sharex=True,
                                   gridspec_kw={"height_ratios": [3, 2], "hspace": 0.08})
     n_obs = runs.n_train.unique()
-    lo, hi = max(5.0, n_obs.min() / 2), min(400.0, n_obs.max() * 3)
+    lo, hi = max(12.0, n_obs.min() * 0.8), min(400.0, n_obs.max() * 3)
     view = (N_GRID >= lo) & (N_GRID <= hi)
     for arm, (color, label) in ARM_STYLE.items():
         sub = runs[runs.arm == arm]
@@ -347,12 +347,18 @@ def main():
     ap.add_argument("--ylim-bottom", type=float, default=36.0, help="bottom y-limit for the RMSE plot (chops unphysical 0)")
     ap.add_argument("--ylim-top", type=float, default=52.0, help="top y-limit for the RMSE plot")
     ap.add_argument("--max-valid-rmse", type=float, default=80.0, help="threshold to exclude diverged runs from fits")
+    ap.add_argument("--min-best-epoch", type=int, default=0, help="filter out GNN runs with best_epoch below this threshold")
+    ap.add_argument("--exclude-runs", nargs="+", default=[], help="specific run names or patterns to exclude from analysis")
     ap.add_argument("--rmse-inf-min", type=float, default=35.0, help="minimum bound for RMSE_inf asymptote")
     ap.add_argument("--rmse-inf-max", type=float, default=44.0, help="maximum bound for RMSE_inf asymptote")
     args = ap.parse_args()
     logs_dir = args.logs_dir.with_name(args.logs_dir.name + "_mock") if args.mock else args.logs_dir
 
     runs = load_runs(logs_dir)
+    if args.exclude_runs:
+        runs = runs[~runs.run.isin(args.exclude_runs)].reset_index(drop=True)
+    if args.min_best_epoch > 0:
+        runs = runs[(runs.arm != "gnn") | (runs.best_epoch >= args.min_best_epoch)].reset_index(drop=True)
     holdout_check = check_reference_holdout(runs)
     runs, area = add_geography(runs)
 
