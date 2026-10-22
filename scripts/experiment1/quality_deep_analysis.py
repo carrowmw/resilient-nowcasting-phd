@@ -79,8 +79,8 @@ def analysis_1_diurnal(sub_results: pd.DataFrame, out_dir: Path):
     
     ax.set_xlabel("Diurnal Capture Ratio (24h power fraction)")
     ax.set_ylabel("CV-RMSE (%)")
-    ax.set_title("LSTM-MV h8: Predictability vs Diurnal Strength")
-    fig.savefig(out_dir / "a1_diurnal_vs_error.png")
+    ax.set_title("Predictability vs Diurnal Strength (LSTM-MV, 2-Hour Horizon)")
+    fig.savefig(out_dir / "a1_diurnal_vs_error.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
     
     # Correlations

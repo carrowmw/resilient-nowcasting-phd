@@ -1,0 +1,8 @@
+n = 110
+breakpoint = 2.95 h, 95% CI [1.90, 3.42]
+slope below = -22.26 pp/h, slope above = -0.48 pp/h, dAIC = 7.17
+excluding fragmented outliers (NclQueenVictoriaRdBedsonBuilding__from_south_to_north, NclUrbanScienceBuildingSquareMid__west_to_east, NclQueenVictoriaRdPercyBuilding__from_south_to_north): n = 107
+  breakpoint = 2.94 h, 95% CI [1.94, 4.91]
+  slope below = -14.12, slope above = -0.53, dAIC = 4.50
+streams > 6 h: 8
+worst 5: NclUrbanScienceBuildingSquareMid__west_to_east 224.62% (2.26 h); NclHeberSt__east_to_west 187.47% (4.91 h); NclQueenVictoriaRdBedsonBuilding__from_south_to_north 163.30% (1.67 h); NclQueenVictoriaRdPercyBuilding__from_south_to_north 157.10% (1.79 h); NclQueenVictoriaRdBedsonBuilding__from_north_to_south 107.36% (1.78 h)
