@@ -14,6 +14,7 @@ advantage of the resilient architecture.
 import os
 import json
 import shutil
+import sys
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -21,6 +22,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.colors import ListedColormap
 import matplotlib.dates as mdates
+
+sys.path.insert(0, "src")
+from quality.quality_metrics import find_consecutive_sequences, assign_split_windows
 
 # ---------------------------------------------------------
 # 1. Colors & Style (GOV.UK palette)
@@ -122,32 +126,62 @@ def main():
         C_EXCLUDED,      # 7
     ])
 
-    # Build Exp 1: 110 directional streams, each with individual 70/15/15% splits over lifespan
-    grid_exp1 = np.zeros((110, n_weeks), dtype=int)
+    # ---------------------------------------------------------
+    # 3. Build presence matrices
+    # ---------------------------------------------------------
+    print("Building Experiment 1: Un-imputed alternating-day micro-splits (N=110)...")
+    all_days = pd.date_range(start_mon, end_mon, freq="1D")
+    n_days = len(all_days)
+    x_num_d = mdates.date2num([d.to_pydatetime() for d in all_days])
+    x_start_d = x_num_d[0]
+    x_end_d = x_num_d[-1]
+
+    grid_exp1_uninterp = np.zeros((110, n_days), dtype=int)
+    for r_idx, s in enumerate(sorted_110_idx):
+        s_df = df[df["sensor"] == s].set_index("dt")["value"].sort_index()
+        if s_df.empty:
+            continue
+        s_series = s_df.reindex(pd.date_range(s_df.index.min(), s_df.index.max(), freq="15min"))
+        spans = find_consecutive_sequences(s_series, min_length=20)
+        split_idx = assign_split_windows(spans, window=12, horizon=8)
+        day_counts = {"train": {}, "val": {}, "test": {}}
+        for sp_name in ["train", "val", "test"]:
+            starts = split_idx[sp_name][0]
+            if len(starts) > 0:
+                times = s_series.index[starts]
+                days = times.normalize()
+                day_counts[sp_name] = days.value_counts().to_dict()
+        for d_idx, day in enumerate(all_days):
+            c_tr = day_counts["train"].get(day, 0)
+            c_va = day_counts["val"].get(day, 0)
+            c_te = day_counts["test"].get(day, 0)
+            tot = c_tr + c_va + c_te
+            if tot == 0:
+                grid_exp1_uninterp[r_idx, d_idx] = 0
+            else:
+                best = max([("train", c_tr), ("val", c_va), ("test", c_te)], key=lambda x: x[1])[0]
+                grid_exp1_uninterp[r_idx, d_idx] = 1 if best == "train" else (3 if best == "val" else 5)
+
+    # Also build interpolated macro-split variant for comparison if needed
+    grid_exp1_interp = np.zeros((110, n_weeks), dtype=int)
     for r_idx, s in enumerate(sorted_110_idx):
         f_obs = pd.Timestamp(first_last.loc[s, "first_obs"])
         l_obs = pd.Timestamp(first_last.loc[s, "last_obs"])
         dur = l_obs - f_obs
         t_val = f_obs + 0.70 * dur
         t_test = f_obs + 0.85 * dur
-
         for w_idx, monday in enumerate(all_mondays):
             if (monday + pd.Timedelta(days=7) < f_obs) or (monday > l_obs):
-                grid_exp1[r_idx, w_idx] = 0  # Offline outside lifespan
+                grid_exp1_interp[r_idx, w_idx] = 0
                 continue
-
             if monday < t_val:
                 solid_c, light_c = 1, 2
             elif monday < t_test:
                 solid_c, light_c = 3, 4
             else:
                 solid_c, light_c = 5, 6
-
             is_active = (mat_110_sorted.iloc[r_idx, w_idx] == 1)
-            if is_active:
-                grid_exp1[r_idx, w_idx] = solid_c
-            else:
-                grid_exp1[r_idx, w_idx] = light_c
+            grid_exp1_interp[r_idx, w_idx] = solid_c if is_active else light_c
 
     # Build Exp 2: 81 total locations (54 active under global calendar split, 27 excluded)
     grid_exp2 = np.zeros((81, n_weeks), dtype=int)
@@ -192,7 +226,9 @@ def main():
     train_x = mdates.date2num(TRAIN_END.to_pydatetime())
     val_x = mdates.date2num(VAL_END.to_pydatetime())
 
-    def draw_panel(ax, grid, title, subtitle, show_global_splits, y_max, y_ticks, y_label):
+    def draw_panel(ax, grid, title, subtitle, show_global_splits, y_max, y_ticks, y_label, p_x_start=None, p_x_end=None):
+        cur_x_start = p_x_start if p_x_start is not None else x_start
+        cur_x_end = p_x_end if p_x_end is not None else x_end
         ax.imshow(
             grid,
             cmap=cmap,
@@ -200,7 +236,7 @@ def main():
             vmax=7,
             aspect="auto",
             interpolation="nearest",
-            extent=[x_start, x_end, y_max, 0]  # row 0 at top, row y_max at bottom
+            extent=[cur_x_start, cur_x_end, y_max, 0]  # row 0 at top, row y_max at bottom
         )
 
         if show_global_splits:
@@ -218,7 +254,7 @@ def main():
         ax.xaxis.set_major_locator(mdates.YearLocator())
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
         ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
-        ax.set_xlabel("Time (Weeks, 2023 – 2026)", fontsize=9.5, color=C_TEXT, labelpad=8)
+        ax.set_xlabel("Time (2023 – 2026)", fontsize=9.5, color=C_TEXT, labelpad=8)
         ax.set_xlim(x_start, x_end)
         ax.set_ylim(y_max, 0)
 
@@ -235,7 +271,7 @@ def main():
         ax.axhline(54, color=C_TEXT, linestyle="-", linewidth=1.2, alpha=0.85)
         ax.text(
             x_start + (x_end - x_start) * 0.5, 67.5,
-            "27 Locations Excluded from Graph\n(Failed $\\geq 30\\%$ completeness threshold)",
+            "110 streams vs 54 station nodes;\n27 of 81 candidate stations excluded at < 30% completeness",
             ha="center", va="center",
             fontsize=8.5, fontweight="bold", color="#2c2d30",
             bbox=dict(boxstyle="round,pad=0.40", facecolor="#ffffff", edgecolor=C_BORDER, alpha=0.95)
@@ -280,7 +316,7 @@ def main():
     fig1, axes1 = plt.subplots(1, 3, figsize=(16, 6.8))
     plt.subplots_adjust(left=0.06, right=0.98, bottom=0.17, top=0.88, wspace=0.16)
 
-    draw_panel(axes1[0], grid_exp1, "Experiment 1: Single-Node Baselines", "N = 110 Directional Streams (53 Locations, Per-Stream Splits)", False, 110, [1, 25, 55, 80, 110], "Directional Stream Index (N = 110)")
+    draw_panel(axes1[0], grid_exp1_uninterp, "Experiment 1: Single-Node Baselines", "N = 110 Directional Streams (Un-imputed Alternating-Day Splits)", False, 110, [1, 25, 55, 80, 110], "Directional Stream Index (N = 110)", p_x_start=x_start_d, p_x_end=x_end_d)
     draw_panel(axes1[1], grid_exp2, "Experiment 2: Multi-Node Spatio-Temporal Graph", "N = 54 Connected Graph Nodes (Global Calendar Split)", True, 81, [1, 20, 40, 54, 81], "Physical Station Index (N = 81)")
     draw_panel(axes1[2], grid_exp3, "Experiment 3: Resilient Architecture (RIoT)", "N = 81 Resilient Graph Nodes (Global Calendar Split)", True, 81, [1, 20, 40, 54, 81], "")
 
@@ -288,9 +324,9 @@ def main():
     add_reclaimed_annotation(axes1[2])
 
     fig1.legend(
-        handles=legend_patches_8,
+        handles=legend_patches_5,
         loc="lower center",
-        ncol=4,
+        ncol=5,
         columnspacing=2.0,
         frameon=True,
         facecolor="#ffffff",
@@ -315,15 +351,15 @@ def main():
     fig2, axes2 = plt.subplots(1, 2, figsize=(12.0, 6.8))
     plt.subplots_adjust(left=0.08, right=0.98, bottom=0.17, top=0.88, wspace=0.18)
 
-    draw_panel(axes2[0], grid_exp1, "Experiment 1: Single-Node Baselines", "N = 110 Directional Streams (53 Locations, Per-Stream Splits)", False, 110, [1, 25, 55, 80, 110], "Directional Stream Index (N = 110)")
+    draw_panel(axes2[0], grid_exp1_uninterp, "Experiment 1: Single-Node Baselines", "N = 110 Directional Streams (Un-imputed Alternating-Day Splits)", False, 110, [1, 25, 55, 80, 110], "Directional Stream Index (N = 110)", p_x_start=x_start_d, p_x_end=x_end_d)
     draw_panel(axes2[1], grid_exp2, "Experiment 2: Multi-Node Spatio-Temporal Graph", "N = 54 Connected Graph Nodes (Global Calendar Split)", True, 81, [1, 20, 40, 54, 81], "Physical Station Index (N = 81)")
 
     add_excluded_annotation(axes2[1])
 
     fig2.legend(
-        handles=legend_patches_8,
+        handles=legend_patches_5,
         loc="lower center",
-        ncol=4,
+        ncol=5,
         columnspacing=2.0,
         frameon=True,
         facecolor="#ffffff",
@@ -338,6 +374,7 @@ def main():
     fig2.savefig(f2_pdf)
     plt.close(fig2)
     print(f"Saved: {f2_png}")
+
 
     # =========================================================================
     # FIGURE 3: 2-Panel Comparison for Chapter 7 / Experiment 3 (Exp 2 vs Exp 3)

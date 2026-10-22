@@ -10,6 +10,7 @@ services:
       - .env
     volumes:
       - .:/workspace
+      - ~/Code/latex-documents/thesis:/workspace/docs/thesis/full:ro # Read only access for the thesis
       - ~/.config/gcloud:/root/.config/gcloud  # Required for ADC authentication
       - ~/.claude:/root/.claude
     stdin_open: true

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-scripts/plot_experiment1_split_comparison.py
+scripts/eda/plot_experiment1_split_comparison.py
 
 Generates a publication-quality comparative figure specifically for Experiment 1
 illustrating the profound impact of interpolation on sequence splitting:
   - Panel A: Experiment 1 with Single-Node Imputation (Continuous Macro-Splits: 70/15/15%)
-  - Panel B: Experiment 1 without Imputation (Fragmented Micro-Splits: ~5,088 interleaved runs/sensor)
+  - Panel B: Experiment 1 without Imputation (Fragmented Micro-Splits: Interleaved runs/sensor)
   - Panel C: 90-Day Zoomed Callout (Daily assignment to Train, Val, Test based on running deficit)
 
+Uses a colourblind-safe palette (Okabe-Ito / ColorBrewer: Blue / Amber / Purple).
+Evaluated with Chapter 5 context window W = 24 and horizon h = 8 (max daily windows <= 65).
 Saves both 300 DPI PNG and vector PDF to artifacts and thesis figure directories.
 """
 import os
@@ -26,16 +28,16 @@ sys.path.insert(0, "src")
 
 from quality.quality_metrics import find_consecutive_sequences, assign_split_windows
 
-# ---------------------------------------------------------
-# 1. Palette & Styles (GOV.UK design tokens)
-# ---------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 1. Colourblind-Safe Palette (Okabe-Ito & ColorBrewer Design Tokens)
+# -----------------------------------------------------------------------------
 C_INACTIVE = "#ffffff"       # White for unobserved / offline / gaps
-C_TRAIN_SOLID = "#d4351c"    # GOV.UK Red (Observed)
-C_TRAIN_LIGHT = "#f8b8ae"    # Light Red (Interpolated Gaps)
-C_VAL_SOLID = "#1d70b8"      # GOV.UK Blue (Observed)
-C_VAL_LIGHT = "#b9d5ee"      # Light Blue (Interpolated Gaps)
-C_TEST_SOLID = "#00703c"     # GOV.UK Green (Observed)
-C_TEST_LIGHT = "#b7e3cc"     # Light Green (Interpolated Gaps)
+C_TRAIN_SOLID = "#0072B2"    # Okabe-Ito Deep Blue (Observed Train)
+C_TRAIN_LIGHT = "#a6cee3"    # Light Blue (Interpolated Gaps Train)
+C_VAL_SOLID = "#E69F00"      # Okabe-Ito Amber/Orange (Observed Val)
+C_VAL_LIGHT = "#fed976"      # Light Amber (Interpolated Gaps Val)
+C_TEST_SOLID = "#7570b3"     # ColorBrewer Purple (Observed Test)
+C_TEST_LIGHT = "#d8daeb"     # Light Purple (Interpolated Gaps Test)
 C_BORDER = "#b1b4b6"         # Border Grey
 C_TEXT = "#0b0c0c"           # Text Black
 C_SEC_TEXT = "#505a5f"       # Secondary Text Grey
@@ -96,7 +98,7 @@ def main():
             is_active = (mat_110_sorted.iloc[r_idx, w_idx] == 1)
             grid_interp[r_idx, w_idx] = solid_c if is_active else light_c
 
-    print("Building Panel B (Uninterpolated Micro-Splits at Daily Resolution)...")
+    print("Building Panel B (Uninterpolated Micro-Splits at Daily Resolution, W=24, h=8)...")
     all_days = pd.date_range(start_mon, end_mon, freq="1D")
     n_days = len(all_days)
     grid_uninterp = np.zeros((110, n_days), dtype=int)
@@ -104,13 +106,18 @@ def main():
     zoom_sensor = sorted_110_idx[0]
     zoom_days_data = []
 
+    # Using Chapter 5 actual window W=24, horizon h=8 (minimum required continuous steps = 32)
+    WINDOW_SIZE = 24
+    HORIZON = 8
+    MIN_LEN = WINDOW_SIZE + HORIZON  # 32 steps (8 hours)
+
     for r_idx, s in enumerate(sorted_110_idx):
         s_df = df[df["sensor"] == s].set_index("dt")["value"].sort_index()
         if s_df.empty:
             continue
         s_series = s_df.reindex(pd.date_range(s_df.index.min(), s_df.index.max(), freq="15min"))
-        spans = find_consecutive_sequences(s_series, min_length=20)
-        split_idx = assign_split_windows(spans, window=12, horizon=8)
+        spans = find_consecutive_sequences(s_series, min_length=MIN_LEN)
+        split_idx = assign_split_windows(spans, window=WINDOW_SIZE, horizon=HORIZON)
 
         day_counts = {"train": {}, "val": {}, "test": {}}
         for sp_name in ["train", "val", "test"]:
@@ -145,12 +152,12 @@ def main():
     # Colormap: 0=Inactive, 1=Train Solid, 2=Train Light, 3=Val Solid, 4=Val Light, 5=Test Solid, 6=Test Light
     cmap = ListedColormap([
         C_INACTIVE,     # 0
-        C_TRAIN_SOLID,  # 1
-        C_TRAIN_LIGHT,  # 2
-        C_VAL_SOLID,    # 3
-        C_VAL_LIGHT,    # 4
-        C_TEST_SOLID,   # 5
-        C_TEST_LIGHT,   # 6
+        C_TRAIN_SOLID,  # 1 (Blue)
+        C_TRAIN_LIGHT,  # 2 (Light Blue)
+        C_VAL_SOLID,    # 3 (Amber)
+        C_VAL_LIGHT,    # 4 (Light Amber)
+        C_TEST_SOLID,   # 5 (Purple)
+        C_TEST_LIGHT,   # 6 (Light Purple)
     ])
 
     print("Rendering figure...")
@@ -184,7 +191,7 @@ def main():
         extent=[x_num_d[0], x_num_d[-1], 110, 0]
     )
     ax1.set_title("Panel B: Single-Node Baselines without Imputation (Raw Uninterpolated Observations)", fontsize=11, fontweight="bold", pad=18, color=C_TEXT)
-    ax1.text(0.5, 1.02, "Fragmented Micro-Splits: ~5,088 Interleaved Spans per Sensor with Boundary Purging", transform=ax1.transAxes, ha="center", va="bottom", fontsize=9.5, fontweight="bold", color=C_SEC_TEXT)
+    ax1.text(0.5, 1.02, "Fragmented Micro-Splits: Interleaved Sequence Runs per Sensor with Boundary Purging", transform=ax1.transAxes, ha="center", va="bottom", fontsize=9.5, fontweight="bold", color=C_SEC_TEXT)
 
     for ax in [ax0, ax1]:
         ax.xaxis.set_major_locator(mdates.YearLocator())
@@ -212,19 +219,20 @@ def main():
     bottom_te = np.array(z_tr) + np.array(z_va)
     ax2.bar(z_days, z_te, bottom=bottom_te, width=0.85, color=C_TEST_SOLID, label="Test Windows")
 
-    ax2.set_title("Panel C: Micro-Level Split Assignment (90-Day Zoomed Detail for Sensor AdelaideTerBeechSt, Feb – May 2024)", fontsize=10.5, fontweight="bold", pad=14, color=C_TEXT)
-    ax2.text(0.5, 1.02, "Shows individual continuous daytime observation runs assigned deterministically to Train, Val, or Test based on running deficit", transform=ax2.transAxes, ha="center", va="bottom", fontsize=9, fontweight="bold", color=C_SEC_TEXT)
+    ax2.set_title("Panel C: Micro-Level Split Assignment (90-Day Detail for Sensor AdelaideTerBeechSt, Feb – May 2024)", fontsize=10.5, fontweight="bold", pad=14, color=C_TEXT)
+    ax2.text(0.5, 1.02, "Shows individual continuous observation runs assigned deterministically to Train, Val, or Test based on running deficit (W=24, h=8)", transform=ax2.transAxes, ha="center", va="bottom", fontsize=9, fontweight="bold", color=C_SEC_TEXT)
     ax2.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=mdates.MO, interval=2))
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %d, %Y"))
     ax2.xaxis.set_minor_locator(mdates.DayLocator())
     ax2.set_xlim(zoom_start - pd.Timedelta(days=1), zoom_end + pd.Timedelta(days=1))
-    ax2.set_ylabel("Number of Sliding Windows (h=8)", fontsize=9.5, color=C_TEXT, labelpad=6)
+    ax2.set_ylim(0, 68)  # Max contiguous 24h day has 96 - (24+8) + 1 = 65 windows
+    ax2.set_ylabel("Number of Sliding Windows (W=24, h=8)", fontsize=9.5, color=C_TEXT, labelpad=6)
     ax2.set_xlabel("Calendar Date (Daily Resolution)", fontsize=9.5, color=C_TEXT, labelpad=6)
     for s in ax2.spines.values():
         s.set_edgecolor(C_BORDER)
     ax2.grid(True, axis="y", linestyle=":", alpha=0.5)
 
-    # Clean grouped legend
+    # Clean colourblind-safe legend
     legend_patches = [
         mpatches.Patch(facecolor=C_TRAIN_SOLID, edgecolor="none", label="Train (Observed)"),
         mpatches.Patch(facecolor=C_TRAIN_LIGHT, edgecolor="none", label="Train (Interpolated Gaps)"),
@@ -248,6 +256,14 @@ def main():
     plt.savefig(out_png_ws, dpi=300)
     plt.savefig(out_pdf_ws)
     print("Saved successfully.")
+
+    thesis_fig_dir = "/Users/administrator/Code/latex-documents/thesis/figures/experiment1"
+    if os.path.exists(thesis_fig_dir):
+        dest_png = os.path.join(thesis_fig_dir, "experiment1_split_comparison.png")
+        shutil.copyfile(out_png_ws, dest_png)
+        dest_pdf = os.path.join(thesis_fig_dir, "experiment1_split_comparison.pdf")
+        shutil.copyfile(out_pdf_ws, dest_pdf)
+        print(f"Copied to thesis directory: {dest_pdf}")
 
 if __name__ == "__main__":
     main()

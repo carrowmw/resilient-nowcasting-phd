@@ -2,6 +2,7 @@
 !/data/external/
 wandb/
 models/
+!/src/spatial/models/
 digest.txt
 node_modules/
 build/
@@ -51,3 +52,6 @@ temp/
 frontend/frontend/
 frontend/frontend_runtime_errors.log
 symlinks
+
+# Context & legacy research files (do not commit)
+docs/context/
