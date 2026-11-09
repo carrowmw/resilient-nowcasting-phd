@@ -313,68 +313,70 @@ def fig_static_seeds(r7, naive_ind):
              ("v7_block", "v7_static_block", "100 epochs, block masks"),
              ("v7_base_e150", "v7_profile_static_e150", "150 epochs, mixed masks")]
     piv = r7.pivot(index="seed", columns="experiment", values="test_obs_ind_rmse")
-    fig, axes = plt.subplots(1, 3, figsize=(10, 3.6), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(10.6, 3.9), sharey=True)
     for ax, (a, b, title) in zip(axes, pairs):
         for s in piv.index:
             up = piv.loc[s, b] > piv.loc[s, a]
-            ax.plot([0, 1], [piv.loc[s, a], piv.loc[s, b]], color=ORANGE if up else GRAY_LIGHT, lw=1.4, zorder=1)
+            ax.plot([0, 1], [piv.loc[s, a], piv.loc[s, b]], color=ORANGE if up else GRAY_LIGHT, lw=1.6, zorder=1)
         ly = piv[b].sort_values()
         pos = list(ly.values)
-        for i in range(1, len(pos)):   # keep seed labels at least 0.35 apart
-            pos[i] = max(pos[i], pos[i - 1] + 0.35)
+        for i in range(1, len(pos)):   # keep seed labels at least 0.45 apart
+            pos[i] = max(pos[i], pos[i - 1] + 0.45)
         for s, yv in zip(ly.index, pos):
-            ax.text(1.06, yv, str(s), fontsize=7, color=INK2, va="center")
-        ax.scatter(np.zeros(6), piv[a], color=GRAY, s=22, zorder=3)
-        ax.scatter(np.ones(6), piv[b], color=BLUE, s=22, zorder=3)
-        ax.plot([0, 1], [piv[a].mean(), piv[b].mean()], color=BLUE, lw=2.4, zorder=2)
-        ax.axhline(naive_ind, color=GRAY, ls="--", lw=0.8)
+            ax.text(1.06, yv, str(s), fontsize=9.5, color=INK2, va="center")
+        ax.scatter(np.zeros(6), piv[a], color=GRAY, s=30, zorder=3)
+        ax.scatter(np.ones(6), piv[b], color=BLUE, s=30, zorder=3)
+        ax.plot([0, 1], [piv[a].mean(), piv[b].mean()], color=BLUE, lw=2.6, zorder=2)
+        ax.axhline(naive_ind, color=GRAY, ls="--", lw=1.0)
         d = 100 * (piv[b].mean() / piv[a].mean() - 1)
-        ax.set_title(f"{title}\nmean {piv[a].mean():.2f} → {piv[b].mean():.2f} ({d:+.1f}%)")
+        ax.set_title(f"{title}\nmean {piv[a].mean():.2f} → {piv[b].mean():.2f} ({d:+.1f}%)", fontsize=11, fontweight="bold")
         ax.set_xticks([0, 1])
-        ax.set_xticklabels(["zero profile", "static-ridge"])
-        ax.set_xlim(-0.3, 1.35)
-    axes[0].text(1.3, naive_ind + 0.15, "naive profile", ha="right", va="bottom", fontsize=7.5, color=INK2)
-    axes[0].set_ylabel("test held-out RMSE (24 stations)")
-    fig.text(0.01, -0.03, "Thin lines: one seed (orange = static-ridge worse). Thick line: mean over seeds 42–47.",
-             fontsize=7.5, color=INK2)
+        ax.set_xticklabels(["zero profile", "static-ridge"], fontsize=10.5)
+        ax.set_xlim(-0.3, 1.38)
+    axes[0].text(1.32, naive_ind + 0.2, "naive profile", ha="right", va="bottom", fontsize=9.5, color=INK2)
+    axes[0].set_ylabel("test held-out RMSE (24 stations)", fontsize=11)
+    fig.text(0.01, -0.04, "Thin lines: one seed (orange = static-ridge worse). Thick line: mean over seeds 42–47.",
+             fontsize=9.5, color=INK2)
     save(fig, "fig02_static_ridge_seeds.png")
 
 
 def fig_factorial(fac):
-    fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.0))
+    fig, axes = plt.subplots(1, 3, figsize=(10.4, 3.4))
     for ax, k, t in zip(axes, ("ind", "all", "trans"), ("held-out RMSE", "all-node RMSE", "transductive RMSE")):
         for p, c, lab in (("zero", GRAY, "zero profile"), ("static", BLUE, "static-ridge")):
             y = [fac.loc[k, f"{p}_mixed"], fac.loc[k, f"{p}_block"]]
-            ax.plot([0, 1], y, color=c, marker="o", ms=6, label=lab)
-            ax.text(1.06, y[1], lab, color=INK2, fontsize=7.5, va="center")
+            ax.plot([0, 1], y, color=c, marker="o", ms=6.5, lw=2.2, label=lab)
+            ax.text(1.06, y[1], lab, color=INK2, fontsize=9.5, va="center")
         ax.set_xticks([0, 1])
-        ax.set_xticklabels(["mixed masks", "block masks"])
-        ax.set_xlim(-0.2, 1.6)
-        ax.set_title(f"{t}\ninteraction {fac.loc[k, 'interaction']:+.1f}% (z {fac.loc[k, 'interaction_z']:+.1f})")
+        ax.set_xticklabels(["mixed masks", "block masks"], fontsize=10.5)
+        ax.set_xlim(-0.2, 1.72)
+        ax.set_title(f"{t}\ninteraction {fac.loc[k, 'interaction']:+.1f}% (z {fac.loc[k, 'interaction_z']:+.1f})", fontsize=11, fontweight="bold")
+    fig.tight_layout()
     save(fig, "fig04_factorial.png")
 
 
 def fig_epochs(ep7, r7):
     """Validation all-node RMSE per epoch: 100- vs 150-epoch budgets."""
-    fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.4), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(10.2, 3.8), sharey=True)
     for ax, (a, b, title) in zip(axes, (("v7_base", "v7_base_e150", "V6 base (zero profile)"),
                                         ("v7_profile_static", "v7_profile_static_e150", "static-ridge profile"))):
         for e, c, lab in ((a, GRAY, "100-epoch budget"), (b, BLUE, "150-epoch budget")):
             sub = ep7[ep7.run.isin(r7[r7.experiment == e].run)]
             for _, g in sub.groupby("run"):
-                ax.plot(g.epoch, g.obs_rmse, color=c, lw=0.5, alpha=0.35)
+                ax.plot(g.epoch, g.obs_rmse, color=c, lw=0.6, alpha=0.35)
             med = sub.groupby("epoch").obs_rmse.median()
             n = sub.groupby("epoch").run.nunique()
             med = med[n >= 4]
-            ax.plot(med.index, med.values, color=c, lw=2.2, label=lab)
+            ax.plot(med.index, med.values, color=c, lw=2.4, label=lab)
             sel = r7[r7.experiment == e].best_epoch
-            ax.scatter(sel, np.full(len(sel), 20.2), marker="|", s=60, color=c)
-        ax.axvline(100, color=GRAY, ls=":", lw=1)
-        ax.set_title(title)
-        ax.set_xlabel("epoch  (ticks at bottom: selected epoch per run)")
-    axes[0].set_ylabel("validation all-node RMSE")
+            ax.scatter(sel, np.full(len(sel), 20.2), marker="|", s=70, color=c)
+        ax.axvline(100, color=GRAY, ls=":", lw=1.2)
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.set_xlabel("epoch  (ticks at bottom: selected epoch per run)", fontsize=10.5)
+    axes[0].set_ylabel("validation all-node RMSE", fontsize=11)
     axes[0].set_ylim(20, 30)
-    axes[0].legend(loc="upper right")
+    axes[0].legend(loc="upper right", fontsize=10.5)
+    fig.tight_layout()
     save(fig, "fig05_epochs.png")
 
 
@@ -382,23 +384,23 @@ def fig_gate(gate):
     rules = [(f"{lin}/{rule}", lin, rule) for lin in ("all", "v6_lineage", "p_family")
              for rule in ("random5", "stratified8")]
     lab = {"all": "all v6 GNN runs", "v6_lineage": "V6 lineage", "p_family": "P-family"}
-    fig, ax = plt.subplots(figsize=(6.4, 3.0))
+    fig, ax = plt.subplots(figsize=(7.6, 3.4))
     y = np.arange(len(rules))[::-1]
     for yi, (key, lin, rule) in zip(y, rules):
         g = gate["rules"][key]
         c = BLUE if rule == "stratified8" else GRAY
-        ax.plot([g["rho_p10"], g["rho_p90"]], [yi, yi], color=c, lw=3, alpha=0.35, solid_capstyle="round")
-        ax.scatter(g["rho_median"], yi, color=c, s=28, zorder=3)
+        ax.plot([g["rho_p10"], g["rho_p90"]], [yi, yi], color=c, lw=3.5, alpha=0.35, solid_capstyle="round")
+        ax.scatter(g["rho_median"], yi, color=c, s=36, zorder=3)
         ax.text(g["rho_p90"] + 0.02, yi, f"median {g['rho_median']:.2f}, ρ>0 in {100 * g['frac_positive']:.0f}%",
-                va="center", fontsize=7.5, color=INK2)
+                va="center", fontsize=9.5, color=INK2)
     ax.axvline(0, color=GRAY, lw=0.8)
-    ax.axvline(gate["threshold"], color=ORANGE, ls="--", lw=1)
-    ax.text(gate["threshold"], y[0] + 0.6, "gate: median ≥ 0.3", color=ORANGE, fontsize=7.5, ha="center")
+    ax.axvline(gate["threshold"], color=ORANGE, ls="--", lw=1.2)
+    ax.text(gate["threshold"], y[0] + 0.55, "gate: median ≥ 0.3", color=ORANGE, fontsize=9.5, ha="center", fontweight="bold")
     ax.set_yticks(y)
-    ax.set_yticklabels([f"{lab[lin]} · {rule}" for _, lin, rule in rules])
-    ax.set_xlabel("Spearman ρ across runs, val-subset RMSE vs test RMSE on the rest (bar = p10–p90 of draws)")
-    ax.set_xlim(-0.6, 1.05)
-    ax.set_ylim(-0.6, len(rules) - 0.1)
+    ax.set_yticklabels([f"{lab[lin]} · {rule}" for _, lin, rule in rules], fontsize=10.5)
+    ax.set_xlabel("Spearman ρ across runs, val-subset RMSE vs test RMSE on the rest (bar = p10–p90)", fontsize=10.5)
+    ax.set_xlim(-0.6, 1.15)
+    ax.set_ylim(-0.6, len(rules) - 0.05)
     save(fig, "fig06_rec2_gate.png")
 
 

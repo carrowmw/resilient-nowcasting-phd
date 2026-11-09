@@ -94,7 +94,7 @@ def main():
 
     # Common styling
     plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.size"] = 12
+    plt.rcParams["font.size"] = 13
 
     # -------------------------------------------------------------
     # 1. Figure 5.5: ext_correlation_heatmap
@@ -129,9 +129,9 @@ def main():
         cbar_kws={"label": "Spearman Rank Correlation (ρ)"},
         linewidths=0.5
     )
-    ax.set_title("Spearman Rank Correlation Matrix (LSTM-MV, 2-Hour Horizon)", fontsize=13, fontweight="bold", pad=12)
-    plt.xticks(rotation=45, ha="right", fontsize=10.5)
-    plt.yticks(rotation=0, fontsize=10.5)
+    ax.set_title("Spearman Rank Correlation Matrix (LSTM-MV, 2-Hour Horizon)", fontsize=14, fontweight="bold", pad=12)
+    plt.xticks(rotation=45, ha="right", fontsize=11.5)
+    plt.yticks(rotation=0, fontsize=11.5)
     fig.tight_layout()
 
     fig5_5_png = out_dir / "ext_correlation_heatmap.png"
@@ -175,16 +175,16 @@ def main():
 
     ax.set_theta_offset(np.pi / 2)
     ax.set_theta_direction(-1)
-    ax.set_thetagrids(np.degrees(angles[:-1]), radar_labels, fontsize=11)
+    ax.set_thetagrids(np.degrees(angles[:-1]), radar_labels, fontsize=12.5)
     
     # Clean radial ticks: avoid -1.0 overlap at origin by setting bounds and radial angle
     ax.set_ylim(-1.15, 1.15)
     ax.set_yticks([-0.5, 0.0, 0.5, 1.0])
-    ax.set_yticklabels(["-0.5", "0.0", "0.5", "1.0"], fontsize=9.5, color="#555555")
+    ax.set_yticklabels(["-0.5", "0.0", "0.5", "1.0"], fontsize=11, color="#555555")
     ax.set_rlabel_position(22.5)  # Offset radial labels to clear lines and vertices
 
-    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.12), fontsize=11, frameon=True)
-    ax.set_title("Standardised Cluster Profiles", fontsize=13.5, fontweight="bold", pad=20)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.12), fontsize=12, frameon=True)
+    ax.set_title("Standardised Cluster Profiles", fontsize=14.5, fontweight="bold", pad=20)
     fig.tight_layout()
 
     fig5_7_png = out_dir / "ext_cluster_radar.png"
@@ -216,8 +216,8 @@ def main():
     bp["boxes"][0].set_facecolor("#cfe2f3")
     bp["boxes"][1].set_facecolor("#fce5cd")
 
-    ax.set_ylabel("CV-RMSE (%)", fontsize=12.5, labelpad=8)
-    ax.set_title("Relative Forecast Error by Location Profile (LSTM-MV)", fontsize=13, fontweight="bold", pad=12)
+    ax.set_ylabel("CV-RMSE (%)", fontsize=13.5, labelpad=8)
+    ax.set_title("Relative Forecast Error by Location Profile (LSTM-MV)", fontsize=14, fontweight="bold", pad=12)
     ax.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
     for spine in ax.spines.values():
         spine.set_color("#374151")

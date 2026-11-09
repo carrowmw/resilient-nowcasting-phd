@@ -243,25 +243,26 @@ def main():
             ax.axvline(train_x, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
             ax.axvline(val_x, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
 
-        ax.set_title(title, fontsize=11, fontweight="bold", pad=20, color=C_TEXT)
+        ax.set_title(title, fontsize=12.5, fontweight="bold", pad=22, color=C_TEXT)
         ax.text(
             0.5, 1.02, subtitle,
             transform=ax.transAxes,
             ha="center", va="bottom",
-            fontsize=9.5, fontweight="bold", color=C_SEC_TEXT
+            fontsize=10.5, fontweight="bold", color=C_SEC_TEXT
         )
 
         ax.xaxis.set_major_locator(mdates.YearLocator())
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
         ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
-        ax.set_xlabel("Time (2023 – 2026)", fontsize=9.5, color=C_TEXT, labelpad=8)
+        ax.set_xlabel("Time (2023 – 2026)", fontsize=11.5, color=C_TEXT, labelpad=8)
         ax.set_xlim(x_start, x_end)
         ax.set_ylim(y_max, 0)
 
         ax.set_yticks(y_ticks)
-        ax.set_yticklabels([str(t) for t in y_ticks], fontsize=9)
+        ax.set_yticklabels([str(t) for t in y_ticks], fontsize=10.5)
+        ax.tick_params(axis="x", labelsize=10.5)
         if y_label:
-            ax.set_ylabel(y_label, fontsize=10, color=C_TEXT, labelpad=6)
+            ax.set_ylabel(y_label, fontsize=11.5, color=C_TEXT, labelpad=6)
 
         for spine in ax.spines.values():
             spine.set_edgecolor(C_BORDER)
@@ -273,7 +274,7 @@ def main():
             x_start + (x_end - x_start) * 0.5, 67.5,
             "110 streams vs 54 station nodes;\n27 of 81 candidate stations excluded at < 30% completeness",
             ha="center", va="center",
-            fontsize=8.5, fontweight="bold", color="#2c2d30",
+            fontsize=10.5, fontweight="bold", color="#2c2d30",
             bbox=dict(boxstyle="round,pad=0.40", facecolor="#ffffff", edgecolor=C_BORDER, alpha=0.95)
         )
 
@@ -283,7 +284,7 @@ def main():
             x_start + (x_end - x_start) * 0.5, 67.5,
             "27 Sparse Locations Reclaimed by RIoT\n(100% of 81 physical locations active)",
             ha="center", va="center",
-            fontsize=8.5, fontweight="bold", color=C_TEST_SOLID,
+            fontsize=10.5, fontweight="bold", color=C_TEST_SOLID,
             bbox=dict(boxstyle="round,pad=0.40", facecolor="#ffffff", edgecolor=C_TEST_SOLID, alpha=0.95)
         )
 
@@ -307,7 +308,7 @@ def main():
     ]
 
     plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.size"] = 10
+    plt.rcParams["font.size"] = 12
 
     # =========================================================================
     # FIGURE 1: 3-Panel Comparison for Chapter 4 (Methodology)
@@ -331,7 +332,7 @@ def main():
         frameon=True,
         facecolor="#ffffff",
         edgecolor=C_BORDER,
-        fontsize=8.8,
+        fontsize=11.0,
         bbox_to_anchor=(0.5, 0.01)
     )
 
@@ -364,7 +365,7 @@ def main():
         frameon=True,
         facecolor="#ffffff",
         edgecolor=C_BORDER,
-        fontsize=8.8,
+        fontsize=11.0,
         bbox_to_anchor=(0.5, 0.01)
     )
 
@@ -397,7 +398,7 @@ def main():
         frameon=True,
         facecolor="#ffffff",
         edgecolor=C_BORDER,
-        fontsize=9.0,
+        fontsize=11.0,
         bbox_to_anchor=(0.5, 0.02)
     )
 
@@ -413,7 +414,7 @@ def main():
     # =========================================================================
     thesis_sync_targets = {
         # Methodology gets the 3-panel overview as well as sub-comparisons
-        "latex-documents/thesis/figures/methodology": [
+        "/Users/administrator/Code/latex-documents/thesis/figures/methodology": [
             ("experiment_sensor_availability_comparison.png", f1_png),
             ("experiment_sensor_availability_comparison.pdf", f1_pdf),
             ("sensor_availability_exp1_vs_exp2.png", f2_png),
@@ -422,14 +423,14 @@ def main():
             ("sensor_availability_exp2_vs_exp3.pdf", f3_pdf),
         ],
         # Chapter 6 gets Exp 1 vs Exp 2 side-by-side
-        "latex-documents/thesis/figures/experiment2": [
+        "/Users/administrator/Code/latex-documents/thesis/figures/experiment2": [
             ("sensor_availability_exp1_vs_exp2.png", f2_png),
             ("sensor_availability_exp1_vs_exp2.pdf", f2_pdf),
             ("experiment_sensor_availability_comparison.png", f1_png),
             ("experiment_sensor_availability_comparison.pdf", f1_pdf),
         ],
         # Chapter 7 gets Exp 2 vs Exp 3 side-by-side
-        "latex-documents/thesis/figures/experiment3": [
+        "/Users/administrator/Code/latex-documents/thesis/figures/experiment3": [
             ("sensor_availability_exp2_vs_exp3.png", f3_png),
             ("sensor_availability_exp2_vs_exp3.pdf", f3_pdf),
             ("experiment_sensor_availability_comparison.png", f1_png),

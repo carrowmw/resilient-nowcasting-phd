@@ -66,11 +66,12 @@ GRAY, INK, INK2 = "#9a9893", "#1f1f1f", "#5c5b57"
 ARM_STYLE = {"gnn": (BLUE, "GNN (e3_3d, zero-shot)"), "naive": (ORANGE, "Naive profile donors")}
 
 plt.rcParams.update({
-    "font.size": 9, "axes.titlesize": 10, "axes.labelsize": 9, "axes.edgecolor": GRAY,
+    "font.size": 11, "axes.titlesize": 11.5, "axes.labelsize": 11, "xtick.labelsize": 10.5, "ytick.labelsize": 10.5,
+    "axes.edgecolor": GRAY,
     "axes.labelcolor": INK2, "xtick.color": INK2, "ytick.color": INK2, "axes.grid": True,
     "grid.color": "#ebeae6", "grid.linewidth": 0.6, "axes.axisbelow": True,
     "axes.spines.top": False, "axes.spines.right": False, "legend.frameon": False,
-    "legend.fontsize": 8, "lines.linewidth": 2, "savefig.dpi": 160, "figure.dpi": 160,
+    "legend.fontsize": 10, "lines.linewidth": 2.2, "savefig.dpi": 240, "figure.dpi": 240,
     "text.color": INK,
 })
 
@@ -257,8 +258,8 @@ def fmt_n(x: float, lo: float, hi: float) -> str:
 # --------------------------------------------------------------------------- #
 def plot(runs, fits, boot, p_better, n_star, n_star95, area, path: Path,
          ylim_bottom: float = 36.0, ylim_top: float = 52.0):
-    fig, (ax, axd) = plt.subplots(2, 1, figsize=(6.4, 6.2), sharex=True,
-                                  gridspec_kw={"height_ratios": [3, 2], "hspace": 0.08})
+    fig, (ax, axd) = plt.subplots(2, 1, figsize=(7.6, 6.6), sharex=True,
+                                  gridspec_kw={"height_ratios": [3, 2], "hspace": 0.1})
     n_obs = runs.n_train.unique()
     lo, hi = max(12.0, n_obs.min() * 0.8), min(400.0, n_obs.max() * 3)
     view = (N_GRID >= lo) & (N_GRID <= hi)
@@ -270,62 +271,63 @@ def plot(runs, fits, boot, p_better, n_star, n_star95, area, path: Path,
         if fits.get(arm) is not None:
             p = fits[arm]
             inside = view & (N_GRID >= n_obs.min()) & (N_GRID <= n_obs.max())
-            ax.plot(N_GRID[view], power_law(N_GRID[view], *p), color=color, lw=1.2, ls=(0, (4, 3)))
-            ax.plot(N_GRID[inside], power_law(N_GRID[inside], *p), color=color, lw=2)
-            ax.axhline(p[2], color=color, lw=0.8, ls=":", alpha=0.8)
+            ax.plot(N_GRID[view], power_law(N_GRID[view], *p), color=color, lw=1.4, ls=(0, (4, 3)))
+            ax.plot(N_GRID[inside], power_law(N_GRID[inside], *p), color=color, lw=2.2)
+            ax.axhline(p[2], color=color, lw=0.9, ls=":", alpha=0.8)
             ax.annotate(f"{label}\nα={p[1]:.2f}, RMSE∞={p[2]:.1f}", (N_GRID[view][-1], power_law(N_GRID[view][-1], *p)),
-                        xytext=(-4, 10 if arm == "naive" else -24), textcoords="offset points",
-                        ha="right", fontsize=8, color=INK)
+                        xytext=(-4, 10 if arm == "naive" else -26), textcoords="offset points",
+                        ha="right", fontsize=10, color=INK)
         
         in_bounds = sub[sub.rmse <= ylim_top]
         outliers = sub[sub.rmse > ylim_top]
-        ax.scatter(in_bounds.n_train, in_bounds.rmse, s=42, color=color, edgecolor="white", linewidth=1.5,
+        ax.scatter(in_bounds.n_train, in_bounds.rmse, s=48, color=color, edgecolor="white", linewidth=1.5,
                    zorder=4, label=label, marker="o" if arm == "gnn" else "s")
         for _, r in outliers.iterrows():
-            ax.scatter([r.n_train], [ylim_top - 0.6], s=48, marker="^", color=color, edgecolor="black", lw=1.2, zorder=5)
+            ax.scatter([r.n_train], [ylim_top - 0.6], s=52, marker="^", color=color, edgecolor="black", lw=1.2, zorder=5)
             ax.annotate(f"▲ {r.rmse:.1f} (seed {r.seed} diverged)",
                         (r.n_train, ylim_top - 0.6), xytext=(-8, -3),
-                        textcoords="offset points", ha="right", va="center", fontsize=7.5, color=color, fontweight="bold")
+                        textcoords="offset points", ha="right", va="center", fontsize=9.5, color=color, fontweight="bold")
                         
     for arm, (run, value) in V5_ANCHORS.items():
-        ax.scatter([57], [value], s=60, facecolor="none", edgecolor=ARM_STYLE[arm][0], lw=1.2, zorder=3)
-    ax.scatter([], [], s=60, facecolor="none", edgecolor=GRAY, lw=1.2, label="v5 suite run (N=57 replicate)")
+        ax.scatter([57], [value], s=68, facecolor="none", edgecolor=ARM_STYLE[arm][0], lw=1.3, zorder=3)
+    ax.scatter([], [], s=68, facecolor="none", edgecolor=GRAY, lw=1.3, label="v5 suite run (N=57 replicate)")
     ax.set_ylim(ylim_bottom, ylim_top)
-    ax.set_ylabel("Held-out station RMSE (counts / 15 min)")
-    ax.set_title(f"Zero-shot RMSE at {len(runs.holdout_ids.iloc[0])} frozen held-out stations vs training-station count",
-                 loc="left", pad=34 if area else 6)
-    ax.legend(loc="upper right")
+    ax.set_ylabel("Held-out station RMSE (counts / 15 min)", fontsize=11)
+    n_held = len(runs.holdout_ids.iloc[0]) if "holdout_ids" in runs else 24
+    ax.set_title(f"Zero-shot RMSE at {n_held} frozen held-out stations vs training-station count",
+                 loc="left", pad=38 if area else 6, fontsize=11.5, fontweight="bold")
+    ax.legend(loc="upper right", fontsize=10)
 
     if len(p_better):
-        axd.plot(N_GRID[view], p_better[view], color=BLUE, lw=2)
-        axd.axhline(0.95, color=GRAY, lw=0.8, ls="--")
-        axd.text(lo * 1.03, 0.955, "0.95", fontsize=7, color=INK2, va="bottom")
-        axd.axhline(0.5, color=GRAY, lw=0.6, ls=":")
+        axd.plot(N_GRID[view], p_better[view], color=BLUE, lw=2.2)
+        axd.axhline(0.95, color=GRAY, lw=0.9, ls="--")
+        axd.text(lo * 1.03, 0.94, "0.95", fontsize=9.5, color=INK2, va="top")
+        axd.axhline(0.5, color=GRAY, lw=0.7, ls=":")
     notes = []
     for x, style, text, y in ((n_star, ":", "N*", 0.08), (n_star95, "--", "N*₉₅", 0.22)):
         if math.isfinite(x) and lo <= x <= hi:
             for a in (ax, axd):
-                a.axvline(x, color=INK2, lw=1, ls=style)
-            axd.annotate(f"{text} = {x:.0f}", (x, y), xytext=(4, 0), textcoords="offset points",
-                         fontsize=8, color=INK)
+                a.axvline(x, color=INK2, lw=1.1, ls=style)
+            axd.annotate(f"{text} = {x:.0f}", (x, y), xytext=(5, 0), textcoords="offset points",
+                         fontsize=10, color=INK, fontweight="bold")
         elif not math.isnan(x):
             notes.append(f"{text} {'> ' + format(N_GRID[-1], '.0f') if x > 0 else '< ' + format(N_GRID[0], '.0f')}"
                          + (" (not reached)" if x > 0 else ""))
     if notes:
-        axd.text(0.99, 0.04, "; ".join(notes), transform=axd.transAxes, ha="right", fontsize=8, color=INK2)
+        axd.text(0.99, 0.05, "; ".join(notes), transform=axd.transAxes, ha="right", fontsize=9.5, color=INK2)
     axd.axvspan(n_obs.min(), n_obs.max(), color="#f0efec", zorder=0, lw=0)
     axd.set_ylim(-0.02, 1.02)
-    axd.set_ylabel("P(GNN beats naive)")
+    axd.set_ylabel("P(GNN beats naive)", fontsize=11)
     axd.set_xscale("log")
     axd.set_xlim(lo, hi)
     ticks = [t for t in (5, 10, 15, 25, 35, 45, 57, 100, 200, 400) if lo <= t <= hi]
     axd.set_xticks(ticks)
-    axd.set_xticklabels([str(t) for t in ticks])
-    axd.set_xlabel("Training stations N (shaded: sampled range; dashed curves: extrapolation)")
+    axd.set_xticklabels([str(t) for t in ticks], fontsize=10.5)
+    axd.set_xlabel("Training stations N (shaded: sampled range; dashed curves: extrapolation)", fontsize=11)
     if area:
         top = ax.secondary_xaxis("top", functions=(lambda n: n / area, lambda d: d * area))
-        top.set_xlabel("Training-station density (stations / km²)", color=INK2)
-        top.tick_params(colors=INK2)
+        top.set_xlabel("Training-station density (stations / km²)", color=INK2, fontsize=10.5)
+        top.tick_params(colors=INK2, labelsize=10)
         dens = [d for d in (0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 15, 20) if lo <= d * area <= hi]
         top.xaxis.set_major_locator(FixedLocator(dens))
         top.xaxis.set_minor_locator(NullLocator())

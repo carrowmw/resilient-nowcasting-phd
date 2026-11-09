@@ -19,13 +19,13 @@ import numpy as np
 import pandas as pd
 
 PAPER_RC = {
-    "font.size": 11,
-    "axes.titlesize": 13,
-    "axes.labelsize": 12,
-    "xtick.labelsize": 10.5,
-    "ytick.labelsize": 11,
-    "legend.fontsize": 11,
-    "figure.titlesize": 14,
+    "font.size": 13,
+    "axes.titlesize": 15,
+    "axes.labelsize": 13.5,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 12,
+    "figure.titlesize": 15.5,
     "figure.dpi": 200,
     "savefig.dpi": 300,
     "savefig.bbox": "tight",
@@ -109,15 +109,15 @@ def plot_metric(test_df: pd.DataFrame, metric: str, out_paths: list, ylabel: str
                 patch.set_facecolor("#7570b3")  # muted purple/heuristic
                 patch.set_alpha(0.55)
 
-        ax.set_title(f"Horizon $h = {h}$ ({h * 15} min)", pad=12, weight="bold", fontsize=12.5)
+        ax.set_title(f"Horizon $h = {h}$ ({h * 15} min)", pad=12, weight="bold", fontsize=14)
         ax.set_xticks(range(1, len(display_labels) + 1))
         ax.set_xticklabels(display_labels, rotation=45, ha="right", rotation_mode="anchor")
         ax.grid(axis="y", linestyle="--", alpha=0.35)
 
-    axes[0][0].set_ylabel(ylabel, weight="bold", fontsize=12, labelpad=8)
-    fig.suptitle(title, y=0.98, weight="bold", fontsize=14)
+    axes[0][0].set_ylabel(ylabel, weight="bold", fontsize=13.5, labelpad=8)
+    fig.suptitle(title, y=0.98, weight="bold", fontsize=15.5)
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.32, top=0.88, left=0.07, right=0.98)
+    fig.subplots_adjust(bottom=0.34, top=0.88, left=0.07, right=0.98)
     
     for p in out_paths:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +127,7 @@ def plot_metric(test_df: pd.DataFrame, metric: str, out_paths: list, ylabel: str
 
 def main():
     spatial_dir = Path("artifacts/spatial_full")
-    dest_dir = Path("latex-documents/thesis/figures/experiment2")
+    dest_dir = Path("/Users/administrator/Code/latex-documents/thesis/figures/experiment2")
     src_fig_dir = spatial_dir / "aggregated" / "figures"
     art_fig_dir = Path("artifacts/figures")
     art_fig_dir.mkdir(parents=True, exist_ok=True)

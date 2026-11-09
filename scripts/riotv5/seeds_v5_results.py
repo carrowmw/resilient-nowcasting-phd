@@ -40,11 +40,12 @@ CAT = [BLUE, ORANGE, AQUA, YELLOW, MAGENTA, GREEN, VIOLET, RED]
 GRAY, GRAY_LIGHT, MID, INK, INK2 = "#9a9893", "#d6d4cf", "#f0efec", "#1f1f1f", "#5c5b57"
 
 plt.rcParams.update({
-    "font.size": 9, "axes.titlesize": 10, "axes.labelsize": 9, "axes.edgecolor": GRAY,
+    "font.size": 11, "axes.titlesize": 12, "axes.labelsize": 11, "xtick.labelsize": 10.5, "ytick.labelsize": 10.5,
+    "axes.edgecolor": GRAY,
     "axes.labelcolor": INK2, "xtick.color": INK2, "ytick.color": INK2, "axes.grid": True,
     "grid.color": "#ebeae6", "grid.linewidth": 0.6, "axes.axisbelow": True,
     "axes.spines.top": False, "axes.spines.right": False, "legend.frameon": False,
-    "legend.fontsize": 8, "lines.linewidth": 2, "savefig.dpi": 160, "figure.dpi": 160,
+    "legend.fontsize": 10.5, "lines.linewidth": 2.2, "savefig.dpi": 240, "figure.dpi": 240,
     "text.color": INK,
 })
 
@@ -305,30 +306,32 @@ def fig_chain(r, summ):
     panels = [("all", "All-node RMSE"), ("trans", "Transductive RMSE"), ("ind", "Held-out RMSE"),
               ("peak", "Peak RMSE"), ("so12", "SO@12 RMSE"), ("so96m", "SO@96 mass ratio"),
               ("coll", "Real-gap collapse rate"), ("gapm", "Real-gap mass ratio"), ("crps", "CRPS")]
-    fig, axes = plt.subplots(3, 3, figsize=(11, 8))
+    fig, axes = plt.subplots(3, 3, figsize=(11.5, 8.4))
     x = np.arange(len(runs))
     naive = r.set_index("experiment").loc["naive_profile"]
     for ax, (k, title) in zip(axes.flat, panels):
         col = f"test_{METRICS[k][0]}"
         for xi, e in zip(x, runs):
             v = r[r.experiment == e].set_index("seed")[col]
-            ax.scatter([xi] * 2, v[[43, 44]], s=14, color=GRAY_LIGHT, edgecolor=GRAY, lw=0.5, zorder=3)
-            ax.scatter([xi], v[42], s=14, color=ORANGE, zorder=4)
+            ax.scatter([xi] * 2, v[[43, 44]], s=20, color=GRAY_LIGHT, edgecolor=GRAY, lw=0.6, zorder=3)
+            ax.scatter([xi], v[42], s=20, color=ORANGE, zorder=4)
         m = summ.loc[runs, f"test_{k}_mean"].values
-        ax.plot(x, m, color=BLUE, marker="o", ms=5, zorder=5)
+        ax.plot(x, m, color=BLUE, marker="o", ms=5.5, zorder=5)
         for xi, yi in zip(x, m):
             ax.annotate(f"{yi:.2f}" if abs(yi) < 5 else f"{yi:.1f}", (xi, yi), textcoords="offset points",
-                        xytext=(0, 7), ha="center", fontsize=7, color=INK2)
+                        xytext=(0, 7), ha="center", fontsize=9.5, color=INK2)
         if k in ("so96m", "gapm"):
             ax.axhline(1, color=GRAY, ls="--", lw=1)
         elif not np.isnan(naive[col]) and k != "coll":
             ax.axhline(naive[col], color=GRAY, ls="--", lw=1)
             ax.annotate("naive profile", (0, naive[col]), xytext=(4, 3), textcoords="offset points",
-                        fontsize=7, color=INK2)
+                        fontsize=9.5, color=INK2)
         ax.set_xticks(x, names)
-        ax.set_title(title, loc="left", fontsize=9)
+        ax.set_title(title, loc="left", fontsize=11.5, fontweight="bold")
+        lo, hi = ax.get_ylim()
+        ax.set_ylim(lo, hi + 0.14 * (hi - lo))
     fig.suptitle("Base chain, 3-seed mean (blue), seed 42 (orange), seeds 43/44 (gray)", x=0.01, ha="left",
-                 fontsize=11)
+                 fontsize=13, fontweight="bold")
     fig.tight_layout()
     save(fig, "figS2_base_chain_seeds.png")
 
@@ -338,20 +341,20 @@ def _forest(ax, labels, d, d42, ci, title, band=None):
     if band is not None:
         ax.axvspan(-band, band, color=MID, zorder=0)
     sig = np.nan_to_num(np.abs(d)) > ci
-    ax.errorbar(d[~sig], y[~sig], xerr=ci[~sig], fmt="o", color=GRAY, ms=4, capsize=2, lw=1, zorder=3)
-    ax.errorbar(d[sig], y[sig], xerr=ci[sig], fmt="o", color=BLUE, ms=4, capsize=2, lw=1.2, zorder=3)
-    ax.scatter(d42, y, marker="x", s=22, color=ORANGE, zorder=4, label="seed 42 only")
+    ax.errorbar(d[~sig], y[~sig], xerr=ci[~sig], fmt="o", color=GRAY, ms=5, capsize=2.5, lw=1.2, zorder=3)
+    ax.errorbar(d[sig], y[sig], xerr=ci[sig], fmt="o", color=BLUE, ms=5, capsize=2.5, lw=1.4, zorder=3)
+    ax.scatter(d42, y, marker="x", s=32, color=ORANGE, zorder=4, label="seed 42 only")
     ax.axvline(0, color=GRAY, lw=0.8)
     ax.set_yticks(y, labels)
     ax.invert_yaxis()
-    ax.set_title(title, loc="left", fontsize=9)
+    ax.set_title(title, loc="left", fontsize=11, fontweight="bold")
 
 
 def fig_thesis(cmp):
     """S3: thesis Experiment 3 ablations, 3-seed mean ± protocol threshold."""
     thesis = {"no_impute": 7.56, "no_kriging": 3.25, "no_masks": 9.62, "no_pe": 4.48, "lstm": 22.42,
               "bs32": -7.29, "dropout03": 7.50}
-    fig, axes = plt.subplots(1, 2, figsize=(11, 3.8), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.2), sharey=True)
     for ax, pre, title in ((axes[0], "v4r", "V4R"), (axes[1], "v5", "V5F")):
         sec = "thesis_v4r" if pre == "v4r" else "v5_suite"
         c = cmp[cmp.section == sec].set_index("exp").loc[[f"{pre}_{a}" for a in thesis]]
@@ -359,9 +362,9 @@ def fig_thesis(cmp):
         _forest(ax, list(thesis), c.all_d.values, c.all_d42.values, thr.values,
                 f"{title}: Δ all-node RMSE vs full (%), 3-seed mean ± 2σ threshold")
         if pre == "v4r":
-            ax.scatter(list(thesis.values()), np.arange(len(thesis)), marker="s", s=18, color=GRAY_LIGHT,
-                       edgecolor=INK2, lw=0.6, zorder=2, label="thesis (legacy metric)")
-    axes[0].legend(loc="upper right")
+            ax.scatter(list(thesis.values()), np.arange(len(thesis)), marker="s", s=26, color=GRAY_LIGHT,
+                       edgecolor=INK2, lw=0.7, zorder=2, label="thesis (legacy metric)")
+    axes[0].legend(loc="upper right", fontsize=10)
     fig.tight_layout()
     save(fig, "figS3_thesis_ablations_seeds.png")
 

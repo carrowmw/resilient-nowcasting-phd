@@ -37,7 +37,7 @@ def main():
     thesis_dir = Path("/Users/administrator/Code/latex-documents/thesis/figures/experiment1")
 
     plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.size"] = 12
+    plt.rcParams["font.size"] = 13.5
 
     print("Loading predictions...")
     p_none = pd.read_parquet("artifacts/quality_full_v2/runs/lstm_mv_h8_none/predictions.parquet")
@@ -122,28 +122,30 @@ def main():
         ax0 = axes[0, col_idx]
         ax0.plot(times, sub["y_true_raw_none"], "o-", color="#222222", markersize=3.5, label="Actuals", linewidth=1.2, alpha=0.75)
         ax0.plot(times, sub["y_pred_raw_none"], ".--", color="#d62728", markersize=3.5, label="Predicted (LSTM-MV)", linewidth=1.4)
-        ax0.set_title(f"{d_lbl}\n[None: Un-imputed Baseline]", fontsize=11, fontweight="bold", pad=6)
+        ax0.set_title(f"{d_lbl}\n[None: Un-imputed Baseline]", fontsize=13, fontweight="bold", pad=6)
         ax0.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
         ax0.set_xticks(range(0, len(times), 8))
-        ax0.tick_params(axis="x", rotation=30)
+        ax0.tick_params(axis="x", rotation=30, labelsize=11.5)
+        ax0.tick_params(axis="y", labelsize=11.5)
         if col_idx == 0:
-            ax0.set_ylabel("Pedestrian Count", fontsize=11.5)
-            ax0.legend(loc="upper right", frameon=True, fontsize=9.5)
+            ax0.set_ylabel("Pedestrian Count", fontsize=13)
+            ax0.legend(loc="upper right", frameon=True, fontsize=11)
 
         # Row 1: KNN
         ax1 = axes[1, col_idx]
         ax1.plot(times, sub["y_true_raw_knn"], "o-", color="#222222", markersize=3.5, label="Actuals", linewidth=1.2, alpha=0.75)
         ax1.plot(times, sub["y_pred_raw_knn"], ".--", color="#1f77b4", markersize=3.5, label="Predicted (KNN Imputed)", linewidth=1.4)
-        ax1.set_title(f"{d_lbl}\n[KNN Imputation]", fontsize=11, fontweight="bold", pad=6)
+        ax1.set_title(f"{d_lbl}\n[KNN Imputation]", fontsize=13, fontweight="bold", pad=6)
         ax1.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
         ax1.set_xticks(range(0, len(times), 8))
-        ax1.tick_params(axis="x", rotation=30)
-        ax1.set_xlabel("Time of Day (UTC)", fontsize=11)
+        ax1.tick_params(axis="x", rotation=30, labelsize=11.5)
+        ax1.tick_params(axis="y", labelsize=11.5)
+        ax1.set_xlabel("Time of Day (UTC)", fontsize=12.5)
         if col_idx == 0:
-            ax1.set_ylabel("Pedestrian Count", fontsize=11.5)
-            ax1.legend(loc="upper right", frameon=True, fontsize=9.5)
+            ax1.set_ylabel("Pedestrian Count", fontsize=13)
+            ax1.legend(loc="upper right", frameon=True, fontsize=11)
 
-    fig.suptitle("Benchmark Case Study: Shields Road (North, West-to-East) — Matched Test Days", fontsize=13, fontweight="bold", y=0.98)
+    fig.suptitle("Benchmark Case Study: Shields Road (North, West-to-East) — Matched Test Days", fontsize=15, fontweight="bold", y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig5_11_png = out_dir / "exp_i_case_study_NclShieldsRdRobinsonStNorth__west_to_east.png"
     fig5_11_pdf = out_dir / "exp_i_case_study_NclShieldsRdRobinsonStNorth__west_to_east.pdf"
@@ -171,30 +173,32 @@ def main():
         ax0 = axes[0, col_idx]
         ax0.plot(times, sub["y_true_raw_none"], "o-", color="#222222", markersize=3.5, label="Actuals", linewidth=1.2, alpha=0.75)
         ax0.plot(times, sub["y_pred_raw_none"], ".--", color="#d62728", markersize=3.5, label="Predicted (LSTM-MV)", linewidth=1.4)
-        ax0.set_title(f"{d_lbl}\n[None: Un-imputed Baseline]", fontsize=10.5, fontweight="bold", pad=6)
+        ax0.set_title(f"{d_lbl}\n[None: Un-imputed Baseline]", fontsize=12.5, fontweight="bold", pad=6)
         ax0.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
         ax0.set_xticks(range(0, len(times), 8))
-        ax0.tick_params(axis="x", rotation=30)
+        ax0.tick_params(axis="x", rotation=30, labelsize=11.5)
+        ax0.tick_params(axis="y", labelsize=11.5)
         ax0.set_ylim(-5, 230)
         if col_idx == 0:
-            ax0.set_ylabel("Pedestrian Count", fontsize=11.5)
-            ax0.legend(loc="upper right", frameon=True, fontsize=9.5)
+            ax0.set_ylabel("Pedestrian Count", fontsize=13)
+            ax0.legend(loc="upper right", frameon=True, fontsize=11)
 
         # Row 1: KNN
         ax1 = axes[1, col_idx]
         ax1.plot(times, sub["y_true_raw_knn"], "o-", color="#222222", markersize=3.5, label="Actuals", linewidth=1.2, alpha=0.75)
         ax1.plot(times, sub["y_pred_raw_knn"], ".--", color="#1f77b4", markersize=3.5, label="Predicted (KNN Imputed)", linewidth=1.4)
-        ax1.set_title(f"{d_lbl}\n[KNN Imputation]", fontsize=10.5, fontweight="bold", pad=6)
+        ax1.set_title(f"{d_lbl}\n[KNN Imputation]", fontsize=12.5, fontweight="bold", pad=6)
         ax1.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
         ax1.set_xticks(range(0, len(times), 8))
-        ax1.tick_params(axis="x", rotation=30)
-        ax1.set_xlabel("Time of Day (UTC)", fontsize=11)
+        ax1.tick_params(axis="x", rotation=30, labelsize=11.5)
+        ax1.tick_params(axis="y", labelsize=11.5)
+        ax1.set_xlabel("Time of Day (UTC)", fontsize=12.5)
         ax1.set_ylim(-5, 230)
         if col_idx == 0:
-            ax1.set_ylabel("Pedestrian Count", fontsize=11.5)
-            ax1.legend(loc="upper right", frameon=True, fontsize=9.5)
+            ax1.set_ylabel("Pedestrian Count", fontsize=13)
+            ax1.legend(loc="upper right", frameon=True, fontsize=11)
 
-    fig.suptitle("Boundary Case Study: Heber Street (East-to-West) — Stadium Matchday Surges", fontsize=13, fontweight="bold", y=0.98)
+    fig.suptitle("Boundary Case Study: Heber Street (East-to-West) — Stadium Matchday Surges", fontsize=15, fontweight="bold", y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig5_12_png = out_dir / "exp_i_case_study_NclHeberSt__east_to_west.png"
     fig5_12_pdf = out_dir / "exp_i_case_study_NclHeberSt__east_to_west.pdf"
@@ -316,10 +320,10 @@ def main():
     ax_a.plot([0, max_val], [0, max_val], "r--", label="Identity Line (y = x)")
     ax_a.set_xlim(20, max_val)
     ax_a.set_ylim(20, max_val)
-    ax_a.set_xlabel("None (Un-imputed) CV-RMSE (%)", fontsize=11.5)
-    ax_a.set_ylabel("KNN Imputation CV-RMSE (%)", fontsize=11.5)
-    ax_a.set_title("Panel A: Paired Sensor Relative Error (CV-RMSE)\n[Points above line = None outperforms KNN]", fontsize=12.5, fontweight="bold", pad=8)
-    ax_a.legend(frameon=True)
+    ax_a.set_xlabel("None (Un-imputed) CV-RMSE (%)", fontsize=13)
+    ax_a.set_ylabel("KNN Imputation CV-RMSE (%)", fontsize=13)
+    ax_a.set_title("Panel A: Paired Sensor Relative Error (CV-RMSE)\n[Points above line = None outperforms KNN]", fontsize=13.5, fontweight="bold", pad=8)
+    ax_a.legend(frameon=True, fontsize=11.5)
     ax_a.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
 
     # Panel B: Hourly RMSE on Matched Timestamps
@@ -327,10 +331,10 @@ def main():
     ax_b.plot(hourly_df["hour"], hourly_df["rmse_none"], marker="o", label="None (Un-imputed)", color="#1f77b4", linewidth=2.2)
     ax_b.plot(hourly_df["hour"], hourly_df["rmse_knn"], marker="s", label="KNN Imputation", color="#ff7f0e", linewidth=2.2)
     ax_b.set_xticks(range(0, 24, 2))
-    ax_b.set_xlabel("Hour of Day (UTC)", fontsize=11.5)
-    ax_b.set_ylabel("RMSE (Counts)", fontsize=11.5)
-    ax_b.set_title(f"Panel B: Hourly Forecast Error on Matched Timestamps\n[Exact same N={len(merged):,} time points across 108 sensors]", fontsize=12.5, fontweight="bold", pad=8)
-    ax_b.legend(frameon=True)
+    ax_b.set_xlabel("Hour of Day (UTC)", fontsize=13)
+    ax_b.set_ylabel("RMSE (Counts)", fontsize=13)
+    ax_b.set_title(f"Panel B: Hourly Forecast Error on Matched Timestamps\n[Exact same N={len(merged):,} time points across 108 sensors]", fontsize=13.5, fontweight="bold", pad=8)
+    ax_b.legend(frameon=True, fontsize=11.5)
     ax_b.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
 
     # Panel C: Distribution of Paired CV-RMSE Difference (pp units)
@@ -339,10 +343,10 @@ def main():
     ax_c.axvline(0, color="red", linestyle="--", label="Zero Difference")
     mean_diff = sensor_df["diff_cv"].mean()
     ax_c.axvline(mean_diff, color="black", linestyle="-", label=f"Mean Diff: +{mean_diff:.2f} pp")
-    ax_c.set_xlabel(r"$\Delta$ CV-RMSE (KNN - None) [pp]", fontsize=11.5)
-    ax_c.set_ylabel("Sensor Count", fontsize=11.5)
-    ax_c.set_title("Panel C: Distribution of Paired Performance Shift\n[Positive values indicate Un-imputed Baseline has lower error]", fontsize=12.5, fontweight="bold", pad=8)
-    ax_c.legend(frameon=True)
+    ax_c.set_xlabel(r"$\Delta$ CV-RMSE (KNN - None) [pp]", fontsize=13)
+    ax_c.set_ylabel("Sensor Count", fontsize=13)
+    ax_c.set_title("Panel C: Distribution of Paired Performance Shift\n[Positive values indicate Un-imputed Baseline has lower error]", fontsize=13.5, fontweight="bold", pad=8)
+    ax_c.legend(frameon=True, fontsize=11.5)
     ax_c.grid(True, linestyle="-", alpha=0.3, color="#d1d5db")
 
     # Panel D: Subdivided cleanly into D1 (Coverage) and D2 (Matched CV-RMSE)
@@ -355,24 +359,24 @@ def main():
     cov_knn = len(p_knn) / 1000.0
     ratio = len(p_knn) / len(p_none)
     bars1 = ax_d1.bar(["None", "KNN"], [cov_none, cov_knn], color=["#2ca02c", "#1b7837"], width=0.55, edgecolor="#111111")
-    ax_d1.set_ylabel("Test Predictions (x1,000)", fontsize=11)
-    ax_d1.set_title(f"Operational Coverage\n[{ratio:.1f}x Expansion]", fontsize=11.5, fontweight="bold", pad=8)
+    ax_d1.set_ylabel("Test Predictions (x1,000)", fontsize=12.5)
+    ax_d1.set_title(f"Operational Coverage\n[{ratio:.1f}x Expansion]", fontsize=13, fontweight="bold", pad=8)
     ax_d1.grid(True, linestyle="-", alpha=0.3, color="#d1d5db", axis="y")
     for bar in bars1:
         yval = bar.get_height()
-        ax_d1.text(bar.get_x() + bar.get_width()/2.0, yval + 15, f"{yval:.0f}k", ha="center", va="bottom", fontsize=10.5, fontweight="bold")
+        ax_d1.text(bar.get_x() + bar.get_width()/2.0, yval + 15, f"{yval:.0f}k", ha="center", va="bottom", fontsize=12, fontweight="bold")
     ax_d1.set_ylim(0, cov_knn * 1.18)
 
     # D2: Matched Pairs CV-RMSE
     cv_none_mean = sensor_df["cv_none"].mean()
     cv_knn_mean = sensor_df["cv_knn"].mean()
     bars2 = ax_d2.bar(["None", "KNN"], [cv_none_mean, cv_knn_mean], color=["#3182bd", "#e6550d"], width=0.55, edgecolor="#111111")
-    ax_d2.set_ylabel("Matched CV-RMSE (%)", fontsize=11)
-    ax_d2.set_title(f"Matched Relative Error\n[+{mean_diff:.2f} pp Penalty]", fontsize=11.5, fontweight="bold", pad=8)
+    ax_d2.set_ylabel("Matched CV-RMSE (%)", fontsize=12.5)
+    ax_d2.set_title(f"Matched Relative Error\n[+{mean_diff:.2f} pp Penalty]", fontsize=13, fontweight="bold", pad=8)
     ax_d2.grid(True, linestyle="-", alpha=0.3, color="#d1d5db", axis="y")
     for bar in bars2:
         yval = bar.get_height()
-        ax_d2.text(bar.get_x() + bar.get_width()/2.0, yval + 1.2, f"{yval:.1f}%", ha="center", va="bottom", fontsize=10.5, fontweight="bold")
+        ax_d2.text(bar.get_x() + bar.get_width()/2.0, yval + 1.2, f"{yval:.1f}%", ha="center", va="bottom", fontsize=12, fontweight="bold")
     ax_d2.set_ylim(0, cv_knn_mean * 1.2)
 
     fig5_15_png = out_dir / "exp_l_matched_pairs_comparison.png"

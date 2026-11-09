@@ -12,13 +12,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 plt.rcParams.update({
-    "font.size": 10,
-    "axes.labelsize": 10.5,
-    "axes.titlesize": 11.5,
-    "xtick.labelsize": 9.5,
-    "ytick.labelsize": 9.5,
-    "legend.fontsize": 9.5,
-    "figure.titlesize": 13,
+    "font.size": 12,
+    "axes.labelsize": 12,
+    "axes.titlesize": 13,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+    "legend.fontsize": 11,
+    "figure.titlesize": 14.5,
     "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
     "axes.edgecolor": "#333333",
     "axes.linewidth": 0.8,
@@ -119,14 +119,14 @@ def main():
         for xp, m, c in zip(x_positions, means, colors):
             ax.scatter([xp], [m], color=c, s=40, zorder=5, edgecolors="#1e293b", linewidth=0.6)
 
-        ax.set_title(h_label, fontsize=11.5, fontweight="bold", pad=8)
+        ax.set_title(h_label, fontsize=13, fontweight="bold", pad=8)
         ax.set_xticks(x_positions)
-        ax.set_xticklabels(sub_df["display_name"], rotation=52, ha="right", rotation_mode="anchor", fontsize=8.2)
+        ax.set_xticklabels(sub_df["display_name"], rotation=52, ha="right", rotation_mode="anchor", fontsize=10.2)
         ax.set_ylim(4.2, 5.8)
         ax.grid(True, linestyle="--", alpha=0.6)
         
         if col_idx == 0:
-            ax.set_ylabel("Node-Median MAE (pedestrian counts)", fontsize=10, fontweight="bold")
+            ax.set_ylabel("Node-Median MAE (pedestrian counts)", fontsize=11.5, fontweight="bold")
         else:
             ax.set_ylabel("")
 
@@ -185,7 +185,7 @@ def main():
             stat_txt,
             va="center",
             ha="left",
-            fontsize=8.8,
+            fontsize=10.5,
             fontweight="semibold",
             color="#1e293b",
         )
@@ -203,16 +203,16 @@ def main():
     )
 
     ax_zoom.set_yticks(y_positions)
-    ax_zoom.set_yticklabels(h1_top["display_name"], fontsize=9.5, fontweight="semibold")
-    ax_zoom.set_xlabel("Node-Median MAE (pedestrian counts) at $h = 1$ (15 min)", fontsize=10.5, fontweight="bold")
+    ax_zoom.set_yticklabels(h1_top["display_name"], fontsize=11, fontweight="semibold")
+    ax_zoom.set_xlabel("Node-Median MAE (pedestrian counts) at $h = 1$ (15 min)", fontsize=12, fontweight="bold")
     ax_zoom.set_xlim(4.32, 4.50)
     ax_zoom.grid(True, linestyle="--", alpha=0.6)
     ax_zoom.set_title("Focus on Lead Time $h = 1$: Top Architectures Fall Within Cross-Seed Variability ($\pm 0.008$–$0.023$ Counts)",
-                      fontsize=11.5, fontweight="bold", pad=8)
+                      fontsize=13, fontweight="bold", pad=8)
     ax_zoom.legend(loc="upper right", frameon=True, framealpha=0.92, edgecolor="#cccccc")
 
     plt.suptitle("Cross-Seed Forecast Error Variability Across Model Architectures and Lead Times ($n = 3$ Seeds)",
-                 fontsize=13, fontweight="bold", y=0.98)
+                 fontsize=14.5, fontweight="bold", y=0.98)
 
     local_out = "artifacts/spatial_full/aggregated/figures/seed_stability.png"
     plt.savefig(local_out, dpi=300, bbox_inches="tight")

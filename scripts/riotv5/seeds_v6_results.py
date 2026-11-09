@@ -82,6 +82,8 @@ def parse_val_station_epochs():
             m = re.search(r"Validation stations: indRMSE ([\d.]+) \(best [\d.]+ at epoch \d+, lr ([\d.e-]+)\)", line)
             if m:
                 rows.append((f.stem, ep, float(m.group(1)), float(m.group(2))))
+    if not rows and (DATA / "val_station_epochs.csv").exists():
+        return pd.read_csv(DATA / "val_station_epochs.csv")
     v = pd.DataFrame(rows, columns=["run", "epoch", "val_ind_rmse", "lr"])
     v["experiment"] = v.run.str.rsplit("-", n=1).str[0]
     return v
@@ -103,6 +105,8 @@ def load_posthoc():
                 leg.append({"run": run, "experiment": run.rsplit("-", 1)[0], "train_bs": d["train_batch_size"],
                             "eval_bs": bs, "mean_of_batches": d[bs]["legacy_rmse_mean_of_batches"],
                             "pooled": d[bs]["pooled_rmse"], "n_batches": d[bs]["n_batches"]})
+    if not ens and (DATA / "ensemble.csv").exists():
+        return pd.read_csv(DATA / "ensemble.csv"), pd.read_csv(DATA / "legacy.csv")
     return pd.DataFrame(ens), pd.DataFrame(leg)
 
 
@@ -310,28 +314,28 @@ def fig_val_station_curves(v):
 
 def fig_forest(cmp, sections, name, title, metrics=("all", "trans", "ind", "so12")):
     sub = cmp[cmp.section.isin(sections)].iloc[::-1]
-    fig, axes = plt.subplots(1, len(metrics), figsize=(2.6 * len(metrics) + 2.4, 0.32 * len(sub) + 1.1), sharey=True)
+    fig, axes = plt.subplots(1, len(metrics), figsize=(2.8 * len(metrics) + 2.6, 0.38 * len(sub) + 1.3), sharey=True)
     lab = {"all": "all-node RMSE", "trans": "transductive RMSE", "ind": "held-out RMSE", "so12": "SO@12 RMSE",
            "peak": "peak RMSE", "crps": "CRPS"}
     y = np.arange(len(sub))
     for ax, k in zip(axes, metrics):
         d, z = sub[f"{k}_d"].values, sub[f"{k}_z"].values
         thr = np.where(np.isfinite(z) & (z != 0), np.abs(d / z) * Z_REAL, np.nan)
-        ax.barh(y, 2 * thr, left=-thr, height=0.55, color="#ebeae6", zorder=0)
+        ax.barh(y, 2 * thr, left=-thr, height=0.58, color="#ebeae6", zorder=0)
         col = [BLUE if v == "real" else (ORANGE if v == "suggestive" else GRAY) for v in sub[f"{k}_verdict"]]
-        ax.scatter(d, y, c=col, s=22, zorder=3)
+        ax.scatter(d, y, c=col, s=34, zorder=3)
         ax.axvline(0, color=GRAY, lw=0.8)
-        ax.set_title(lab[k])
-        ax.set_xlabel("Δ vs reference (%)")
+        ax.set_title(lab[k], fontsize=12, fontweight="bold")
+        ax.set_xlabel("Δ vs reference (%)", fontsize=11)
         lo, hi = np.nanmin(np.r_[d, -thr, 0]), np.nanmax(np.r_[d, thr, 0])
         ax.set_xlim(lo - 0.06 * (hi - lo), hi + 0.06 * (hi - lo))
     axes[0].set_yticks(y)
-    axes[0].set_yticklabels(sub.label + np.where(sub.cross, "  †", ""))
-    fig.suptitle(title, x=0.01, ha="left", fontsize=10)
+    axes[0].set_yticklabels(sub.label + np.where(sub.cross, "  †", ""), fontsize=10.5)
+    fig.suptitle(title, x=0.01, ha="left", fontsize=12.5, fontweight="bold")
     handles = [plt.Line2D([], [], ls="", marker="o", color=c, label=l) for c, l in
                ((BLUE, f"real (|z| ≥ {Z_REAL})"), (ORANGE, f"suggestive (|z| ≥ {Z_SUGG})"), (GRAY, "noise"))]
     handles.append(plt.Rectangle((0, 0), 1, 1, color="#ebeae6", label="real-effect threshold"))
-    fig.legend(handles=handles, loc="upper right", ncol=4, frameon=False, fontsize=8)
+    fig.legend(handles=handles, loc="upper right", ncol=4, frameon=False, fontsize=10)
     save(fig, name)
 
 
@@ -353,15 +357,15 @@ def fig_ind_ckpt(pc):
 
 def fig_val_vs_test(r6):
     x = r6[r6.model_type == "gnn"]
-    fig, ax = plt.subplots(figsize=(4.8, 4))
+    fig, ax = plt.subplots(figsize=(5.6, 4.4))
     for fam, c in (("V6", BLUE), ("V6P", ORANGE)):
         g = x[x.fam == fam]
-        ax.scatter(g.val_obs_ind_rmse, g.test_obs_ind_rmse, s=16, color=c, label=fam, alpha=0.85)
-    ax.axhline(42.63, color=GRAY, ls="--", lw=1)
-    ax.text(ax.get_xlim()[1], 42.4, "naive profile ", ha="right", va="top", fontsize=7.5, color=INK2)
-    ax.set_xlabel("validation-station RMSE (3 stations with data, usual ckpt)")
-    ax.set_ylabel("test held-out RMSE (24 stations)")
-    ax.legend(loc="upper left")
+        ax.scatter(g.val_obs_ind_rmse, g.test_obs_ind_rmse, s=28, color=c, label=fam, alpha=0.85)
+    ax.axhline(42.63, color=GRAY, ls="--", lw=1.2)
+    ax.text(ax.get_xlim()[1], 42.4, "naive profile ", ha="right", va="top", fontsize=9.5, color=INK2)
+    ax.set_xlabel("validation-station RMSE (3 stations with data, usual ckpt)", fontsize=10.5)
+    ax.set_ylabel("test held-out RMSE (24 stations)", fontsize=10.5)
+    ax.legend(loc="upper left", fontsize=10)
     save(fig, "fig05_val_vs_test_heldout.png")
 
 

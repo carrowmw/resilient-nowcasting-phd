@@ -27,10 +27,10 @@ import numpy as np
 import pandas as pd
 
 PAPER_RC = {
-    "font.size": 11,
-    "axes.titlesize": 13,
-    "axes.labelsize": 11,
-    "figure.titlesize": 14,
+    "font.size": 13,
+    "axes.titlesize": 15,
+    "axes.labelsize": 13,
+    "figure.titlesize": 16,
     "figure.dpi": 200,
     "savefig.dpi": 300,
     "savefig.bbox": "tight",
@@ -97,7 +97,7 @@ def add_scale_bar(ax, lon_start, lat_start, length_km=1.0):
     ax.plot([lon_start + d_lon, lon_start + d_lon], [lat_start - tick_h, lat_start + tick_h], color="#111111", linewidth=1.8, zorder=10)
     # Label positioned cleanly above the bar
     ax.text(lon_start + d_lon / 2.0, lat_start + tick_h * 1.5, f"{int(length_km) if length_km == int(length_km) else length_km} km",
-            ha="center", va="bottom", fontsize=9.5, fontweight="bold", color="#111111", zorder=10,
+            ha="center", va="bottom", fontsize=11.5, fontweight="bold", color="#111111", zorder=10,
             bbox=dict(boxstyle="round,pad=0.20", facecolor="#ffffff", edgecolor="#b1b4b6", alpha=0.90, linewidth=0.6))
 
 def plot_graph(edges_df, coords_map, out_paths, title, subtitle, basemap_img, basemap_extent, top_k=None):
@@ -163,12 +163,12 @@ def plot_graph(edges_df, coords_map, out_paths, title, subtitle, basemap_img, ba
     sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax, orientation="vertical", fraction=0.035, pad=0.03, aspect=24)
-    cbar.set_label("Learned Attention Weight ($\\alpha_{ij}$)", fontsize=10.5, weight="bold")
-    cbar.ax.tick_params(labelsize=9)
+    cbar.set_label("Learned Attention Weight ($\\alpha_{ij}$)", fontsize=12.5, weight="bold")
+    cbar.ax.tick_params(labelsize=11)
     
     # Title & Subtitle with proper vertical separation
-    ax.set_title(title, fontsize=12.5, fontweight="bold", pad=20, color="#0b0c0c")
-    ax.text(0.5, 1.02, subtitle, transform=ax.transAxes, ha="center", va="bottom", fontsize=10, fontweight="bold", color="#505a5f")
+    ax.set_title(title, fontsize=14.5, fontweight="bold", pad=22, color="#0b0c0c")
+    ax.text(0.5, 1.02, subtitle, transform=ax.transAxes, ha="center", va="bottom", fontsize=12, fontweight="bold", color="#505a5f")
     
     ax.set_xticks([])
     ax.set_yticks([])
@@ -185,7 +185,7 @@ def plot_graph(edges_df, coords_map, out_paths, title, subtitle, basemap_img, ba
 
 def main():
     spatial_dir = Path("artifacts/spatial_full")
-    dest_dir = Path("latex-documents/thesis/figures/experiment2")
+    dest_dir = Path("/Users/administrator/Code/latex-documents/thesis/figures/experiment2")
     src_fig_dir = spatial_dir / "aggregated" / "figures"
     art_fig_dir = Path("artifacts/figures")
     dest_dir.mkdir(parents=True, exist_ok=True)
