@@ -1,9 +1,8 @@
 # Implementation Phases: Database Transition & Frontend Upgrades
 
-> **Author**: Interrogator Agent  
 > **Date**: 2026-06-12  
 > **Strategy**: D — Hybrid CDN + Live API  
-> **Companion docs**: [database_serving_strategy.md](file:///Users/administrator/Code/ml-agent-workspace/docs/database/database_serving_strategy.md) · [phase1_detailed_plan.md](file:///Users/administrator/Code/ml-agent-workspace/docs/database/phase1_detailed_plan.md)
+> **Companion docs**: [database_serving_strategy.md](database_serving_strategy.md) · [database_schemas.md](database_schemas.md)
 
 ---
 
@@ -36,8 +35,7 @@ gantt
 
 > **Priority**: 🔴 Highest — immediate user value  
 > **Dependencies**: None (uses existing W&B artifacts + Vercel static hosting)  
-> **Estimated effort**: 7–10 days  
-> **Detailed plan**: [phase1_detailed_plan.md](file:///Users/administrator/Code/ml-agent-workspace/docs/database/phase1_detailed_plan.md)
+> **Estimated effort**: 7–10 days
 
 ### Goal
 
@@ -188,13 +186,9 @@ Ingest live sensor data (15-minute cadence), run inference through the frozen mo
 | Sensor webhook receiver | FastAPI endpoint to ingest raw sensor readings |
 | Frontend `live` toggle | SWR polling (5-min), "LIVE" badge, "Last updated" timestamp |
 
-### Architecture Alignment with NSTAR
+### Architecture Alignment
 
-Per [NSTAR_PHASES.md](file:///Users/administrator/Code/ml-agent-workspace/NSTAR_PHASES.md), Phase 4 maps to:
-
-> **Phase 3: Live Inference API & Spatial Integration** — *ONLY executed after the PyTorch architecture is mathematically frozen via rigorous ablation studies.*
-
-This is explicitly gated on ablation study completion.
+Phase 4 maps to the Live Inference API & Spatial Integration stage — executed after the PyTorch architecture is frozen via rigorous ablation studies.
 
 ---
 
@@ -230,11 +224,8 @@ Phase 2 (training database) is on a parallel track and can proceed independently
 
 | Task | Detail |
 |---|---|
-| Verify all 7 W&B artifacts are complete | Each must have `best_model.pt` + `config.yaml` |
-| Delete local `models/` contents | Already `.gitignore`d. Remove from working tree. |
-| Clean up `export_ui_payload.py` comments | Remove references to `models/best_pipeline.pt` |
-| Update `NSTAR_MLOPS.md` | Document W&B as sole model checkpoint source of truth |
-| Update `context_for_architect.md` | Remove reference to local checkpoint default |
+| Verify all W&B artifacts are complete | Each must have `best_model.pt` + `config.yaml` |
+| Clean up `export_ui_payload.py` comments | Remove references to legacy checkpoint defaults |
 
 ---
 

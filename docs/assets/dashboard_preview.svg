@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16"/>
+      <stop offset="55%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#0b1324"/>
+    </linearGradient>
+    <radialGradient id="mapGlow" cx="42%" cy="48%" r="45%">
+      <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.18"/>
+      <stop offset="55%" stop-color="#6366f1" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#090d16" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accentCyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="fanFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.04"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" rx="14" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="2"/>
+  <rect width="1200" height="630" rx="14" fill="url(#mapGlow)"/>
+
+  <!-- Subtle geospatial map grid & River Tyne contour -->
+  <g stroke="#1e293b" stroke-width="1" opacity="0.55">
+    <line x1="0" y1="110" x2="800" y2="110"/>
+    <line x1="0" y1="210" x2="800" y2="210"/>
+    <line x1="0" y1="310" x2="800" y2="310"/>
+    <line x1="0" y1="410" x2="800" y2="410"/>
+    <line x1="0" y1="510" x2="800" y2="510"/>
+    <line x1="120" y1="60" x2="120" y2="560"/>
+    <line x1="260" y1="60" x2="260" y2="560"/>
+    <line x1="400" y1="60" x2="400" y2="560"/>
+    <line x1="540" y1="60" x2="540" y2="560"/>
+    <line x1="680" y1="60" x2="680" y2="560"/>
+  </g>
+
+  <!-- River Tyne stylized corridor -->
+  <path d="M 30 495 C 160 470, 270 510, 410 465 C 530 425, 650 445, 790 400" fill="none" stroke="#0c4a6e" stroke-width="26" stroke-linecap="round" opacity="0.55"/>
+  <path d="M 30 495 C 160 470, 270 510, 410 465 C 530 425, 650 445, 790 400" fill="none" stroke="#0284c7" stroke-width="2" stroke-dasharray="6,6" opacity="0.45"/>
+
+  <!-- Top Navigation Bar -->
+  <rect x="20" y="18" width="1160" height="52" rx="10" fill="#0f172a" fill-opacity="0.9" stroke="#334155" stroke-width="1"/>
+  <circle cx="46" cy="44" r="6" fill="#22c55e" filter="url(#glow)"/>
+  <text x="62" y="49" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#f8fafc">Newcastle Urban Observatory — Resilient Spatio-Temporal Digital Twin</text>
+
+  <!-- Run Selector Pill -->
+  <rect x="595" y="28" width="275" height="32" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1.2"/>
+  <text x="610" y="49" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="600" fill="#38bdf8">RUN: v7_profile_static_e150-s47</text>
+
+  <!-- View Mode Switcher -->
+  <rect x="885" y="28" width="140" height="32" rx="6" fill="#0284c7"/>
+  <text x="912" y="49" font-family="system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#ffffff">3D Map Twin</text>
+  <rect x="1032" y="28" width="132" height="32" rx="6" fill="#1e293b" stroke="#334155"/>
+  <text x="1055" y="49" font-family="system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="500" fill="#94a3b8">Analytics Lab</text>
+
+  <!-- GATv2 Spatial Attention Edges -->
+  <g stroke-linecap="round">
+    <line x1="410" y1="295" x2="335" y2="235" stroke="#38bdf8" stroke-width="3.2" opacity="0.8"/>
+    <line x1="410" y1="295" x2="495" y2="250" stroke="#38bdf8" stroke-width="2.8" opacity="0.75"/>
+    <line x1="410" y1="295" x2="455" y2="370" stroke="#38bdf8" stroke-width="2.4" opacity="0.7"/>
+    <line x1="410" y1="295" x2="310" y2="345" stroke="#818cf8" stroke-width="2.2" opacity="0.65"/>
+    <line x1="335" y1="235" x2="255" y2="195" stroke="#64748b" stroke-width="1.4" opacity="0.45"/>
+    <line x1="335" y1="235" x2="425" y2="175" stroke="#38bdf8" stroke-width="1.8" opacity="0.55"/>
+    <line x1="495" y1="250" x2="585" y2="205" stroke="#818cf8" stroke-width="1.8" opacity="0.5"/>
+    <line x1="495" y1="250" x2="565" y2="320" stroke="#38bdf8" stroke-width="2.0" opacity="0.6"/>
+    <line x1="310" y1="345" x2="220" y2="390" stroke="#64748b" stroke-width="1.5" opacity="0.45"/>
+    <line x1="455" y1="370" x2="565" y2="320" stroke="#38bdf8" stroke-width="1.9" opacity="0.55"/>
+    <line x1="425" y1="175" x2="495" y2="250" stroke="#64748b" stroke-width="1.4" opacity="0.45"/>
+    <!-- Inductive Kriging Transfer Edges (amber dashed) -->
+    <line x1="410" y1="295" x2="365" y2="410" stroke="#f59e0b" stroke-width="2.5" stroke-dasharray="5,4" opacity="0.9"/>
+    <line x1="455" y1="370" x2="365" y2="410" stroke="#f59e0b" stroke-width="2.2" stroke-dasharray="5,4" opacity="0.85"/>
+    <line x1="310" y1="345" x2="365" y2="410" stroke="#f59e0b" stroke-width="2.0" stroke-dasharray="5,4" opacity="0.8"/>
+    <line x1="585" y1="205" x2="645" y2="265" stroke="#f59e0b" stroke-width="2.2" stroke-dasharray="5,4" opacity="0.85"/>
+    <line x1="565" y1="320" x2="645" y2="265" stroke="#f59e0b" stroke-width="2.0" stroke-dasharray="5,4" opacity="0.8"/>
+  </g>
+
+  <!-- Observed Sensor Nodes -->
+  <g filter="url(#glow)">
+    <circle cx="410" cy="295" r="14" fill="#0ea5e9" stroke="#e0f2fe" stroke-width="2.5"/>
+    <circle cx="335" cy="235" r="10" fill="#0ea5e9" stroke="#bae6fd" stroke-width="1.5"/>
+    <circle cx="495" cy="250" r="11" fill="#0ea5e9" stroke="#bae6fd" stroke-width="1.5"/>
+    <circle cx="455" cy="370" r="9.5" fill="#0ea5e9" stroke="#bae6fd" stroke-width="1.5"/>
+    <circle cx="310" cy="345" r="9" fill="#0ea5e9" stroke="#bae6fd" stroke-width="1.5"/>
+    <circle cx="255" cy="195" r="7.5" fill="#38bdf8"/>
+    <circle cx="425" cy="175" r="8.5" fill="#38bdf8"/>
+    <circle cx="585" cy="205" r="8" fill="#38bdf8"/>
+    <circle cx="565" cy="320" r="9" fill="#0ea5e9"/>
+    <circle cx="220" cy="390" r="7.5" fill="#38bdf8"/>
+    <!-- Held-Out / Inductive Nodes (Amber) -->
+    <circle cx="365" cy="410" r="12" fill="#f59e0b" stroke="#fef3c7" stroke-width="2.5"/>
+    <circle cx="645" cy="265" r="10.5" fill="#f59e0b" stroke="#fef3c7" stroke-width="2"/>
+  </g>
+
+  <!-- Node Callout Labels on Map -->
+  <rect x="428" y="276" width="168" height="26" rx="5" fill="#0f172a" fill-opacity="0.92" stroke="#38bdf8" stroke-width="1"/>
+  <text x="437" y="293" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" fill="#e0f2fe">Northumberland_St (Obs)</text>
+
+  <rect x="242" y="426" width="198" height="26" rx="5" fill="#0f172a" fill-opacity="0.92" stroke="#f59e0b" stroke-width="1"/>
+  <text x="251" y="443" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" fill="#fde68a">Neville_St (Held-Out Kriged)</text>
+
+  <!-- Map Legend Overlay (Bottom Left) -->
+  <rect x="28" y="458" width="210" height="82" rx="8" fill="#0f172a" fill-opacity="0.9" stroke="#334155"/>
+  <circle cx="48" cy="480" r="6" fill="#0ea5e9"/>
+  <text x="64" y="484" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#cbd5e1">Observed Sensor (61 sites)</text>
+  <circle cx="48" cy="503" r="6" fill="#f59e0b"/>
+  <text x="64" y="507" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#cbd5e1">Held-Out Kriged Site (5 sites)</text>
+  <line x1="40" y1="524" x2="56" y2="524" stroke="#38bdf8" stroke-width="2.5"/>
+  <text x="64" y="528" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#cbd5e1">GATv2 Dynamic Attention α_ij</text>
+
+  <!-- Right Side Inspector Panel -->
+  <rect x="750" y="84" width="430" height="456" rx="10" fill="#0f172a" fill-opacity="0.95" stroke="#334155" stroke-width="1.2"/>
+  <text x="772" y="114" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#f8fafc">Node Telemetry &amp; ZINB Probabilistic Forecast</text>
+  <text x="772" y="134" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11.5" fill="#94a3b8">Site: Percy_St_at_Haymarket · 15-min Cadence (96 steps)</text>
+
+  <!-- KPI Mini Cards -->
+  <rect x="772" y="148" width="120" height="58" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="784" y="168" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#94a3b8">All-Node RMSE</text>
+  <text x="784" y="194" font-family="ui-monospace, SFMono-Regular, monospace" font-size="19" font-weight="700" fill="#38bdf8">20.08</text>
+
+  <rect x="905" y="148" width="120" height="58" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="917" y="168" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#94a3b8">Inductive RMSE</text>
+  <text x="917" y="194" font-family="ui-monospace, SFMono-Regular, monospace" font-size="19" font-weight="700" fill="#f59e0b">33.30</text>
+
+  <rect x="1038" y="148" width="120" height="58" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="1050" y="168" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#94a3b8">Outage SO@12</text>
+  <text x="1050" y="194" font-family="ui-monospace, SFMono-Regular, monospace" font-size="19" font-weight="700" fill="#22c55e">13.74</text>
+
+  <!-- ZINB Fan Chart Area -->
+  <rect x="772" y="220" width="386" height="175" rx="8" fill="#090d16" stroke="#1e293b"/>
+  <text x="786" y="240" font-family="system-ui, -apple-system, sans-serif" font-size="11.5" font-weight="600" fill="#cbd5e1">Pedestrian Flow (μ ± 2σ ZINB Confidence Interval)</text>
+
+  <!-- Simulated Outage Window Highlight -->
+  <rect x="955" y="248" width="68" height="132" fill="#ef4444" fill-opacity="0.14"/>
+  <line x1="955" y1="248" x2="955" y2="380" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,3"/>
+  <line x1="1023" y1="248" x2="1023" y2="380" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="961" y="262" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9.5" fill="#fca5a5">MNAR Outage</text>
+
+  <!-- Uncertainty Fan Polygon -->
+  <path d="M 786 362 L 820 355 L 855 310 L 890 268 L 925 256 L 960 264 L 995 272 L 1030 258 L 1065 282 L 1100 325 L 1142 358
+           L 1142 372 L 1100 352 L 1065 320 L 1030 298 L 995 312 L 960 302 L 925 292 L 890 304 L 855 340 L 820 368 L 786 372 Z"
+        fill="url(#fanFill)"/>
+
+  <!-- Predicted Mean Line (Cyan) -->
+  <path d="M 786 367 L 820 361 L 855 325 L 890 286 L 925 274 L 960 283 L 995 292 L 1030 278 L 1065 301 L 1100 338 L 1142 365"
+        fill="none" stroke="#38bdf8" stroke-width="2.5"/>
+
+  <!-- Ground Truth Dots (Emerald) -->
+  <g fill="#22c55e">
+    <circle cx="786" cy="366" r="3"/>
+    <circle cx="820" cy="359" r="3"/>
+    <circle cx="855" cy="328" r="3"/>
+    <circle cx="890" cy="283" r="3"/>
+    <circle cx="925" cy="277" r="3"/>
+    <circle cx="1030" cy="281" r="3"/>
+    <circle cx="1065" cy="298" r="3"/>
+    <circle cx="1100" cy="341" r="3"/>
+    <circle cx="1142" cy="364" r="3"/>
+  </g>
+
+  <!-- Calibration & Architecture Metadata Footer inside Inspector -->
+  <rect x="772" y="408" width="386" height="114" rx="8" fill="#1e293b" fill-opacity="0.65" stroke="#334155"/>
+  <text x="786" y="430" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" fill="#e2e8f0">Model Architecture &amp; Diagnostics</text>
+  <text x="786" y="451" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" fill="#94a3b8">• Prior: Cross-Fitted Ridge Profile (15 OSM/POI features)</text>
+  <text x="786" y="471" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" fill="#94a3b8">• Backbone: 2-Layer Causal Transformer + GATv2 (edge_dim=10)</text>
+  <text x="786" y="491" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" fill="#94a3b8">• Decoder: ZINB + Quantile Auxiliary + Outage Mixture Gate</text>
+  <text x="786" y="511" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" fill="#38bdf8">• Click to launch interactive dashboard → ml-agent-workspace.vercel.app</text>
+
+  <!-- Bottom Timeline Scrubber Bar -->
+  <rect x="20" y="554" width="1160" height="56" rx="10" fill="#0f172a" fill-opacity="0.92" stroke="#334155"/>
+  <circle cx="52" cy="582" r="16" fill="#0284c7"/>
+  <polygon points="48,574 48,590 60,582" fill="#ffffff"/>
+  <text x="82" y="587" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="600" fill="#f8fafc">2026-06-02 · 13:30 UTC (Step 54 / 96)</text>
+  <rect x="360" y="578" width="640" height="8" rx="4" fill="#1e293b"/>
+  <rect x="360" y="578" width="360" height="8" rx="4" fill="url(#accentCyan)"/>
+  <circle cx="720" cy="582" r="9" fill="#38bdf8" stroke="#ffffff" stroke-width="2"/>
+  <text x="1020" y="587" font-family="system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#38bdf8">60 FPS WebGL</text>
+</svg>

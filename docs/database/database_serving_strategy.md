@@ -1,9 +1,8 @@
 # Database Serving Strategy: Hybrid CDN + Live API (Strategy D)
 
-> **Author**: Interrogator Agent  
-> **Date**: 2026-06-12 (v2 — streamlined to approved strategy)  
+> **Date**: 2026-06-12  
 > **Status**: Approved Strategy — Implementation Planning  
-> **Decision**: Strategy D adopted. Strategies A/B/C archived.
+> **Decision**: Strategy D adopted.
 
 ---
 
@@ -453,4 +452,4 @@ For immediate implementation, paginated payloads can be served from `frontend/pu
 
 ---
 
-> **Next Steps**: See [implementation_phases.md](file:///Users/administrator/Code/ml-agent-workspace/docs/database/implementation_phases.md) for the phased roadmap and [phase1_detailed_plan.md](file:///Users/administrator/Code/ml-agent-workspace/docs/database/phase1_detailed_plan.md) for the full Phase 1 implementation specification.
+> **Next Steps**: See [implementation_phases.md](implementation_phases.md) for the phased roadmap and [database_schemas.md](database_schemas.md) for the full data store specification.

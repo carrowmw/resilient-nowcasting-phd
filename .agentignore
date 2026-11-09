@@ -1,7 +1,0 @@
-wandb/
-logs/
-data/
-models/
-__pycache__/
-*.parquet
-*.pt

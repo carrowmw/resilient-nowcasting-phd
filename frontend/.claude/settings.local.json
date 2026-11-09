@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(cat /workspace/frontend/node_modules/next/dist/docs/03-architecture/*.md)",
-      "Bash(npm install *)"
-    ]
-  }
-}

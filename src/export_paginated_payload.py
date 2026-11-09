@@ -79,7 +79,21 @@ SCHEMA_VERSION = 5
 DEFAULT_CONFIG_PATH = "configs/analysis/analysis.yaml"
 DEFAULT_OUTPUT_DIR = "artifacts/payload_staging/runs"
 DEFAULT_RUNS_CSV = "docs/experiments/riot_v5/data/runs.csv"
-LOCAL_RUNS_DIR = "models/resilient-iot-v5"
+ALL_RUNS_CSVS = (
+    "docs/experiments/riot_v5/data/runs.csv",
+    "docs/experiments/riot_v6/data/runs.csv",
+    "docs/experiments/riot_v7/data/runs.csv",
+)
+LOCAL_RUNS_DIRS = (
+    "models/resilient-iot-v5",
+    "models/resilient-iot-v6",
+    "models/resilient-iot-v7",
+)
+CONFIG_SEARCH_DIRS = (
+    "configs/train/v5",
+    "configs/train/v6",
+    "configs/train/v7",
+)
 
 REFERENCE_RUN = "v5_full-s42"
 EXCLUDED_PREFIXES = ("naive_", "v4r_")
@@ -153,8 +167,13 @@ def select_runs(runs_csv: str, top_k: int, explicit: Optional[List[str]] = None)
     """Ordered run plan: [{run, experiment, group, description, rank, is_reference, test_metrics}]."""
     df = pd.read_csv(runs_csv)
     if explicit:
+        missing = set(explicit) - set(df["run"])
+        if missing:
+            extra_frames = [pd.read_csv(p) for p in ALL_RUNS_CSVS if p != runs_csv and os.path.exists(p)]
+            if extra_frames:
+                df = pd.concat([df] + extra_frames, ignore_index=True).drop_duplicates(subset=["run"], keep="last")
         missing = sorted(set(explicit) - set(df["run"]))
-        assert not missing, f"CRITICAL: runs not in {runs_csv}: {missing}"
+        assert not missing, f"CRITICAL: runs not in {runs_csv} (or v5/v6/v7 CSVs): {missing}"
         rows = [df[df["run"] == r].iloc[0] for r in explicit]
     else:
         assert top_k >= 1, "CRITICAL: top_k must be >= 1"
@@ -173,15 +192,23 @@ def select_runs(runs_csv: str, top_k: int, explicit: Optional[List[str]] = None)
         "group": row["group"],
         "description": row["desc"],
         "rank": rank,
-        "is_reference": row["run"] == REFERENCE_RUN,
+        "is_reference": (rank == 1) if explicit else (row["run"] == REFERENCE_RUN),
         "test_metrics": {k: _num(row.get(k)) for k in TEST_METRIC_KEYS},
     } for rank, row in enumerate(rows, start=1)]
 
 
 def local_run_config(run: str) -> Dict:
-    path = os.path.join(LOCAL_RUNS_DIR, run, "config.yaml")
-    assert os.path.exists(path), f"CRITICAL: {path} missing — cannot resolve the W&B collection for {run}"
-    return load_run_config(path)
+    for d in LOCAL_RUNS_DIRS:
+        path = os.path.join(d, run, "config.yaml")
+        if os.path.exists(path):
+            return load_run_config(path)
+    stem = run.replace("-s", "__s", 1) + ".yaml"
+    for root in CONFIG_SEARCH_DIRS:
+        for match in Path(root).rglob(stem):
+            return load_run_config(str(match))
+    raise AssertionError(
+        f"CRITICAL: config for {run!r} not found in {LOCAL_RUNS_DIRS} or {CONFIG_SEARCH_DIRS}"
+    )
 
 
 # ---------------------------------------------------------------------------

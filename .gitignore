@@ -1,5 +1,10 @@
 /data/*
 !/data/external/
+!/data/traffic_20230108_20260608.parquet
+!/data/weather_20230108_20260108.parquet
+!/data/traffic_sensors.json
+!/data/weather_sensors.json
+!/data/README.md
 wandb/
 models/
 !/src/spatial/models/
@@ -15,6 +20,11 @@ src/__pycache__/
 __pycache__/
 *.DS_Store
 .vscode/
+.idea/
+.cursor/
+.agents/
+.claude/
+.agentignore
 
 cache/
 data/external/.weather_cache_coords/
@@ -26,6 +36,10 @@ venv/
 
 .env
 *.parquet
+!/data/traffic_20230108_20260608.parquet
+!/data/weather_20230108_20260108.parquet
+!/data/external/weather_cache.parquet
+!/data/external/static_features_cache.parquet
 *.pt
 
 # Optuna Databases

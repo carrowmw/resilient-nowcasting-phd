@@ -24,12 +24,20 @@ jobs:
       - name: Link host data directory
         run: |
           if [ -d "/data" ]; then
-            for dir in /data/*; do
-              if [ -d "$dir" ] && [ "$(basename "$dir")" != "external" ]; then
-                ln -sf "$dir" "./data/$(basename "$dir")"
+            for item in /data/*; do
+              base="$(basename "$item")"
+              if [ -d "$item" ] && [ "$base" != "external" ]; then
+                ln -sf "$item" "./data/$base"
+              elif [ -f "$item" ] && [ ! -e "./data/$base" ]; then
+                ln -sf "$item" "./data/$base"
               fi
             done
-            echo "Successfully linked /data subdirectories into ./data/"
+            for item in /data/external/*; do
+              if [ -f "$item" ] && [ ! -e "./data/external/$(basename "$item")" ]; then
+                ln -sf "$item" "./data/external/$(basename "$item")"
+              fi
+            done
+            echo "Successfully linked /data items into ./data/"
           else
             echo "FATAL: No /data volume found. The self-hosted runner must have /data mounted." >&2
             exit 1

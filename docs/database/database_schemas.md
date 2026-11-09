@@ -1,4 +1,4 @@
-# Data Store Overview — ml-agent-workspace
+# Data Store Overview — Resilient IoT Spatio-Temporal Digital Twin
 
 This document catalogues **every data store** in the project, from relational databases to file-based caches and cloud object storage. Each store includes a Mermaid schema diagram.
 
@@ -6,7 +6,7 @@ This document catalogues **every data store** in the project, from relational da
 
 ## 1. TimescaleDB (PostgreSQL) — `riot_traffic`
 
-The primary relational database, managed via Alembic migrations ([001_initial_schema.py](file:///Users/administrator/Code/ml-agent-workspace/alembic/versions/001_initial_schema.py)). Runs as a Docker service (`timescale/timescaledb:latest-pg16`).
+The primary relational database, managed via Alembic migrations ([001_initial_schema.py](../../alembic/versions/001_initial_schema.py)). Runs as a Docker service (`timescale/timescaledb:latest-pg16`).
 
 **Connection:** `postgresql://riotuser:riotpassword@timescaledb:5432/riot_traffic`
 
@@ -58,7 +58,7 @@ erDiagram
 
 ## 2. Optuna SQLite — Hyperparameter Tuning
 
-Local SQLite databases (e.g. [optuna.db](file:///Users/administrator/Code/ml-agent-workspace/optuna.db)) used by [tune.py](file:///Users/administrator/Code/ml-agent-workspace/src/tune.py) for Bayesian hyperparameter optimization.
+Local SQLite databases (e.g. [optuna.db](optuna.db)) used by [tune.py](src/tune.py) for Bayesian hyperparameter optimization.
 
 **Connection:** `sqlite:///optuna.db`
 
@@ -104,7 +104,7 @@ erDiagram
 
 ## 3. Raw Data Files (Parquet + JSON)
 
-Located in [data/](file:///Users/administrator/Code/ml-agent-workspace/data). These are the **source-of-truth** inputs to the preprocessing pipeline ([process_all.py](file:///Users/administrator/Code/ml-agent-workspace/src/process_all.py)).
+Located in [data/](data). These are the **source-of-truth** inputs to the preprocessing pipeline ([process_all.py](src/process_all.py)).
 
 ```mermaid
 erDiagram
@@ -138,13 +138,13 @@ erDiagram
     }
 ```
 
-**Archive:** [data/archive/](file:///Users/administrator/Code/ml-agent-workspace/data/archive) contains historical traffic parquet splits used before dataset consolidation.
+**Archive:** [data/archive/](data/archive) contains historical traffic parquet splits used before dataset consolidation.
 
 ---
 
 ## 4. Processed / Master Dataset
 
-The output of [process_all.py](file:///Users/administrator/Code/ml-agent-workspace/src/process_all.py) — a fully joined, resampled, feature-enriched parquet consumed by the PyTorch [RealIoTDataset](file:///Users/administrator/Code/ml-agent-workspace/src/dataset.py#L15-L30).
+The output of [process_all.py](src/process_all.py) — a fully joined, resampled, feature-enriched parquet consumed by the PyTorch [RealIoTDataset](src/dataset.py#L15-L30).
 
 ```mermaid
 erDiagram
@@ -182,7 +182,7 @@ erDiagram
 
 ## 5. External Feature Caches
 
-Located in [data/external/](file:///Users/administrator/Code/ml-agent-workspace/data/external). Pre-computed spatial and contextual features fetched from external APIs (Google Places, OSM) and cached locally.
+Located in [data/external/](data/external). Pre-computed spatial and contextual features fetched from external APIs (Google Places, OSM) and cached locally.
 
 ```mermaid
 erDiagram
@@ -282,7 +282,7 @@ erDiagram
 
 Bucket: **`resilient-iot-payloads`** — serves the paginated UI payload for the Next.js frontend via CDN.
 
-Upload script: [upload_to_r2.py](file:///Users/administrator/Code/ml-agent-workspace/scripts/upload_to_r2.py)
+Upload script: [upload_to_r2.py](scripts/upload_to_r2.py)
 
 ```mermaid
 erDiagram
@@ -325,13 +325,13 @@ erDiagram
 ```
 
 > [!TIP]
-> The frontend proxies `/data/runs/*` → `R2_PUBLIC_URL/runs/*` via Next.js rewrites in [next.config.ts](file:///Users/administrator/Code/ml-agent-workspace/frontend/next.config.ts).
+> The frontend proxies `/data/runs/*` → `R2_PUBLIC_URL/runs/*` via Next.js rewrites in [next.config.ts](frontend/next.config.ts).
 
 ---
 
 ## 8. Local Model Artifacts
 
-Stored in [models/](file:///Users/administrator/Code/ml-agent-workspace/models) on disk. Namespaced by project and run.
+Stored in [models/](models) on disk. Namespaced by project and run.
 
 ```mermaid
 erDiagram

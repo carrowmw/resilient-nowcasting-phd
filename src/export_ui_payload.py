@@ -214,7 +214,8 @@ def dataset_key(config: Dict) -> Tuple:
     return (d["start_date"], d["end_date"], d["seq_len"], d["target_veh_class"], d["target_dir"],
             config["train_split"], d["ablate_masks"], d["log1p_inputs"], d["complete_weather"],
             d["train_node_count"], d["train_node_seed"], d["inductive_holdout_frac"],
-            d["inductive_holdout_seed"])
+            d["inductive_holdout_seed"], d["val_station_count"], d["val_station_seed"],
+            d["val_station_strategy"], d["val_station_min_coverage"])
 
 
 def _network_filter(config: Dict):
@@ -315,6 +316,7 @@ def build_v5_context(run_name: str, config: Dict, dataset: RealIoTDataset, check
     location_ids = list(dataset.locations)
 
     holdout_mask = None
+    unseen_mask = None
     if config["eval_mode"] == "inductive":
         assert manifest is not None, f"CRITICAL: inductive run {run_name} has no holdout manifest"
         holdout_mask = mask_from_manifest(manifest, location_ids, device=device)
@@ -322,11 +324,16 @@ def build_v5_context(run_name: str, config: Dict, dataset: RealIoTDataset, check
             "CRITICAL: manifest holdout stations missing from the inference dataset"
         assert manifest["num_nodes"] == len(location_ids), \
             f"CRITICAL: manifest has {manifest['num_nodes']} nodes, dataset {len(location_ids)}"
+        unseen_mask = holdout_mask
+        val_ids = manifest.get("val_location_ids") or []
+        if val_ids:
+            val_mask = mask_from_manifest({"holdout_location_ids": val_ids}, location_ids, device=device)
+            unseen_mask = holdout_mask | val_mask
 
     preparer = BatchPreparer(
         config, dataset, device,
-        inductive_mask=holdout_mask,
-        loss_node_mask=None if holdout_mask is None else ~holdout_mask,
+        inductive_mask=unseen_mask,
+        loss_node_mask=None if unseen_mask is None else ~unseen_mask,
         eval_holdout_mask=holdout_mask,
         static_features=dataset.static_features.to(device),
         location_ids=location_ids,

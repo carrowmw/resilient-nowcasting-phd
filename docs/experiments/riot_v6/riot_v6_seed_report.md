@@ -37,7 +37,7 @@ Every run used `holdout_sha 669860aa8b4cdd15`.
   - the same 24 held-out stations as v5.
 
   So held-out RMSE, kriging and the naive-profile baseline are directly comparable with v5. Transductive, all-node and SO metrics are not. Any cross-stage comparison is test-only and marked †. `v6p_v5f_sched` has no validation stations, so it scores 57 / 81 like v5.
-- **Coverage.** Station coverage in the test window is thin. Only 15 of the 24 held-out stations and 41 of the 52 training stations have any observation there. This is the same for v5 and v6.
+- **Coverage.** Station coverage in the test window is thin. Only 14 of the 24 held-out stations (15 in the validation window) and 41 of the other 57 stations have any observation there. This is the same for v5 and v6. (Corrected 2026-10-28: earlier counts of 15 included NclTynebridgeNorthEast, which has no pedestrian records after April 2025.)
 
 ---
 

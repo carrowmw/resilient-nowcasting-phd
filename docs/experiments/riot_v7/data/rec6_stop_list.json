@@ -1,0 +1,13 @@
+{
+  "rec": 6,
+  "stopped": [
+    "LSTM / ensemble",
+    "seq48 (longer context)",
+    "GAT drop",
+    "outage head",
+    "kriging-loss variants"
+  ],
+  "n_configs": 60,
+  "violations": {},
+  "verdict": "PASS"
+}

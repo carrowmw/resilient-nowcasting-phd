@@ -1,18 +1,14 @@
 services:
-  # Run locally on mac for development.
-  agent-workspace:
+  # Local development workspace container
+  dev-workspace:
     build:
       context: .
-      dockerfile: Dockerfile.agent
-    container_name: my-ml-agent
-
+      dockerfile: Dockerfile.cpu
+    container_name: riot-dev-workspace
     env_file:
       - .env
     volumes:
       - .:/workspace
-      - ~/Code/latex-documents/thesis:/workspace/docs/thesis/full:ro # Read only access for the thesis
-      - ~/.config/gcloud:/root/.config/gcloud  # Required for ADC authentication
-      - ~/.claude:/root/.claude
     stdin_open: true
     tty: true
     networks:

@@ -1,0 +1,201 @@
+{
+  "kind": "rec2_gate",
+  "n_runs": 75,
+  "threshold": 0.3,
+  "min_positive": 0.8,
+  "min_coverage": 0.25,
+  "n_stations": 24,
+  "n_covered": 15,
+  "stations": {
+    "NclArgyleTrafalgar": {
+      "level": 41.46691131591797,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclArmstrongBrgJesmondParkW": {
+      "level": 12.038407325744629,
+      "val_coverage": 0.8195940256118774,
+      "test_coverage": 0.7891424894332886
+    },
+    "NclBarrasBridgeCivicCentre": {
+      "level": 90.12910461425781,
+      "val_coverage": 0.9309582710266113,
+      "test_coverage": 0.7417012453079224
+    },
+    "NclCedarRdLindenAveRndbtWestSouthCrossing": {
+      "level": 7.318976879119873,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclCypressAveGreenway": {
+      "level": 4.4064249992370605,
+      "val_coverage": 0.6735708117485046,
+      "test_coverage": 0.6100276708602905
+    },
+    "NclFalconarStLoversLn": {
+      "level": 87.45526123046875,
+      "val_coverage": 0.9680336713790894,
+      "test_coverage": 0.9842323660850525
+    },
+    "NclHeatonParkViewHeatonParkRd": {
+      "level": 17.162437438964844,
+      "val_coverage": 0.36992543935775757,
+      "test_coverage": 0.0
+    },
+    "NclJesmondDeneRdBentonBank": {
+      "level": 15.948291778564453,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclJesmondRdAllSaintsCemeterySouth": {
+      "level": 2.439157247543335,
+      "val_coverage": 0.5250621438026428,
+      "test_coverage": 0.5213001370429993
+    },
+    "NclJohnDobsonStRidleyPl": {
+      "level": 39.65005874633789,
+      "val_coverage": 0.8691659569740295,
+      "test_coverage": 0.5148686170578003
+    },
+    "NclKingswayQueensway": {
+      "level": 5.703997611999512,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclNorthumberlandStMonumentMall": {
+      "level": 293.2106628417969,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclNorthumberlandStThePearl": {
+      "level": 100.68049621582031,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclOuseburnRdANPR": {
+      "level": 3.970240592956543,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclQueenVictoriaRdPercyBuilding": {
+      "level": 19.997060775756836,
+      "val_coverage": 0.7784451842308044,
+      "test_coverage": 0.7673582434654236
+    },
+    "NclShieldsRdCliffordStNorth": {
+      "level": 33.22594451904297,
+      "val_coverage": 0.9290251135826111,
+      "test_coverage": 0.9152143597602844
+    },
+    "NclShieldsRdCliffordStSouth": {
+      "level": 15.963932991027832,
+      "val_coverage": 0.8443109393119812,
+      "test_coverage": 0.8236514329910278
+    },
+    "NclShieldsRdEdwinStNorth": {
+      "level": 32.605831146240234,
+      "val_coverage": 0.9277133345603943,
+      "test_coverage": 0.9169433116912842
+    },
+    "NclSideStCrownPosadaNorth": {
+      "level": 46.61921310424805,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    },
+    "NclStephensonRdHeatonRdNewtonRdNE1": {
+      "level": 12.215033531188965,
+      "val_coverage": 0.7812758684158325,
+      "test_coverage": 0.7646611332893372
+    },
+    "NclStephensonRdHeatonRdNewtonRdSE1": {
+      "level": 12.444098472595215,
+      "val_coverage": 0.7846589088439941,
+      "test_coverage": 0.7710235118865967
+    },
+    "NclStephensonRdHeatonRdNewtonRdSE2": {
+      "level": 5.562928676605225,
+      "val_coverage": 0.7131317257881165,
+      "test_coverage": 0.6737897396087646
+    },
+    "NclTenthAveSecondAve": {
+      "level": 3.445838212966919,
+      "val_coverage": 0.5847831964492798,
+      "test_coverage": 0.5413554906845093
+    },
+    "NclTynebridgeNorthEast": {
+      "level": 6.535418510437012,
+      "val_coverage": 0.0,
+      "test_coverage": 0.0
+    }
+  },
+  "rules": {
+    "all/random5": {
+      "count": 5,
+      "draws": 2000,
+      "scorable_draws": 1990,
+      "draws_no_val_data": 10,
+      "rho_median": 0.04385490753911807,
+      "rho_p10": -0.2722332859174964,
+      "rho_p90": 0.37900426742532,
+      "frac_positive": 0.5562814070351759,
+      "n_runs": 75
+    },
+    "all/stratified8": {
+      "count": 8,
+      "draws": 2000,
+      "scorable_draws": 2000,
+      "draws_no_val_data": 0,
+      "rho_median": 0.13911806543385488,
+      "rho_p10": -0.3041820768136557,
+      "rho_p90": 0.44607681365576146,
+      "frac_positive": 0.6815,
+      "n_runs": 75
+    },
+    "v6_lineage/random5": {
+      "count": 5,
+      "draws": 2000,
+      "scorable_draws": 1990,
+      "draws_no_val_data": 10,
+      "rho_median": 0.15371525808281342,
+      "rho_p10": -0.19013045944412932,
+      "rho_p90": 0.35305080625557084,
+      "frac_positive": 0.7452261306532664,
+      "n_runs": 42
+    },
+    "v6_lineage/stratified8": {
+      "count": 8,
+      "draws": 2000,
+      "scorable_draws": 2000,
+      "draws_no_val_data": 0,
+      "rho_median": 0.2237257920751965,
+      "rho_p10": -0.2159468438538206,
+      "rho_p90": 0.38487966939470064,
+      "frac_positive": 0.691,
+      "n_runs": 42
+    },
+    "p_family/random5": {
+      "count": 5,
+      "draws": 2000,
+      "scorable_draws": 1990,
+      "draws_no_val_data": 10,
+      "rho_median": 0.09558823529411765,
+      "rho_p10": -0.47336229946524067,
+      "rho_p90": 0.5648729946524066,
+      "frac_positive": 0.5849246231155779,
+      "n_runs": 33
+    },
+    "p_family/stratified8": {
+      "count": 8,
+      "draws": 2000,
+      "scorable_draws": 2000,
+      "draws_no_val_data": 0,
+      "rho_median": 0.1931818181818182,
+      "rho_p10": -0.37667112299465244,
+      "rho_p90": 0.4789438502673797,
+      "frac_positive": 0.742,
+      "n_runs": 33
+    }
+  },
+  "verdict": "FAIL: stratified8 median rho 0.14 (need >= 0.3), rho > 0 in 68% of draws (need >= 80%)",
+  "exit_code": 1
+}
