@@ -2,7 +2,7 @@
 
 [![Live Digital Twin Dashboard](https://img.shields.io/badge/Live_Dashboard-Geospatial_Digital_Twin-0284c7?style=for-the-badge&logo=vercel&logoColor=white)](https://ml-agent-workspace.vercel.app)
 [![Analytics Lab](https://img.shields.io/badge/Analytics_Workbench-Calibration_%26_Outages-6366f1?style=for-the-badge)](https://ml-agent-workspace.vercel.app/analytics)
-[![DSTL Presentation](https://img.shields.io/badge/Presentation-DSTL_Sponsor_Review_Deck-0f766e?style=for-the-badge)](dstl_presentation/README.md)
+[![DSTL Presentation](https://img.shields.io/badge/Presentation-DSTL_Sponsor_Review_Deck-0f766e?style=for-the-badge)]([dstl_presentation/README.md](https://ml-agent-workspace-x8u9.vercel.app/))
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776ab?style=for-the-badge&logo=python&logoColor=white)](pyproject.toml)
 [![PyTorch 2.3](https://img.shields.io/badge/PyTorch-2.3_%2B_PyG-ee4c2c?style=for-the-badge&logo=pytorch&logoColor=white)](Dockerfile.gpu)
 
@@ -32,7 +32,7 @@ A self-contained, interactive 27-slide Reveal.js presentation deck summarising t
 - **Presentation Deck Entry Point:** [`dstl_presentation/index.html`](dstl_presentation/index.html)
 - **Speaker Notes & Architecture Overview:** [`dstl_presentation/README.md`](dstl_presentation/README.md)
 
-To view the presentation in your browser [click here](https://vercel.com/carrow-morris-wiltshire-s-projects/dstl-presentation).
+To view the presentation in your browser [click here](https://ml-agent-workspace-x8u9.vercel.app/).
 
 
 ---
