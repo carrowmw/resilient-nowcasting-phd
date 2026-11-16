@@ -95,13 +95,6 @@ jobs:
               python scripts/upload_to_r2.py --runs-dir "$PAYLOAD_DIR" --prefix runs
             '
 
-      - name: Trigger Run Registry Rebuild
-        env:
-          CLOUDFLARE_WORKER_URL: ${{ secrets.CLOUDFLARE_WORKER_URL }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          curl -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${CLOUDFLARE_WORKER_URL}/rebuild"
-
       - name: Clean up local payloads
         if: always()
         run: |
