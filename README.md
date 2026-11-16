@@ -32,12 +32,8 @@ A self-contained, interactive 27-slide Reveal.js presentation deck summarising t
 - **Presentation Deck Entry Point:** [`dstl_presentation/index.html`](dstl_presentation/index.html)
 - **Speaker Notes & Architecture Overview:** [`dstl_presentation/README.md`](dstl_presentation/README.md)
 
-To view the presentation locally in your browser:
+To view the presentation in your browser [click here](https://vercel.com/carrow-morris-wiltshire-s-projects/dstl-presentation).
 
-```bash
-python3 -m http.server 8000 --directory dstl_presentation
-# Open http://localhost:8000 in any browser (Press 'S' for speaker notes)
-```
 
 ---
 

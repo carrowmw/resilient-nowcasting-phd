@@ -81,11 +81,11 @@ def main():
     df["category"] = df["key"].apply(lambda k: MODEL_MAP[k][1])
     df["color"] = df["key"].apply(lambda k: MODEL_MAP[k][2])
 
-    fig = plt.figure(figsize=(13, 9.2), dpi=300)
+    fig = plt.figure(figsize=(13, 9.6), dpi=300)
     
     # Grid: 2 rows. Row 1 has 3 subplots for h=1, h=2, h=4.
     # Row 2 has a wide plot focusing on h=1 ranking and seed error bar overlap.
-    gs = fig.add_gridspec(2, 3, height_ratios=[1.15, 1.0], hspace=0.62, wspace=0.22)
+    gs = fig.add_gridspec(2, 3, height_ratios=[1.15, 1.0], hspace=0.78, wspace=0.22)
 
     # -------------------------------------------------------------
     # Row 1: h = 1, h = 2, h = 4 comparisons across all configurations
@@ -205,7 +205,7 @@ def main():
     ax_zoom.set_yticks(y_positions)
     ax_zoom.set_yticklabels(h1_top["display_name"], fontsize=11, fontweight="semibold")
     ax_zoom.set_xlabel("Node-Median MAE (pedestrian counts) at $h = 1$ (15 min)", fontsize=12, fontweight="bold")
-    ax_zoom.set_xlim(4.32, 4.50)
+    ax_zoom.set_xlim(4.32, 4.53)
     ax_zoom.grid(True, linestyle="--", alpha=0.6)
     ax_zoom.set_title("Focus on Lead Time $h = 1$: Top Architectures Fall Within Cross-Seed Variability ($\pm 0.008$–$0.023$ Counts)",
                       fontsize=13, fontweight="bold", pad=8)
